@@ -60,7 +60,7 @@ The [CubbyCAD editor](https://cubbycad.com/editor) sends the current model with 
 
 Claude Code can drive the slicer (and the CubbyCAD editor) through cubby-mcp, a small MCP server that runs on your computer. Nothing leaves your machine: the tab connects to `ws://127.0.0.1:18711`, and cubbycad.com has no server side for this.
 
-1. Add the server once: `claude mcp add --scope user cubby -- npx -y cubby-mcp`. (Until it's on npm, run `npm install` in a cubby-mcp checkout and use `node <checkout>/dist/cli.js` in place of `npx -y cubby-mcp`.)
+1. Add the server once: `claude mcp add --scope user cubby -- npx -y cubby-mcp`.
 2. In Claude Code, ask for the pairing code (Claude reads it with `cubby_status`).
 3. Here, Help ▸ Connect to Claude Code, paste the code, Connect. Or open `/slicer/?claude=<code>`, which fills it in.
 
