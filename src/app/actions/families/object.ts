@@ -1,10 +1,12 @@
+import { nudgeDelta, nudgeStep } from '@cubby/shared/nudge';
 import type { Action } from '../types';
 import type { AppContext } from '../context';
 import type { GizmoMode } from '../../../viewport/controller';
 
 // Orca plater keys: M move, R rotate, S scale, F lay on face, A arrange all, Shift+A arrange the active plate,
 // Q auto-orient (selection, or everything when nothing is selected), Shift+Q orient the active plate,
-// V toggle printable, arrows nudge the selection 10 mm (Shift = 1 mm).
+// V toggle printable, arrows nudge the selection by the grid snap, 10 mm when snap is off (Shift = a tenth).
+// Arrow → bed axis and the step come from @cubby/shared/nudge (Orca's fixed X / Y, not camera-relative).
 const gizmo = (id: string, mode: GizmoMode, title: string, icon: string, key: string, aliases: string[]): Action => ({
   id, title, icon, category: 'Object', aliases, binding: { key, scope: 'prepare' },
   state: (c) => (c.gizmo === mode && !c.layOnFace ? 'active' : undefined),
@@ -12,12 +14,17 @@ const gizmo = (id: string, mode: GizmoMode, title: string, icon: string, key: st
 });
 
 const AXES = ['X', 'Y', 'Z'] as const;
-const NUDGES: Array<{ key: string; dir: [number, number]; name: string }> = [
-  { key: 'arrowup', dir: [0, 1], name: 'up' },
-  { key: 'arrowdown', dir: [0, -1], name: 'down' },
-  { key: 'arrowleft', dir: [-1, 0], name: 'left' },
-  { key: 'arrowright', dir: [1, 0], name: 'right' },
+const NUDGES: Array<{ key: string; arrow: string; name: string }> = [
+  { key: 'arrowup', arrow: 'ArrowUp', name: 'up' },
+  { key: 'arrowdown', arrow: 'ArrowDown', name: 'down' },
+  { key: 'arrowleft', arrow: 'ArrowLeft', name: 'left' },
+  { key: 'arrowright', arrow: 'ArrowRight', name: 'right' },
 ];
+
+function nudgeBy(c: AppContext, arrow: string, fine: boolean): void {
+  const d = nudgeDelta(arrow, { step: nudgeStep(c.snapIncrement, { fallback: 10, fine }), up: 'z' });
+  if (d) c.dispatch.nudge(d.x, d.y);
+}
 
 type SubType = 'part' | 'negative' | 'modifier' | 'support_blocker' | 'support_enforcer';
 type SubSource = 'box' | 'cylinder' | 'sphere' | 'slab' | 'file';
@@ -95,13 +102,13 @@ export function objectActions(): Action[] {
       when: (c) => !!c.selection.single, run: (c) => c.dispatch.addSubObject(type, source),
     }))),
     // Arrow nudges: one visible help entry + the dispatching (hidden) bindings.
-    { id: 'object.nudge', title: 'Move selection 10 mm (Shift: 1 mm)', icon: 'i-lucide-move', category: 'Object', paletteHidden: true,
+    { id: 'object.nudge', title: 'Move selection by the grid snap, 10 mm when off (Shift: a tenth)', icon: 'i-lucide-move', category: 'Object', paletteHidden: true,
       binding: { displayOnly: true, displayTokens: ['←', '↑', '→', '↓'], scope: 'prepare' }, when: sel, run: () => {} },
-    ...NUDGES.flatMap(({ key, dir, name }): Action[] => [10, 1].map((step): Action => ({
-      id: `object.nudge.${name}${step === 1 ? '.fine' : ''}`, title: `Move selection ${name} ${step} mm`, category: 'Object',
+    ...NUDGES.flatMap(({ key, arrow, name }): Action[] => [false, true].map((fine): Action => ({
+      id: `object.nudge.${name}${fine ? '.fine' : ''}`, title: `Move selection ${name}${fine ? ' (fine)' : ''}`, category: 'Object',
       hidden: true, paletteHidden: true,
-      binding: { key, shift: step === 1, scope: 'prepare', whenFocusIdle: true, passThroughWhenUnavailable: true },
-      when: sel, run: (c) => c.dispatch.nudge(dir[0] * step, dir[1] * step),
+      binding: { key, shift: fine, scope: 'prepare', whenFocusIdle: true, passThroughWhenUnavailable: true },
+      when: sel, run: (c) => nudgeBy(c, arrow, fine),
     }))),
   ];
 }

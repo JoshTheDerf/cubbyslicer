@@ -5,6 +5,7 @@
 import type { MenuLayout } from '../project/menu';
 import { SUB_SOURCES, SUB_TYPES } from '../families/object';
 import { HANDY_MODEL_IDS } from '../families/calibration';
+import { SNAP_OPTIONS } from '@cubby/shared/snap';
 
 /** "Add part ▸ Load… / Box / …" submenus for each volume type. */
 const ADD_SUBMENUS = SUB_TYPES.map(([type, label, icon]) => ({ label, icon, children: SUB_SOURCES.map(([src]) => `object.add.${type}.${src}`) }));
@@ -37,6 +38,8 @@ export const VIEW_MENU: MenuLayout = {
       'view.camera.iso', 'view.camera.top', 'view.camera.bottom', 'view.camera.front', 'view.camera.back', 'view.camera.left', 'view.camera.right',
     ],
     ['view.fit-selection', 'view.fit-plate', 'view.zoom-in', 'view.zoom-out'],
+    ['view.camera.perspective', 'view.camera.orthographic',
+      { label: 'Grid snap', icon: 'i-lucide-magnet', children: SNAP_OPTIONS.map((o) => `view.snap.${o.value}`) }],
     ['view.panel.sidebar'],
   ],
 };
@@ -92,6 +95,7 @@ export const HELP_MENU: MenuLayout = {
   groups: [
     ['settings.setup'],
     ['help.palette', 'help.shortcuts'],
+    ['claude.connect', 'claude.disconnect'],
     ['help.about'],
   ],
 };

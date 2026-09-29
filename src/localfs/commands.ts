@@ -4,10 +4,11 @@
  * approved-folder browser's open / save / export.
  */
 import { toast } from '../ui';
-import { importBuffer, importFiles, openProjectBuffer } from '../app/shell/actions';
+import { importBuffer, importFiles } from '../app/shell/actions';
 import { safeFileName } from '../app/shell/download';
 import { projectName } from '../project/store';
-import { PROJECT_EXT, buildProjectFile } from '../project/persistence/projectFile';
+import { SAVE_EXT, projectBytesFor, projectStem } from '../project/persistence/orca3mfWriter';
+import { projectLoads } from '../project/store';
 import { setCloudLocation } from '../cloud/store';
 import {
   MODEL_TYPES, PROJECT_TYPES, fileInFolder, local, markLocalSaved, pickOpen, pickSave, readHandle, setLocalLocation, writeHandle,
@@ -26,12 +27,15 @@ function fail(what: string, e: unknown): void {
 export async function openLocalHandle(handle: FileSystemFileHandle, folder?: string): Promise<boolean> {
   let file: File;
   try { file = await readHandle(handle); } catch (e) { fail(`Couldn't open ${handle.name}`, e); return false; }
-  if (file.name.toLowerCase().endsWith(PROJECT_EXT)) {
-    const ok = await openProjectBuffer(file.name, await file.arrayBuffer());
-    if (ok) { setCloudLocation(null); setLocalLocation({ handle, name: file.name, folder }); projectName.value = file.name.replace(/\.cubbyslice$/i, '') || projectName.value; markLocalSaved(); }
-    return ok;
-  }
+  // A 3MF may open as a project (Orca / Bambu / ours): then Ctrl+S writes back to it.
+  const before = projectLoads.value;
   await importFiles([file]);
+  if (/\.3mf$/i.test(file.name) && projectLoads.value !== before) {
+    setCloudLocation(null);
+    setLocalLocation({ handle, name: file.name, folder });
+    projectName.value = projectStem(file.name) || projectName.value;
+    markLocalSaved();
+  }
   return true;
 }
 
@@ -54,7 +58,7 @@ export async function importLocal(): Promise<void> {
 }
 
 async function writeProject(handle: FileSystemFileHandle): Promise<void> {
-  await writeHandle(handle, buildProjectFile());
+  await writeHandle(handle, await projectBytesFor(handle.name));
 }
 
 /** Ctrl+S with a local file: write it back. Returns false when there's no local location. */
@@ -72,12 +76,12 @@ export async function saveLocal(): Promise<boolean> {
 /** Save as: native save dialog; the chosen file becomes the save target. */
 export async function saveLocalAs(): Promise<void> {
   try {
-    const h = await pickSave(`${safeFileName(projectName.value, 'project')}${PROJECT_EXT}`, PROJECT_TYPES, 'cubby-project');
+    const h = await pickSave(`${safeFileName(projectName.value, 'project')}${SAVE_EXT}`, PROJECT_TYPES, 'cubby-project');
     if (!h) return;
     await writeProject(h);
     setCloudLocation(null);
     setLocalLocation({ handle: h, name: h.name });
-    projectName.value = h.name.replace(/\.cubbyslice$/i, '') || projectName.value;
+    projectName.value = projectStem(h.name) || projectName.value;
     markLocalSaved();
     toast.success(`Saved ${h.name}.`, { timeout: 1600 });
   } catch (e) { fail("Couldn't save the project", e); }
@@ -94,7 +98,7 @@ export async function saveProjectInFolder(dir: FileSystemDirectoryHandle, name: 
     await writeProject(h);
     setCloudLocation(null);
     setLocalLocation({ handle: h, name, folder: dir.name });
-    projectName.value = name.replace(/\.cubbyslice$/i, '') || projectName.value;
+    projectName.value = projectStem(name) || projectName.value;
     markLocalSaved();
     toast.success(`Saved to ${dir.name}.`, { detail: name, timeout: 2000 });
     return true;

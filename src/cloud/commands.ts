@@ -6,18 +6,19 @@
  */
 import { toast } from '../ui';
 import { activeGcode } from '../app/slice';
-import { importBuffer, openProjectBuffer } from '../app/shell/actions';
+import { importBuffer } from '../app/shell/actions';
 import { safeFileName } from '../app/shell/download';
 import { activePlate, getMesh, objectsOnPlate, plates, projectName } from '../project/store';
 import { build3mf } from '../project/export/threemf';
-import { PROJECT_EXT, buildProjectFile } from '../project/persistence/projectFile';
+import { SAVE_EXT, projectBytesFor } from '../project/persistence/orca3mfWriter';
+import { projectLoads } from '../project/store';
 import { isModelFileName } from '../project/import';
 import { CloudAuthError, CloudError, isSafePath, readFile, slicerFileLink, writeFile } from './api';
 import { cloud, cloudDialog, markCloudSaved, refreshUser, refreshWorkspaces, setCloudLocation, workspaceName } from './store';
 
 /** Files the slicer can open from a workspace. */
 export function isOpenableCloudFile(path: string): boolean {
-  return path.toLowerCase().endsWith(PROJECT_EXT) || isModelFileName(path);
+  return isModelFileName(path);
 }
 
 function reportError(what: string, e: unknown): void {
@@ -30,7 +31,7 @@ function reportError(what: string, e: unknown): void {
   toast.error(`${what}.`, { detail: (e as Error)?.message ?? String(e) });
 }
 
-/** Open a workspace file: a .cubbyslice replaces the project, a model is added to the plate. */
+/** Open a workspace file: a project 3MF replaces the project, a model is added to the plate. */
 export async function openCloudFile(workspaceId: string, path: string, wsName = workspaceName(workspaceId)): Promise<boolean> {
   if (!isSafePath(path)) { toast.error('That file path is not valid.'); return false; }
   const name = path.split('/').pop() || path;
@@ -38,12 +39,11 @@ export async function openCloudFile(workspaceId: string, path: string, wsName = 
   try {
     buf = await readFile(workspaceId, path);
   } catch (e) { reportError(`Couldn't open ${name}`, e); return false; }
-  if (name.toLowerCase().endsWith(PROJECT_EXT)) {
-    const ok = await openProjectBuffer(name, buf);
-    if (ok) setCloudLocation({ workspaceId, workspaceName: wsName, path });
-    return ok;
-  }
-  return (await importBuffer(name, buf)).length > 0;
+  const before = projectLoads.value;
+  const ok = (await importBuffer(name, buf)).length > 0;
+  // A 3MF that opened as a project is now the file Ctrl+S saves to.
+  if (/\.3mf$/i.test(name) && projectLoads.value !== before) setCloudLocation({ workspaceId, workspaceName: wsName, path });
+  return ok;
 }
 
 async function writeOrReport(workspaceId: string, path: string, data: Blob, what: string): Promise<boolean> {
@@ -56,8 +56,8 @@ async function writeOrReport(workspaceId: string, path: string, data: Blob, what
 /** Save the project to `path` in the workspace and make that its location. */
 export async function saveProjectTo(workspaceId: string, path: string, wsName = workspaceName(workspaceId)): Promise<boolean> {
   let bytes: Uint8Array;
-  try { bytes = buildProjectFile(); } catch (e) { toast.error("Couldn't save the project.", { detail: (e as Error)?.message }); return false; }
-  const ok = await writeOrReport(workspaceId, path, new Blob([bytes as BlobPart], { type: 'application/zip' }), path.split('/').pop() || path);
+  try { bytes = await projectBytesFor(path); } catch (e) { toast.error("Couldn't save the project.", { detail: (e as Error)?.message }); return false; }
+  const ok = await writeOrReport(workspaceId, path, new Blob([bytes as BlobPart], { type: 'model/3mf' }), path.split('/').pop() || path);
   if (!ok) return false;
   setCloudLocation({ workspaceId, workspaceName: wsName, path });
   markCloudSaved();
@@ -74,7 +74,7 @@ export async function saveToCloudLocation(): Promise<boolean> {
 }
 
 export function suggestedProjectName(): string {
-  return `${safeFileName(projectName.value, 'project')}${PROJECT_EXT}`;
+  return `${safeFileName(projectName.value, 'project')}${SAVE_EXT}`;
 }
 
 /** Files export can write, with their suggested names. */
@@ -131,7 +131,7 @@ export async function openCloudDeepLink(): Promise<boolean> {
   await refreshWorkspaces().catch(() => {});
   const ok = await openCloudFile(ws, path);
   // A model link was a one-off import; only a project link stays in the URL.
-  if (!ok || !path.toLowerCase().endsWith(PROJECT_EXT)) {
+  if (!ok || !(/\.3mf$/i.test(path) && !!cloud.location)) {
     const u = new URL(location.href);
     u.searchParams.delete('workspace'); u.searchParams.delete('path');
     history.replaceState(history.state, '', u);

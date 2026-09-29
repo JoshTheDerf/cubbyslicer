@@ -11,22 +11,31 @@ import { unzipSync, type Unzipped } from 'fflate';
 import { GrowF32, GrowU32, ImportError, LIMITS, checkTriangleBudget } from '../mesh';
 import { mat4Identity, mat4Multiply, type Mat4 } from '../math';
 import type { ParsedObject } from '../types';
+import type { PaintLayer, PaintMap } from '../../engine/types';
 import { attr, parseAttrs, scanXml } from './xml';
 
 const UNIT_SCALE: Record<string, number> = {
   micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000,
 };
 
-interface ObjDef {
+/** Orca / Bambu / Prusa per-triangle paint attributes → paint layers. */
+const PAINT_ATTRS: Array<[string, PaintLayer]> = [
+  ['paint_supports', 'support'], ['paint_seam', 'seam'], ['paint_color', 'color'], ['paint_fuzzy_skin', 'fuzzy'],
+  ['slic3rpe:custom_supports', 'support'], ['slic3rpe:custom_seam', 'seam'], ['slic3rpe:mmu_segmentation', 'color'],
+];
+
+export interface ObjDef {
   id: string;
   name: string;
   type: string;
   positions?: Float32Array;
   indices?: Uint32Array;
+  /** Painted triangles (index into `indices` / 3) per layer. */
+  paint?: Partial<Record<PaintLayer, PaintMap>>;
   components: Array<{ key: string; transform: Mat4 }>;
 }
 
-interface ModelPart {
+export interface ModelPart {
   unit: number;
   objects: Map<string, ObjDef>;
   build: Array<{ key: string; transform: Mat4; printable: boolean }>;
@@ -43,25 +52,26 @@ export function parse3mfTransform(s: string | undefined, warnings?: string[]): M
   return [v[0], v[1], v[2], 0, v[3], v[4], v[5], 0, v[6], v[7], v[8], 0, v[9], v[10], v[11], 1];
 }
 
-function normPath(p: string): string {
+export function normPath(p: string): string {
   let s = p.replace(/\\/g, '/');
   if (s.startsWith('/')) s = s.slice(1);
   try { s = decodeURIComponent(s); } catch { /* keep raw */ }
   return s;
 }
 
-function findEntry(files: Unzipped, path: string): string | undefined {
+export function findEntry(files: Unzipped, path: string): string | undefined {
   const want = normPath(path).toLowerCase();
   return Object.keys(files).find((k) => k.toLowerCase() === want);
 }
 
-function parseModelPart(bytes: Uint8Array, path: string, warnings: string[]): ModelPart {
+export function parseModelPart(bytes: Uint8Array, path: string, warnings: string[]): ModelPart {
   const part: ModelPart = { unit: 1, objects: new Map(), build: [] };
   let cur: ObjDef | null = null;
   let verts: GrowF32 | null = null;
   let tris: GrowU32 | null = null;
   let inMesh = false;
   let totalTris = 0;
+  let paint: Partial<Record<PaintLayer, PaintMap>> | null = null;
   const keyOf = (id: string, p?: string) => `${p ? normPath(p) : path}#${id}`;
 
   scanXml(bytes, (t) => {
@@ -93,18 +103,28 @@ function parseModelPart(bytes: Uint8Array, path: string, warnings: string[]): Mo
             const vcount = verts.length / 3;
             const idx = tris.toArray();
             let w = 0, bad = 0;
+            const remap = new Int32Array(idx.length / 3);
             for (let i = 0; i < idx.length; i += 3) {
               const a = idx[i], b = idx[i + 1], c = idx[i + 2];
-              if (a >= vcount || b >= vcount || c >= vcount) { bad++; continue; }
+              if (a >= vcount || b >= vcount || c >= vcount) { bad++; remap[i / 3] = -1; continue; }
+              remap[i / 3] = w / 3;
               idx[w++] = a; idx[w++] = b; idx[w++] = c;
             }
             if (bad) warnings.push(`Object ${cur.id}: skipped ${bad} triangle(s) with invalid vertex indices`);
             cur.positions = verts.toArray();
             cur.indices = w === idx.length ? idx : idx.slice(0, w);
+            if (paint) {
+              for (const layer of Object.keys(paint) as PaintLayer[]) {
+                paint[layer] = bad ? paint[layer]!.filter((e) => remap[e[0]] >= 0).map((e) => [remap[e[0]], e[1]] as [number, string]) : paint[layer];
+              }
+              cur.paint = paint;
+            }
           }
           verts = tris = null;
+          paint = null;
         } else if (!t.selfClosing) {
           inMesh = true;
+          paint = null;
           verts = new GrowF32(4096);
           tris = new GrowU32(4096);
         }
@@ -118,6 +138,13 @@ function parseModelPart(bytes: Uint8Array, path: string, warnings: string[]): Mo
         if (inMesh && tris && !t.close) {
           const a = Number(attr(t.attrs, 'v1')), b = Number(attr(t.attrs, 'v2')), c = Number(attr(t.attrs, 'v3'));
           if (Number.isInteger(a) && Number.isInteger(b) && Number.isInteger(c) && a >= 0 && b >= 0 && c >= 0) {
+            if (t.attrs.includes('paint') || t.attrs.includes('custom_') || t.attrs.includes('mmu_')) {
+              const k = tris.length / 3;
+              for (const [name, layer] of PAINT_ATTRS) {
+                const v = attr(t.attrs, name);
+                if (v) ((paint ??= {})[layer] ??= []).push([k, v]);
+              }
+            }
             tris.push3(a, b, c);
             if (++totalTris > LIMITS.maxTriangles) checkTriangleBudget(totalTris);
           }

@@ -1,5 +1,5 @@
 /**
- * Project (de)serialisation shared by .cubbyslice files and the IndexedDB
+ * Project (de)serialisation shared by the 3MF round-trip data (Metadata/cubby_slicer.json) and the IndexedDB
  * autosave. Geometry is always binary; project.json holds only metadata.
  */
 import { ImportError } from '../mesh';

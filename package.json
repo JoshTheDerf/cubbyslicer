@@ -5,7 +5,10 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "homepage": "https://cubbycad.com/slicer",
-  "repository": { "type": "git", "url": "git+ssh://git@github.com/JoshTheDerf/cubbyslicer.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/JoshTheDerf/cubbyslicer.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
@@ -14,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cubby/shared": "github:JoshTheDerf/cubby-shared",
     "@nuxt/ui": "^4.11.2",
     "manifold-3d": "^3.5.4",
     "meshoptimizer": "^1.3.0",

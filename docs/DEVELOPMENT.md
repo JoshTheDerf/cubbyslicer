@@ -22,8 +22,16 @@ src/
   localfs/      File System Access API files and folders
   printhost/    print host drivers
   dialogs/      flushing volumes, bed shape, preset wizard, preferences, …
+  bridge/       Claude Code bridge tools (see the cubby-mcp README)
 docs/           ENGINE-CONTRACT.md, this file, user guide
 scripts/        engine staging; dev/ has e2e and screenshot scripts
+```
+
+The gizmo, grid snap, keyboard nudge, camera projection, view cube, undo history, action registry and bridge client come from [@cubby/shared](https://github.com/JoshTheDerf/cubby-shared), which CubbyCAD uses too. To change them alongside the slicer, clone it next to this repo and link it (run the link again after `npm install`):
+
+```bash
+git clone git@github.com:JoshTheDerf/cubby-shared.git ../cubby-shared
+npm link ../cubby-shared
 ```
 
 Commands are declared once in `src/app/actions/families/` and laid out in `src/app/actions/layouts/`. `npm test` includes a lint that catches unregistered ids and conflicting key bindings.

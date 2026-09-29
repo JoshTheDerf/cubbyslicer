@@ -145,6 +145,9 @@ export function orcaToPreflight(kind: PresetKind, values: PresetValues, isNative
       out.filament_shrinkage_compensation_z = [convertShrink(shrinkZ)];
     }
   }
+  // Orca line widths in % are of the nozzle diameter; preFlight's default
+  // (legacy) reads them as % of layer height.
+  if (kind === 'process' && !('extrusion_width_percent_of_nozzle' in values)) out.extrusion_width_percent_of_nozzle = '1';
   if (kind === 'printer') {
     // Orca emits SET_VELOCITY_LIMIT for Klipper; preFlight refuses to emit
     // machine limits for Klipper, so keep them for time estimates only.

@@ -39,7 +39,12 @@ export function nextFilamentColour(used: readonly string[]): string {
 /** Printer selected on an engine's first run (no saved state). */
 // OrcaSlicer's own default printer (PresetBundle::ORCA_DEFAULT_PRINTER_MODEL):
 // a generic Klipper printer with a full process ladder + library filaments.
-const FIRST_RUN_PRINTER: Partial<Record<EngineId, string>> = { orca: 'sys:Custom/MyKlipper 0.4 nozzle', fullspectrum: 'sys:Snapmaker/Snapmaker U1 (0.4 nozzle)' };
+const FIRST_RUN_PRINTER: Partial<Record<EngineId, string>> = {
+  orca: 'sys:Custom/MyKlipper 0.4 nozzle',
+  // preFlight reads Orca's printer library (converted), so it starts on the same printer.
+  preflight: 'sys:Custom/MyKlipper 0.4 nozzle',
+  fullspectrum: 'sys:Snapmaker/Snapmaker U1 (0.4 nozzle)',
+};
 
 export interface Selection { printer: string; process: string; filaments: string[] }
 export interface Overrides { printer: PresetValues; process: PresetValues; filaments: PresetValues[] }
@@ -895,6 +900,8 @@ let started = false;
  * Start writing `resolvedConfig` for the active engine. Idempotent; called by
  * the settings panel on mount and safe to call from the shell at startup.
  */
+let flushNow: (() => void) | null = null;
+
 export function startPresets(): void {
   if (started) return;
   started = true;
@@ -902,6 +909,7 @@ export function startPresets(): void {
   if (saved && ENGINES.includes(saved)) activeEngine.value = saved;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const flush = () => {
+    if (timer) clearTimeout(timer);
     timer = null;
     const s = presetsFor(activeEngine.value);
     if (!s.schema.value && s.loading.value) return;
@@ -912,6 +920,7 @@ export function startPresets(): void {
       markSliceInputsChanged();
     }
   };
+  flushNow = flush;
   watch(
     () => {
       const s = presetsFor(activeEngine.value);
@@ -920,6 +929,20 @@ export function startPresets(): void {
     () => { if (timer) clearTimeout(timer); timer = setTimeout(flush, 120); },
     { deep: true, immediate: true },
   );
+}
+
+/**
+ * Wait until the active engine's presets have finished loading (first-run
+ * printer install, catalog, schema) and `resolvedConfig` reflects them, so a
+ * slice started straight after page load uses the selected printer.
+ */
+export async function presetsSettled(timeoutMs = 60_000): Promise<void> {
+  startPresets();
+  const s = presetsFor(activeEngine.value);
+  const deadline = Date.now() + timeoutMs;
+  await Promise.race([s.ready, new Promise((r) => setTimeout(r, timeoutMs))]);
+  while (s.loading.value > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+  flushNow?.();
 }
 
 function sameConfig(a: FlatConfig, b: FlatConfig): boolean {

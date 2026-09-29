@@ -47,7 +47,7 @@ const workspace = computed(() => cloud.workspaces.find((w) => w.id === wsId.valu
 const wsItems = computed(() => cloud.workspaces.map((w) => ({ value: w.id, label: w.writable ? w.name : `${w.name} (read-only)` })));
 
 /** Extension the current mode writes (save / export). */
-const ext = computed(() => mode.value === 'save' ? '.cubbyslice' : exportKind.value === 'gcode' ? '.gcode' : '.3mf');
+const ext = computed(() => mode.value === 'save' ? '.3mf' : exportKind.value === 'gcode' ? '.gcode' : '.3mf');
 
 function relevant(f: CloudFile): boolean {
   const p = f.path.toLowerCase();
@@ -215,7 +215,6 @@ function when(s?: string): string {
 function iconFor(r: Row): string {
   if (r.kind === 'dir') return 'i-lucide-folder';
   const p = r.name.toLowerCase();
-  if (p.endsWith('.cubbyslice')) return 'i-lucide-layers';
   if (p.endsWith('.gcode')) return 'i-lucide-file-code';
   return 'i-lucide-box';
 }
@@ -267,7 +266,7 @@ function iconFor(r: Row): string {
           <div class="cd__list" role="listbox" :aria-busy="filesLoading">
             <div v-if="filesLoading" class="cd__center"><UIcon name="i-lucide-loader-circle" class="animate-spin size-4" /> Loading files…</div>
             <p v-else-if="!rows.length" class="cd__empty">
-              {{ mode === 'open' ? 'No projects or models here. Supported: .cubbyslice, STL, OBJ, 3MF, STEP.' : `No ${ext} files here yet.` }}
+              {{ mode === 'open' ? 'No projects or models here. Supported: 3MF (including Orca projects), STL, OBJ, STEP.' : `No ${ext} files here yet.` }}
             </p>
             <div v-for="r in rows" v-else :key="r.path" class="cd__row" role="option" :aria-selected="r.kind === 'file' && r.path === targetPath"
                  :class="{ on: r.kind === 'file' && r.path === targetPath }" tabindex="0" @click="pick(r)" @keydown.enter="pick(r)"

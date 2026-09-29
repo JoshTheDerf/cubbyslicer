@@ -2,7 +2,7 @@
  * CubbyCAD workspace storage client (the editor's RemoteFsBackend contract:
  * cad-project/docs/workspace-backend/http-contract.md), trimmed to what the
  * slicer needs: sign-in state, workspaces, and the workspace's asset files
- * (models, .cubbyslice projects, exported G-code / 3MF).
+ * (models, project 3MFs, exported G-code).
  *
  * Same origin as the slicer (cubbycad.com/cubby): Directus keeps the session
  * in httpOnly cookies, so every call is `credentials: 'include'` and the

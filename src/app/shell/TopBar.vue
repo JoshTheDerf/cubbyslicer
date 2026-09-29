@@ -15,6 +15,7 @@ import { compact, phone, sidebarOpen } from './uiState';
 import { cloud, isCloudDirty } from '../../cloud/store';
 import { isLocalDirty, local } from '../../localfs/store';
 import { cloudOpenDialog } from '../../cloud/commands';
+import BridgeChip from '../../bridge/BridgeChip.vue';
 
 const views = [
   { value: 'prepare', label: 'Prepare', icon: 'i-lucide-box' },
@@ -82,6 +83,7 @@ function onName(e: Event) {
       </UTooltip>
       <input class="top__name" :value="projectName" aria-label="Project name" spellcheck="false" maxlength="80"
              @change="onName" @keydown.enter="($event.target as HTMLInputElement).blur()" />
+      <BridgeChip />
       <UTooltip v-if="!phone" text="Search commands" :kbds="bindingTokensOf('help.palette')">
         <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="sm" aria-label="Search commands" @click="run('help.palette')" />
       </UTooltip>

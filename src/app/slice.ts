@@ -12,13 +12,15 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import { getSchema, SliceCancelled, SliceError, sliceJob } from '../engine/client';
 import type { FlatConfig, SliceJob, SliceReport, SliceResult } from '../engine/types';
 import { splitOrcaCompat } from '../presets/preflight/convert';
-import { activePlate, getSliceObjects, plates, plateSliceSignature, setActivePlate } from '../project/store';
+import { activePlate, getSliceObjects, plates, plateSliceSignature, projectLoads, setActivePlate } from '../project/store';
 import { activeEngine, activeView, lastSlice, resolvedConfig } from './state';
 import { applyPlateConfig } from '../plates/store';
+import { presetsSettled } from '../presets/store';
 import { calibJobOptions, calibSignature } from '../calibration/state';
 import { saveBytes } from './shell/download';
 import { toast } from '../ui';
 import { GCODE_TYPES, fileInFolder, folderAccessSupported, writeHandle } from '../localfs/store';
+import { withGcodeThumbnails } from '../project/thumbnails';
 
 export type SliceStatus = 'idle' | 'slicing' | 'done' | 'error';
 
@@ -65,6 +67,9 @@ watch(activePlate, (p) => { lastSlice.value = resultFor(p)?.result ?? null; });
 // Results are keyed by plate index: deleting (or inserting before the end)
 // shifts indices, so drop them rather than show another plate's G-code.
 // Appending a plate — the common case — keeps them.
+// A different project: nothing sliced yet (sync, so a project's own G-code can be loaded right after).
+watch(projectLoads, () => { plateSlices.value = []; lastSlice.value = null; status.value = 'idle'; }, { flush: 'sync' });
+
 watch(() => plates.value.map((p) => p), (next, prev) => {
   const appended = next.length > prev.length && prev.every((p, i) => p === next[i]);
   if (appended || next.length === prev.length) return;
@@ -108,8 +113,9 @@ async function slicePlate(plate: number, label: string): Promise<boolean> {
   progress.value = 0;
   message.value = 'Starting engine';
   const prefix = plates.value.length > 1 ? `${label}: ` : '';
-  const result = await sliceJob(
-    await buildJob(objects, plate),
+  const job = await buildJob(objects, plate);
+  const sliced = await sliceJob(
+    job,
     (p) => {
       // OrcaSlicer reports each step per object (4% → 13% → 4% → 13% … on a
       // multi-object plate) and G-code export restarts its own scale. Only
@@ -120,6 +126,10 @@ async function slicePlate(plate: number, label: string): Promise<boolean> {
     },
     abort!.signal,
   );
+  // The printer's G-code thumbnails, rendered once here from the objects that
+  // were sliced: every export / upload of this result reuses them.
+  message.value = prefix + 'Rendering thumbnails';
+  const result = await withGcodeThumbnails(sliced, job.config, objects);
   const next = plateSlices.value.slice();
   next[plate] = { result, signature: sig };
   plateSlices.value = next;
@@ -135,6 +145,10 @@ async function run(plateList: number[], opts: { showLast: boolean }): Promise<bo
   errorReport.value = null;
   let last = -1;
   try {
+    // On a phone the sidebar may never have been opened: make sure the selected
+    // printer / presets are loaded before building the job.
+    message.value = 'Loading printer profile';
+    await presetsSettled();
     for (const p of plateList) {
       if (!(await slicePlate(p, `Plate ${p + 1}`))) return false;
       last = p;
@@ -197,6 +211,18 @@ function download(r: SliceResult, name: string): void {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+
+/**
+ * Show G-code that came with a project (Orca sliced 3MF) as plate `plate`'s
+ * result. It's marked outdated right away (it wasn't sliced from this app's
+ * config), so Slice plate re-slices it.
+ */
+export function loadPlateGcode(plate: number, gcode: Uint8Array): void {
+  const next = plateSlices.value.slice();
+  next[plate] = { result: { engine: activeEngine.value, gcode, report: { ok: true, error: null, warnings: [], stats: null } }, signature: 'loaded' };
+  plateSlices.value = next;
+  if (plate === activePlate.value) lastSlice.value = next[plate]!.result;
 }
 
 /** The active plate's sliced G-code and its export name (null = not sliced). */

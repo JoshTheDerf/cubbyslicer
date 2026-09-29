@@ -1,10 +1,14 @@
+<p align="center"><img src="docs/logo.svg" width="120" alt="Cubby Slicer logo"></p>
+
 # Cubby Slicer
 
-A browser slicer built on OrcaSlicer, preFlight and Full Spectrum compiled to WebAssembly. It's the slicer for [CubbyCAD](https://cubbycad.com), live at [cubbycad.com/slicer](https://cubbycad.com/slicer).
+A browser slicer built on OrcaSlicer, preFlight and Full Spectrum compiled to WebAssembly, live at [cubbycad.com/slicer](https://cubbycad.com/slicer).
+
+It's the companion slicer for the [CubbyCAD editor](https://cubbycad.com/editor), a browser-based 3D CAD editor with CSG modeling, a 3D sketcher, a modifier stack and SDF sculpting. File ▸ Open Slicer in the editor sends the current model here.
 
 ![Prepare view](docs/screenshots/prepare.png)
 
-The UI follows OrcaSlicer: plates, parts and modifiers, painting (support, seam, colour, fuzzy skin), cut with connectors, variable layer height, height ranges, calibration, print host upload, and Orca's full profile library. Projects save as `.cubbyslice`, locally or to CubbyCAD workspaces.
+The UI follows OrcaSlicer: plates, parts and modifiers, painting (support, seam, colour, fuzzy skin), cut with connectors, variable layer height, height ranges, calibration, print host upload, and Orca's full profile library. Projects save as OrcaSlicer-compatible 3MF (desktop Orca and Bambu Studio open them as projects), locally or to CubbyCAD workspaces, and Orca / Bambu project 3MFs open here with their plates, parts, painting and settings.
 
 | | |
 |---|---|

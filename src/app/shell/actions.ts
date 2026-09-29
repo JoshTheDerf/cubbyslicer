@@ -10,16 +10,17 @@ import { addCompanionMtl, offerObjColors } from '../../tools/objcolor/request';
 import { openTool } from '../../tools/state';
 import { build3mf } from '../../project/export/threemf';
 import { buildStl } from '../../project/export/stl';
-import { PROJECT_EXT, buildProjectFile, openProjectFile } from '../../project/persistence/projectFile';
+import { SAVE_EXT, buildOrca3mfWithThumbnails } from '../../project/persistence/orca3mfWriter';
 import { resetSections } from '../../project/persistence/sections';
 import {
   activePlate, addParsedObjects, addPlate, arrangeObjects, centerObjects, clearAll, clearPlate, clearSelection, copyObjects,
   deletePlate, dropToBed, duplicateObjects, getMesh, mirrorObjects, objectIssues, objects, objectsOnPlate, pasteObjects, plates,
   projectName, redo, removeInstance, removeObjects, resetProject, rotateObjects, scaleToFit, select, selectAll, selectedIds,
   setActivePlate, setPlateLocked, setPrintable, setTransforms, setVisible, splitToObjects, splitToParts, translateObjects, undo,
-  addPart,
+  addPart, endGesture,
   type ObjectClipboard,
 } from '../../project/store';
+import { NudgeBurst } from '@cubby/shared/nudge';
 import { plateLabel } from '../../project/plates';
 import { PRIMITIVE_LABELS, primitiveFor, type PrimitiveKind } from '../../project/primitives';
 import { PART_TYPE_LABELS, type PartType } from '../../project/types';
@@ -31,7 +32,7 @@ import { nextTick } from 'vue';
 import { dismissToast } from '../../ui';
 import { downloadBytes, pickFiles, safeFileName, saveBytes } from './download';
 import type { SliceControllerLike } from './external';
-import { confirmAction, setClipboard, ui } from './uiState';
+import { chooseAction, confirmAction, setClipboard, ui } from './uiState';
 import { preferences } from '../preferences';
 import { setCloudLocation } from '../../cloud/store';
 import { folderAccessSupported, setLocalLocation, STL_TYPES, THREEMF_TYPES } from '../../localfs/store';
@@ -52,6 +53,13 @@ export async function importBuffer(name: string, buffer: ArrayBuffer): Promise<s
   if (buffer.byteLength > LIMITS.maxFileBytes) {
     toast.error(`${name} is too large to import.`, { detail: `The limit is ${LIMITS.maxFileBytes / 1048576} MB.` });
     return [];
+  }
+  if (/\.3mf$/i.test(name)) {
+    const { sniffOrcaProject } = await import('../../project/import/orca3mf');
+    if (sniffOrcaProject(buffer)) {
+      const r = await openOrca3mf(name, buffer);
+      if (r !== 'models') return r;
+    }
   }
   try {
     const res = await withBusy(`Importing ${name}…`, () => parseModelFile(name, buffer));
@@ -75,19 +83,51 @@ export async function importBuffer(name: string, buffer: ArrayBuffer): Promise<s
   }
 }
 
-/** Import dropped / picked files. Project files open; models are added to the plate. */
+/**
+ * An OrcaSlicer / Bambu Studio project 3MF: open it as a project (plates,
+ * parts, settings, sliced G-code; replaces the current plate) or, on request,
+ * import just its models. Returns the new object ids, or 'models' to fall
+ * back to a plain mesh import.
+ */
+async function openOrca3mf(name: string, buffer: ArrayBuffer): Promise<string[] | 'models'> {
+  if (objects.value.length) {
+    const choice = await chooseAction({
+      title: `Open ${name}?`,
+      message: 'This is an OrcaSlicer project. Open it as a project (plates, parts and settings) to replace the current plate, or import just its models.',
+      confirmLabel: 'Open project',
+      altLabel: 'Import models',
+    });
+    if (choice === null) return [];
+    if (choice === 'alt') return 'models';
+  }
+  try {
+    const { openOrcaProject } = await import('../../project/orcaOpen');
+    const r = await withBusy(`Opening ${name}…`, () => openOrcaProject(name, buffer));
+    setCloudLocation(null);
+    setLocalLocation(null); // no file handle: Ctrl+S asks where to save
+    activeView.value = r.sliced && !r.objects ? 'preview' : 'prepare';
+    const what = [`${r.objects} object${r.objects === 1 ? '' : 's'}`, `${r.plates} plate${r.plates === 1 ? '' : 's'}`, r.sliced ? `G-code for ${r.sliced} plate${r.sliced === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ');
+    if (r.warnings.length) toast.warn(`Opened ${name} (${what}).`, { detail: r.warnings.slice(0, 8).join('\n') });
+    else toast.success(`Opened ${name} (${what}).`);
+    return objects.value.map((o) => o.id);
+  } catch (e) {
+    const msg = e instanceof ImportError ? e.message : `${(e as Error)?.message ?? e}`;
+    toast.error(`Couldn't open ${name}.`, { detail: msg });
+    return [];
+  }
+}
+
+/** Import dropped / picked files. Project 3MFs open as projects; models are added to the plate. */
 export async function importFiles(files: Iterable<File>): Promise<void> {
   const list = [...files];
-  const projects = list.filter((f) => f.name.toLowerCase().endsWith(PROJECT_EXT));
   const models = list.filter((f) => isModelFileName(f.name));
   // Companions: .mtl colours for OBJs, .svg opens the SVG emboss tool.
   const mtls = list.filter((f) => /\.mtl$/i.test(f.name));
   const svgs = list.filter((f) => /\.svg$/i.test(f.name));
   for (const f of mtls) { try { addCompanionMtl(await f.text()); } catch { /* unreadable */ } }
   if (svgs.length) { try { openTool('svg', { svgFile: { name: svgs[0].name, text: await svgs[0].text() } }); } catch { /* unreadable */ } }
-  const other = list.filter((f) => !projects.includes(f) && !models.includes(f) && !mtls.includes(f) && !svgs.includes(f));
-  if (other.length) toast.warn(`Skipped ${other.map((f) => f.name).join(', ')}.`, { detail: 'Supported files: STL, OBJ (+MTL), 3MF, STEP, SVG and .cubbyslice projects.' });
-  if (projects.length) await openProjectFromFile(projects[0]);
+  const other = list.filter((f) => !models.includes(f) && !mtls.includes(f) && !svgs.includes(f));
+  if (other.length) toast.warn(`Skipped ${other.map((f) => f.name).join(', ')}.`, { detail: 'Supported files: STL, OBJ (+MTL), 3MF (including OrcaSlicer projects), STEP and SVG.' });
   let added = 0;
   for (const f of models) {
     if (f.size > LIMITS.maxFileBytes) {
@@ -102,7 +142,7 @@ export async function importFiles(files: Iterable<File>): Promise<void> {
 }
 
 export async function importDialog(): Promise<void> {
-  const files = await pickFiles(`${MODEL_ACCEPT},${PROJECT_EXT}`, true);
+  const files = await pickFiles(MODEL_ACCEPT, true);
   if (files.length) await importFiles(files);
 }
 
@@ -126,48 +166,20 @@ export async function newProject(): Promise<void> {
 }
 
 export function saveProject(): void {
-  try {
-    const bytes = buildProjectFile();
-    downloadBytes(bytes, `${safeFileName(projectName.value, 'project')}${PROJECT_EXT}`, 'application/zip');
-    toast.success('Project saved.');
-  } catch (e) {
-    toast.error("Couldn't save the project.", { detail: (e as Error)?.message });
-  }
-}
-
-async function openProjectFromFile(f: File): Promise<boolean> {
-  let buf: ArrayBuffer;
-  try { buf = await f.arrayBuffer(); } catch { toast.error(`Couldn't read ${f.name}.`); return false; }
-  const ok = await openProjectBuffer(f.name, buf);
-  if (ok) { setCloudLocation(null); setLocalLocation(null); } // no handle: nothing to save back to
-  return ok;
-}
-
-/** Replace the plate with a .cubbyslice project (asks first if the plate isn't empty). */
-export async function openProjectBuffer(fileName: string, buf: ArrayBuffer): Promise<boolean> {
-  if (objects.value.length) {
-    const ok = await confirmAction({
-      title: `Open ${fileName}?`,
-      message: 'This replaces the current plate. Save it first if you want to keep it.',
-      confirmLabel: 'Open project',
-    });
-    if (!ok) return false;
-  }
-  try {
-    const r = await withBusy(`Opening ${fileName}…`, async () => openProjectFile(buf));
-    activeView.value = 'prepare';
-    if (r.warnings.length) toast.warn(`Opened ${r.name} with warnings.`, { detail: r.warnings.slice(0, 6).join('\n') });
-    else toast.success(`Opened ${r.name}.`);
-    return true;
-  } catch (e) {
-    toast.error(`Couldn't open ${fileName}.`, { detail: (e as Error)?.message });
-    return false;
-  }
+  void (async () => {
+    try {
+      const bytes = await buildOrca3mfWithThumbnails();
+      downloadBytes(bytes, `${safeFileName(projectName.value, 'project')}${SAVE_EXT}`, 'model/3mf');
+      toast.success('Project saved.');
+    } catch (e) {
+      toast.error("Couldn't save the project.", { detail: (e as Error)?.message });
+    }
+  })();
 }
 
 export async function openProjectDialog(): Promise<void> {
-  const [f] = await pickFiles(PROJECT_EXT, false);
-  if (f) await openProjectFromFile(f);
+  const [f] = await pickFiles('.3mf', false);
+  if (f) await importFiles([f]);
 }
 
 // ---- export ------------------------------------------------------------------
@@ -412,8 +424,13 @@ export function pasteClipboard(): void {
 
 export function deleteAll(): void { if (objects.value.length) clearAll(); }
 
+/** Seals a burst of arrow nudges as one undo step once the keys go idle (@cubby/shared/nudge). */
+const nudgeBurst = new NudgeBurst(endGesture);
+
 export function nudge(dx: number, dy: number): void {
-  if (selectedIds.value.length) translateObjects([dx, dy, 0]);
+  if (!selectedIds.value.length) return;
+  translateObjects([dx, dy, 0]);
+  nudgeBurst.bump();
 }
 
 // ---- Auto Orient (OrcaSlicer AutoOrienter in the engine worker) ----------------------

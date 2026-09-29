@@ -93,10 +93,10 @@ export async function ensurePermission(handle: FileSystemHandle, mode: 'read' | 
 
 // ---- pickers ----
 
-export const PROJECT_TYPES: FilePickerAcceptType[] = [{ description: 'Cubby Slicer project', accept: { 'application/zip': ['.cubbyslice'] } }];
+export const PROJECT_TYPES: FilePickerAcceptType[] = [{ description: '3MF project (OrcaSlicer compatible)', accept: { 'model/3mf': ['.3mf'] } }];
 export const MODEL_TYPES: FilePickerAcceptType[] = [{
   description: 'Models and projects',
-  accept: { 'application/octet-stream': ['.stl', '.obj', '.mtl', '.3mf', '.step', '.stp', '.svg', '.cubbyslice'] },
+  accept: { 'application/octet-stream': ['.stl', '.obj', '.mtl', '.3mf', '.step', '.stp', '.svg'] },
 }];
 export const GCODE_TYPES: FilePickerAcceptType[] = [{ description: 'G-code', accept: { 'text/x-gcode': ['.gcode'] } }];
 export const THREEMF_TYPES: FilePickerAcceptType[] = [{ description: '3MF', accept: { 'model/3mf': ['.3mf'] } }];

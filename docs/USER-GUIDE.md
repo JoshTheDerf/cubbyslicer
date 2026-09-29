@@ -10,6 +10,8 @@ Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full S
 
 ## Files
 
+Projects are 3MF files in OrcaSlicer's project format, so desktop OrcaSlicer and Bambu Studio open them with their plates, parts, painting and settings. Opening an Orca or Bambu project 3MF works the other way round. Sliced 3MFs show each plate's G-code in the preview until you re-slice.
+
 Ctrl+O, Ctrl+I and Ctrl+S use the browser's native file dialogs where the File System Access API exists (Chrome, Edge and other Chromium browsers).
 
 - Ctrl+S saves back to the file you opened. The first time, it asks where to save. Ctrl+Alt+S saves as.
@@ -45,10 +47,24 @@ Colour mixing settings (under the list) hold the global options: Local-Z minimum
 
 ## Model hand-off
 
-The CubbyCAD editor sends the current model with File ▸ Open Slicer. Other apps can do the same:
+The [CubbyCAD editor](https://cubbycad.com/editor) sends the current model with File ▸ Open Slicer. Other apps can do the same:
 
 - `?model=<url>` loads a model on startup (the URL must allow CORS).
 - Open `/slicer/?handoff=<id>`, wait for `{ type: 'cubby-slicer:ready', handoff: id }` on `BroadcastChannel('cubby-slicer-handoff')`, then post `{ type: 'cubby-slicer:model', handoff: id, stl, name }` (same origin only). This works across the slicer's cross-origin isolation, which the older `window.opener` `postMessage` path doesn't.
+
+## Claude Code
+
+Claude Code can drive the slicer (and the CubbyCAD editor) through cubby-mcp, a small MCP server that runs on your computer. Nothing leaves your machine: the tab connects to `ws://127.0.0.1:18711`, and cubbycad.com has no server side for this.
+
+1. Add the server once: `claude mcp add cubby -- npx -y cubby-mcp`.
+2. In Claude Code, ask for the pairing code (Claude reads it with `cubby_status`).
+3. Here, Help ▸ Connect to Claude Code, paste the code, Connect. Or open `/slicer/?claude=<code>`, which fills it in.
+
+The code works once. The tab keeps a token for this site, so later connections only need Connect. Tick "Reconnect when this page loads" to skip that too; Disconnect turns it off again, and Forget pairing drops the token. The top bar shows a robot icon while Claude is connected.
+
+Claude can list and pick printer, process and filament presets, import models (from CubbyCAD with `cad_to_slicer`, a file on your computer or a URL), arrange, change settings, slice, export G-code or 3MF, and set up and use a print host. Uploading and printing always ask you here first. Tick "Allow without asking until I disconnect" if you don't want to confirm each one.
+
+Chrome's Local Network Access: on `https://cubbycad.com` the browser asks once whether the site may reach devices on your local network. Allow it. If you blocked it, reopen the padlock ▸ Site settings ▸ Local network access. Firefox allows `127.0.0.1` from https pages. Safari may block it; use Chrome, Edge or Firefox.
 
 ## Multi-threading
 

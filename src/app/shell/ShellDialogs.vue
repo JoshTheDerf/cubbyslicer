@@ -58,7 +58,7 @@ const confirmOpen = computed({
   get: () => !!confirmRequest.value,
   set: (v: boolean) => { if (!v) answer(false); },
 });
-function answer(ok: boolean) {
+function answer(ok: boolean | 'alt') {
   const r = confirmRequest.value;
   confirmRequest.value = null;
   r?.resolve(ok);
@@ -128,6 +128,7 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
     <template #footer>
       <div class="flex justify-end gap-2 w-full">
         <UButton color="neutral" variant="ghost" label="Cancel" @click="answer(false)" />
+        <UButton v-if="confirmRequest?.altLabel" color="neutral" variant="outline" :label="confirmRequest.altLabel" @click="answer('alt')" />
         <UButton :color="confirmRequest?.danger ? 'error' : 'primary'" :label="confirmRequest?.confirmLabel" autofocus @click="answer(true)" />
       </div>
     </template>

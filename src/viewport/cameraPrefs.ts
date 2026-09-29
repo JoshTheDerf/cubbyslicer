@@ -5,13 +5,15 @@
  * Used by the Prepare viewport and the G-code preview.
  */
 import { MOUSE, Plane, Raycaster, Vector2, Vector3, type Camera, type Object3D } from 'three';
+import { setPickRayFromCamera } from '@cubby/shared/gizmo';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { watch } from 'vue';
 import { preferences } from '../app/preferences';
 
 export interface CameraPrefsTarget {
   controls: OrbitControls;
-  camera: Camera;
+  /** The camera, or a getter for a view that switches projection. */
+  camera: Camera | (() => Camera);
   /** Element receiving pointer events (the canvas' container). */
   host: HTMLElement;
   /** Objects to pick the orbit centre on (falls back to the bed plane z = 0). */
@@ -40,11 +42,12 @@ export function bindCameraPrefs(t: CameraPrefsTarget): () => void {
   // ---- orbit around the cursor point -----------------------------------------------------
   const ray = new Raycaster();
   let drag: { id: number; x: number; y: number; pivot: Vector3 } | null = null;
+  const camera = () => (typeof t.camera === 'function' ? t.camera() : t.camera);
   const buttonFor = (b: number): MOUSE | null | undefined => (b === 0 ? c.mouseButtons.LEFT : b === 1 ? c.mouseButtons.MIDDLE : b === 2 ? c.mouseButtons.RIGHT : null);
 
   function pivotAt(x: number, y: number): Vector3 {
     const r = t.host.getBoundingClientRect();
-    ray.setFromCamera(new Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), t.camera);
+    setPickRayFromCamera(ray, new Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), camera());
     const roots = t.pickRoots?.() ?? [];
     const hit = ray.intersectObjects(roots, true).find((h) => h.object.visible && (h.object as { isMesh?: boolean }).isMesh);
     if (hit) return hit.point.clone();
@@ -65,7 +68,7 @@ export function bindCameraPrefs(t: CameraPrefsTarget): () => void {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     drag.x = e.clientX; drag.y = e.clientY;
     const k = (2 * Math.PI * c.rotateSpeed) / Math.max(1, r.height);
-    rotateAbout(t.camera, c.target, drag.pivot, -dx * k, dy * k);
+    rotateAbout(camera(), c.target, drag.pivot, -dx * k, dy * k);
     c.update();
     t.requestRender?.();
   };

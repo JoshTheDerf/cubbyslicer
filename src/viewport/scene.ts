@@ -9,11 +9,13 @@
 import {
   AmbientLight, Box3, MOUSE, BufferAttribute, BufferGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide,
   Float32BufferAttribute, Group, HemisphereLight, LineBasicMaterial, LineSegments, Matrix3, Matrix4, Mesh, MeshBasicMaterial,
-  MeshStandardMaterial, Object3D, PerspectiveCamera, Plane, Raycaster, Scene, Sphere, Vector2, Vector3, WebGLRenderer,
+  MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Raycaster, Scene, Sphere, Vector2, Vector3, WebGLRenderer,
   type Intersection, type Ray,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { CameraProjection, type CameraType } from '@cubby/shared/camera';
+import { setPickRayFromCamera, setTouchScale, TransformGizmo } from '@cubby/shared/gizmo';
 import type { BedShape } from '../app/state';
 import type { Quat, Vec3 } from '../project/math';
 import type { MeshData, ProjectObject } from '../project/types';
@@ -101,9 +103,17 @@ const HOVER_FULL_RAYCAST_MAX_TRIS = 400_000;
 export class PrepareScene {
   readonly renderer: WebGLRenderer;
   readonly scene = new Scene();
-  readonly camera = new PerspectiveCamera(35, 1, 0.5, 50000);
+  /** Perspective / orthographic pair (@cubby/shared/camera); `camera` is the active one. */
+  readonly projection = new CameraProjection({
+    perspectiveCamera: new PerspectiveCamera(35, 1, 0.5, 50000),
+    orthographic: { near: -50000, far: 50000 },
+    onChange: (cam) => this.onCameraChange(cam),
+  });
   readonly orbit: OrbitControls;
-  readonly gizmo: TransformControls;
+  /** CubbyCAD's edit gizmo (@cubby/shared), run Z-up in bed coordinates. */
+  readonly gizmo: TransformGizmo;
+  /** The gizmo's dimension labels and rotation readout (DOM, over the canvas). */
+  private labels: CSS2DRenderer;
   private theme: ViewportTheme;
   private bedGroup: Group | null = null;
   private bed: BedShape | null = null;
@@ -121,12 +131,11 @@ export class PrepareScene {
   private selected = new Set<string>();
   private hovered: string | null = null;
   private selectionBox: LineSegments;
-  private pivot = new Object3D();
+  /** What the gizmo drag moves (the gizmo writes the meshes' transforms). */
   private dragStart: {
-    pivotInv: Matrix4;
-    items: Array<{ entry: Entry; matrix: Matrix4 }>;
-    /** Dragging one part of an object: its world matrix at drag start + the object's inverse world matrix. */
-    part?: { objectId: string; partId: string; mesh: Mesh; world: Matrix4; parentInv: Matrix4 };
+    items: Entry[];
+    /** Dragging one part of an object. */
+    part?: { objectId: string; partId: string; mesh: Mesh };
   } | null = null;
   /** Part picked in the object list: the gizmo manipulates it instead of the whole object. */
   private activePart: { objectId: string; partId: string } | null = null;
@@ -140,7 +149,8 @@ export class PrepareScene {
   private disposed = false;
   private down: { x: number; y: number; button: number; shift: boolean; ctrl: boolean; box: boolean } | null = null;
   private hoverPending: PointerEvent | null = null;
-  private anim: { from: Vector3; to: Vector3; tFrom: Vector3; tTo: Vector3; start: number; dur: number } | null = null;
+  /** Camera move in flight; `zFrom` / `zTo` animate the orthographic zoom. */
+  private anim: { from: Vector3; to: Vector3; tFrom: Vector3; tTo: Vector3; start: number; dur: number; zFrom?: number; zTo?: number } | null = null;
   private width = 1;
   private items: SceneItem[] = [];
   private pixelRatioCap: number;
@@ -161,8 +171,9 @@ export class PrepareScene {
     this.renderer.domElement.classList.add('vp-canvas');
     container.appendChild(this.renderer.domElement);
 
-    this.camera.up.set(0, 0, 1);
-    this.scene.add(this.camera);
+    this.projection.perspective.up.set(0, 0, 1);
+    this.projection.orthographic.up.set(0, 0, 1);
+    this.scene.add(this.projection.perspective, this.projection.orthographic);
 
     // Lighting matches the CubbyCAD editor (cad-project/src/core/Scene.ts
     // setupLights), converted from its Y-up world to our Z-up bed space.
@@ -205,15 +216,23 @@ export class PrepareScene {
     this.orbit.addEventListener('change', () => this.requestRender());
     this.orbit.addEventListener('start', () => { this.userCamera = true; });
 
-    this.gizmo = new TransformControls(this.camera, dom);
-    this.gizmo.setSize(0.85);
-    this.scene.add(this.gizmo.getHelper());
-    this.scene.add(this.pivot);
+    // Bigger handles for fingers (the editor uses the same factor on phones).
+    setTouchScale(typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches ? 1.7 : 1);
+    this.gizmo = new TransformGizmo(this.camera, dom, { up: 'z' });
+    // Objects stay on the bed, so moves are planar (no lift cone).
+    this.gizmo.setLiftVisible(false);
+    this.setSnapIncrement(0);
+    this.scene.add(this.gizmo.object);
+    // Grabbed from pointerdown (before the drag threshold), so a one-finger
+    // handle drag never also orbits on touch.
+    this.gizmo.addEventListener('grab-changed', (e) => { this.orbit.enabled = !e.value; this.requestRender(); });
+    this.gizmo.addEventListener('hover-changed', () => this.requestRender());
+    this.gizmo.addEventListener('drag-start', () => this.beginDrag());
     this.gizmo.addEventListener('change', () => this.requestRender());
-    this.gizmo.addEventListener('dragging-changed', (e) => { this.orbit.enabled = !(e as unknown as { value: boolean }).value; });
-    this.gizmo.addEventListener('mouseDown', () => this.beginDrag());
-    this.gizmo.addEventListener('objectChange', () => this.applyDrag());
-    this.gizmo.addEventListener('mouseUp', () => this.endDrag());
+    this.gizmo.addEventListener('drag-end', () => this.endDrag());
+    this.labels = new CSS2DRenderer();
+    this.labels.domElement.classList.add('vp-labels');
+    container.appendChild(this.labels.domElement);
 
     // Pointer handling — capture phase on the container so box-select can pre-empt orbit.
     const onDownCapture = (e: PointerEvent) => this.onPointerDownCapture(e);
@@ -222,7 +241,6 @@ export class PrepareScene {
     const onCtx = (e: MouseEvent) => { e.preventDefault(); };
     const onLeave = (e: PointerEvent) => { this.setHover(null); this.tool?.onPointer(this.toolEvent('leave', e)); };
     const onDbl = (e: MouseEvent) => { const hit = this.pick(e.clientX, e.clientY); if (hit) this.fitSelection(); };
-    const onKey = (e: KeyboardEvent) => this.setSnapping(e.shiftKey);
     container.addEventListener('pointerdown', onDownCapture, true);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -231,8 +249,6 @@ export class PrepareScene {
     dom.addEventListener('contextmenu', onCtx);
     dom.addEventListener('pointerleave', onLeave);
     dom.addEventListener('dblclick', onDbl);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('keyup', onKey);
     this.cleanup.push(() => {
       container.removeEventListener('pointerdown', onDownCapture, true);
       window.removeEventListener('pointermove', onMove);
@@ -241,8 +257,6 @@ export class PrepareScene {
       dom.removeEventListener('contextmenu', onCtx);
       dom.removeEventListener('pointerleave', onLeave);
       dom.removeEventListener('dblclick', onDbl);
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('keyup', onKey);
     });
 
     // Orca-style view cube (top-right). Optional: a failure here must not take the plater down.
@@ -279,8 +293,8 @@ export class PrepareScene {
     for (const c of this.cleanup) c();
     this.viewCube?.dispose();
     this.viewCube = null;
-    this.gizmo.detach();
     this.gizmo.dispose();
+    this.labels.domElement.remove();
     this.orbit.dispose();
     for (const e of this.entries.values()) e.mesh.material.dispose();
     for (const g of this.geometries.values()) g.geo.dispose();
@@ -303,9 +317,9 @@ export class PrepareScene {
     this.renderer.setSize(w, h, false);
     this.renderer.domElement.style.width = `${w}px`;
     this.renderer.domElement.style.height = `${h}px`;
-    const aspectChanged = Math.abs(this.camera.aspect - w / h) > 0.01;
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.labels.setSize(w, h);
+    const aspectChanged = Math.abs(this.projection.perspective.aspect - w / h) > 0.01;
+    this.projection.resize(w, h);
     this.viewCube?.update();
     // Until the user moves the camera, keep the plate framed (first layout,
     // rotating a phone, opening/closing the sidebar).
@@ -327,6 +341,10 @@ export class PrepareScene {
       const k = 1 - Math.pow(1 - t, 3);
       this.camera.position.lerpVectors(this.anim.from, this.anim.to, k);
       this.orbit.target.lerpVectors(this.anim.tFrom, this.anim.tTo, k);
+      if (this.anim.zTo !== undefined && this.camera instanceof OrthographicCamera) {
+        this.camera.zoom = this.anim.zFrom! + (this.anim.zTo - this.anim.zFrom!) * k;
+        this.camera.updateProjectionMatrix();
+      }
       if (t >= 1) this.anim = null; else again = true;
     }
     if (this.orbit.update()) again = true;
@@ -337,7 +355,9 @@ export class PrepareScene {
       // The cube caches DOM rects; after a display:none round trip it must be rebuilt.
       if (!this.wasVisible) this.viewCube?.update({ rebuild: true });
       this.updateCameraPlanes();
+      this.gizmo.update();
       this.renderer.render(this.scene, this.camera);
+      this.labels.render(this.scene, this.camera);
       this.viewCube?.render();
     }
     this.wasVisible = visible;
@@ -345,6 +365,8 @@ export class PrepareScene {
   }
 
   private updateCameraPlanes(): void {
+    // The orthographic camera keeps its wide fixed range (nothing to clip).
+    if (!(this.camera instanceof PerspectiveCamera)) return;
     const d = this.camera.position.distanceTo(this.orbit.target);
     const near = Math.max(0.1, d / 500), far = Math.max(5000, d * 20);
     if (Math.abs(this.camera.near - near) > near * 0.2 || this.camera.far !== far) {
@@ -418,7 +440,7 @@ export class PrepareScene {
   plateAt(clientX: number, clientY: number): number {
     if (!this.bed) return -1;
     const r = this.renderer.domElement.getBoundingClientRect();
-    this.raycaster.setFromCamera(new Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), this.camera);
+    setPickRayFromCamera(this.raycaster, new Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), this.camera);
     const hit = this.raycaster.ray.intersectPlane(new Plane(new Vector3(0, 0, 1), 0), new Vector3());
     return hit ? plateIndexAt(hit.x, hit.y, this.plateCount, this.bed) : -1;
   }
@@ -567,7 +589,7 @@ export class PrepareScene {
   }
 
   private removeEntry(e: Entry): void {
-    if (this.gizmo.object && this.dragStart?.items.some((i) => i.entry === e)) { this.gizmo.detach(); this.dragStart = null; }
+    if (this.dragStart?.items.includes(e)) { this.dragStart = null; this.gizmo.detach(); }
     for (const pe of e.parts) this.disposePart(e, pe);
     this.objectsGroup.remove(e.mesh);
     e.mesh.material.dispose();
@@ -591,7 +613,8 @@ export class PrepareScene {
   }
 
   private updateSelectionBox(): void {
-    const box = this.worldBoxOf(this.selectedEntries());
+    // The gizmo draws its own box around the selection.
+    const box = this.gizmo.attached ? null : this.worldBoxOf(this.selectedEntries());
     if (!box) { this.selectionBox.visible = false; return; }
     const { min: a, max: b } = box;
     const size = new Vector3().subVectors(b, a);
@@ -614,9 +637,18 @@ export class PrepareScene {
     this.mode = mode;
     this.gizmo.setMode(mode);
     this.gizmo.setSpace(mode === 'scale' ? 'local' : 'world');
-    this.gizmo.showZ = mode !== 'translate';
     this.updateGizmo();
     this.requestRender();
+  }
+
+  /**
+   * Grid snap (mm, 0 = off; @cubby/shared/snap). On: moves and box extents
+   * snap to it and rotation to 15°, Shift drags freely (CubbyCAD's rule).
+   * Off: Shift snaps to 5 mm / 15°, as three's TransformControls did here.
+   */
+  setSnapIncrement(v: number): void {
+    this.gizmo.setSnap(v > 0 ? v : 5);
+    this.gizmo.setShiftEngagesSnap(!(v > 0));
   }
 
   setLayOnFace(on: boolean): void {
@@ -625,12 +657,6 @@ export class PrepareScene {
     this.renderer.domElement.style.cursor = on ? 'crosshair' : '';
     this.updateGizmo();
     this.requestRender();
-  }
-
-  private setSnapping(on: boolean): void {
-    this.gizmo.setTranslationSnap(on ? 5 : null);
-    this.gizmo.setRotationSnap(on ? Math.PI / 12 : null);
-    this.gizmo.setScaleSnap(on ? 0.1 : null);
   }
 
   /** Mesh of the active part, when it belongs to the single selected object. */
@@ -646,62 +672,20 @@ export class PrepareScene {
     this.requestRender();
   }
 
+  /** (Re)attach the gizmo to the active part, the one selected object or the selection as a group. */
   private updateGizmo(): void {
     const sel = this.selectedEntries();
-    if (!sel.length || this.layOnFace || this.tool?.hideGizmo) { if (this.gizmo.object) this.gizmo.detach(); return; }
-    const pm = this.activePartMesh();
-    if (pm) {
-      pm.updateMatrixWorld(true);
-      pm.matrixWorld.decompose(this.pivot.position, this.pivot.quaternion, this.pivot.scale);
-    } else if (sel.length === 1) {
-      const m = sel[0].mesh;
-      this.pivot.position.copy(m.position);
-      this.pivot.quaternion.copy(m.quaternion);
-      this.pivot.scale.copy(m.scale);
-    } else {
-      const box = this.worldBoxOf(sel)!;
-      box.getCenter(this.pivot.position);
-      this.pivot.position.z = box.min.z;
-      this.pivot.quaternion.identity();
-      this.pivot.scale.set(1, 1, 1);
-    }
-    this.pivot.updateMatrixWorld(true);
-    if (this.gizmo.object !== this.pivot) this.gizmo.attach(this.pivot);
-  }
-
-  private beginDrag(): void {
-    this.pivot.updateMatrix();
-    const pm = this.activePartMesh();
-    if (pm && this.activePart) {
-      pm.updateMatrixWorld(true);
-      this.dragStart = {
-        pivotInv: this.pivot.matrix.clone().invert(), items: [],
-        part: { ...this.activePart, mesh: pm, world: pm.matrixWorld.clone(), parentInv: pm.parent!.matrixWorld.clone().invert() },
-      };
-      return;
-    }
-    this.dragStart = {
-      pivotInv: this.pivot.matrix.clone().invert(),
-      items: this.selectedEntries().map((entry) => { entry.mesh.updateMatrix(); return { entry, matrix: entry.mesh.matrix.clone() }; }),
-    };
-  }
-
-  private applyDrag(): void {
-    if (!this.dragStart) return;
-    this.pivot.updateMatrix();
-    const delta = this.pivot.matrix.clone().multiply(this.dragStart.pivotInv);
-    const part = this.dragStart.part;
-    if (part) {
-      // world' = delta · world, back into the object's frame.
-      part.parentInv.clone().multiply(delta.clone().multiply(part.world)).decompose(part.mesh.position, part.mesh.quaternion, part.mesh.scale);
-      this.updateSelectionBox();
-      return;
-    }
-    for (const { entry, matrix } of this.dragStart.items) {
-      const m = delta.clone().multiply(matrix);
-      m.decompose(entry.mesh.position, entry.mesh.quaternion, entry.mesh.scale);
-    }
+    if (!sel.length || this.layOnFace || this.tool?.hideGizmo) { if (this.gizmo.attached) this.gizmo.detach(); }
+    else this.gizmo.attach(this.activePartMesh() ?? (sel.length === 1 ? sel[0].mesh : sel.map((e) => e.mesh)));
     this.updateSelectionBox();
+  }
+
+  /** Same targets as updateGizmo attached; the gizmo applies each drag step to them. */
+  private beginDrag(): void {
+    const pm = this.activePartMesh();
+    this.dragStart = pm && this.activePart
+      ? { items: [], part: { ...this.activePart, mesh: pm } }
+      : { items: this.selectedEntries() };
   }
 
   private endDrag(): void {
@@ -717,7 +701,7 @@ export class PrepareScene {
       }, this.mode);
       return;
     }
-    const results: TransformResult[] = ds.items.map(({ entry }) => {
+    const results: TransformResult[] = ds.items.map((entry) => {
       const m = entry.mesh;
       return {
         id: entry.id,
@@ -734,7 +718,7 @@ export class PrepareScene {
   private setNdc(clientX: number, clientY: number): void {
     const r = this.renderer.domElement.getBoundingClientRect();
     this.ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
-    this.raycaster.setFromCamera(this.ndc, this.camera);
+    setPickRayFromCamera(this.raycaster, this.ndc, this.camera);
   }
 
   private visibleMeshes(): Mesh[] {
@@ -779,7 +763,7 @@ export class PrepareScene {
     if (e.target !== this.renderer.domElement) return;
     this.cancelLongPress();
     // Only the left button drives the gizmo; a right click over a handle still opens the object menu.
-    const overGizmo = e.button === 0 && !!this.gizmo.object && this.gizmo.axis !== null;
+    const overGizmo = e.button === 0 && this.gizmo.hitTest(e);
     const touch = e.pointerType === 'touch';
     this.touches.add(e.pointerId);
     // Touch: one finger orbits (OrbitControls), so no box selection; a long
@@ -839,7 +823,7 @@ export class PrepareScene {
       this.cb.onBoxRect({ x: x0, y: y0, w: Math.abs(e.clientX - d.x), h: Math.abs(e.clientY - d.y) });
       return;
     }
-    if (e.target !== this.renderer.domElement || this.gizmo.dragging || (e.buttons & 3)) return;
+    if (e.target !== this.renderer.domElement || this.gizmo.grabbed || (e.buttons & 3)) return;
     this.hoverPending = e;
     this.requestRender();
   }
@@ -992,6 +976,28 @@ export class PrepareScene {
 
   // ---- camera ------------------------------------------------------------------
 
+  get camera(): PerspectiveCamera | OrthographicCamera { return this.projection.camera; }
+  get cameraType(): CameraType { return this.projection.type; }
+
+  /** Perspective ↔ orthographic, keeping the view and its apparent scale at the orbit target. */
+  setCameraType(t: CameraType): void {
+    if (t === this.projection.type) return;
+    this.anim = null;
+    this.projection.setType(t, { controls: this.orbit });
+  }
+
+  /** Everything that captured the camera follows a projection switch. */
+  private onCameraChange(cam: PerspectiveCamera | OrthographicCamera): void {
+    this.gizmo.setCamera(cam);
+    this.viewCube?.setCamera(cam);
+    this.requestRender();
+  }
+
+  /** World size of one CSS pixel at `p`, for either projection. */
+  worldPerPixel(p: Vector3): number {
+    return this.projection.worldPerPixel(p, this.renderer.domElement.clientHeight || 600);
+  }
+
   private viewDir(p: ViewPreset): Vector3 {
     switch (p) {
       case 'top': return new Vector3(0, -0.0001, 1);
@@ -1012,18 +1018,26 @@ export class PrepareScene {
 
   private fitBox(box: Box3, dir?: Vector3, animate = true): void {
     const sphere = box.getBoundingSphere(new Sphere());
-    const fov = (this.camera.fov * Math.PI) / 180;
-    const fovMin = Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * this.camera.aspect));
+    const pc = this.projection.perspective;
+    const fov = (pc.fov * Math.PI) / 180;
+    const fovMin = Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * pc.aspect));
     const dist = Math.max(sphere.radius, 5) / Math.sin(fovMin / 2) * 1.08;
     const d = (dir ?? this.camera.position.clone().sub(this.orbit.target).normalize()).clone();
     const to = sphere.center.clone().addScaledVector(d, dist);
+    // Orthographic: same pose, and the zoom that fits the same sphere.
+    const cam = this.camera;
+    const zoom = cam instanceof OrthographicCamera ? this.projection.fitZoom(Math.max(sphere.radius, 5)) : undefined;
     const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!animate || reduce) {
       this.anim = null;
-      this.camera.position.copy(to);
+      cam.position.copy(to);
       this.orbit.target.copy(sphere.center);
+      if (zoom !== undefined) { cam.zoom = zoom; cam.updateProjectionMatrix(); }
     } else {
-      this.anim = { from: this.camera.position.clone(), to, tFrom: this.orbit.target.clone(), tTo: sphere.center.clone(), start: performance.now(), dur: 260 };
+      this.anim = {
+        from: cam.position.clone(), to, tFrom: this.orbit.target.clone(), tTo: sphere.center.clone(), start: performance.now(), dur: 260,
+        ...(zoom !== undefined ? { zFrom: cam.zoom, zTo: zoom } : {}),
+      };
     }
     this.requestRender();
   }
@@ -1040,8 +1054,16 @@ export class PrepareScene {
 
   fitBed(): void { this.fitBox(this.bedBox()); }
 
-  /** Dolly toward (+1) / away from (-1) the orbit target (Orca's I / O). */
+  /** Dolly toward (+1) / away from (-1) the orbit target (Orca's I / O); orthographic: zoom the frustum. */
   zoom(dir: 1 | -1): void {
+    const cam = this.camera;
+    if (cam instanceof OrthographicCamera) {
+      const t = this.orbit.target.clone();
+      const zTo = Math.min(1e4, Math.max(1e-3, cam.zoom * (dir > 0 ? 1.25 : 0.8)));
+      this.anim = { from: cam.position.clone(), to: cam.position.clone(), tFrom: t, tTo: t.clone(), start: performance.now(), dur: 160, zFrom: cam.zoom, zTo };
+      this.requestRender();
+      return;
+    }
     const offset = this.camera.position.clone().sub(this.orbit.target);
     const len = offset.length();
     const next = Math.min(20000, Math.max(5, len * (dir > 0 ? 0.8 : 1.25)));

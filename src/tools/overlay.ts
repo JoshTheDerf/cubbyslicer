@@ -57,14 +57,9 @@ export class ToolOverlay {
 
 export function render(): void { toolScene.value?.requestRender(); }
 
-/** World size of one screen pixel at `p` (perspective camera). */
+/** World size of one screen pixel at `p` (perspective or orthographic view). */
 export function worldPerPixel(p: Vector3): number {
-  const s = toolScene.value;
-  if (!s) return 0.1;
-  const cam = s.camera;
-  const d = cam.position.distanceTo(p);
-  const h = s.renderer.domElement.clientHeight || 600;
-  return (2 * d * Math.tan((cam.fov * Math.PI) / 360)) / h;
+  return toolScene.value?.worldPerPixel(p) ?? 0.1;
 }
 
 const onTop = { depthTest: false, depthWrite: false, transparent: true };

@@ -124,3 +124,21 @@ describe('project-level values', () => {
     expect(cfg.filament_colour).toEqual(['#111111', '#222222']);
   });
 });
+
+describe('invalid enum values', () => {
+  const enumSchema: ConfigSchema = {
+    engine: 'orca', version: 'test',
+    options: {
+      sparse_infill_pattern: { ...opt('enum', 'object', 'crosshatch'), enumValues: ['zigzag', 'cubic', 'crosshatch', 'gyroid'] },
+      top_surface_pattern: { ...opt('enum', 'object', 'monotonicline'), enumValues: ['monotonic', 'monotonicline'] },
+    },
+  };
+  it('falls back to cubic for an unknown sparse infill pattern (vendor typo)', () => {
+    expect(shapeValues(enumSchema, { sparse_infill_pattern: 'zig-zag' }).sparse_infill_pattern).toBe('cubic');
+  });
+  it('keeps valid values and uses the schema default elsewhere', () => {
+    const v = shapeValues(enumSchema, { sparse_infill_pattern: 'gyroid', top_surface_pattern: 'bogus' });
+    expect(v.sparse_infill_pattern).toBe('gyroid');
+    expect(v.top_surface_pattern).toBe('monotonicline');
+  });
+});

@@ -40,6 +40,9 @@ export default defineConfig({
       },
     }),
   ],
+  // @cubby/shared is a linked source package (file:../cubby-shared): resolve
+  // its three / vue / view-cube imports from this app, so there is one copy of each.
+  resolve: { dedupe: ['three', 'vue', 'three-viewport-gizmo'] },
   worker: { format: 'es' },
   assetsInclude: ['**/*.wasm'],
   build: {

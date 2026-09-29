@@ -5,6 +5,16 @@
     "types": ["vite/client"],
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "baseUrl": ".",
+    // @cubby/shared (file:../cubby-shared) is TypeScript source outside this
+    // tree: type its three / vue imports against THIS app's copies (same idea
+    // as `resolve.dedupe` in vite.config.ts).
+    "paths": {
+      "three": ["./node_modules/@types/three"],
+      "three/addons/*": ["./node_modules/@types/three/examples/jsm/*"],
+      "three/examples/jsm/*": ["./node_modules/@types/three/examples/jsm/*"],
+      "vue": ["./node_modules/vue"],
+      "three-viewport-gizmo": ["./node_modules/three-viewport-gizmo"]
+    },
 
     "strict": true,
     "noUncheckedIndexedAccess": false,

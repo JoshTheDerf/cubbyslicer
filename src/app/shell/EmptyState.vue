@@ -12,7 +12,7 @@ import { touch } from './uiState';
         <path d="M22 44.5l26 15 26-15M22 38l26 15 26-15M22 31.5l26 15 26-15" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" opacity="0.85" />
       </svg>
       <h2 class="text-base font-semibold text-highlighted mb-1.5">{{ touch ? 'Add a model to start' : 'Drop models here to start' }}</h2>
-      <p class="text-sm text-toned">STL, OBJ and 3MF files, or a saved .cubbyslice project.{{ touch ? '' : ' You can drop several at once.' }}</p>
+      <p class="text-sm text-toned">STL, OBJ, STEP and 3MF files, including OrcaSlicer and Bambu Studio projects.{{ touch ? '' : ' You can drop several at once.' }}</p>
       <div class="flex flex-wrap justify-center gap-2 mt-4 mb-3">
         <UButton color="primary" icon="i-lucide-file-input" label="Import model…" @click="run('file.import')" />
         <UButton color="neutral" variant="ghost" icon="i-lucide-folder-open" label="Open project…" @click="run('file.open')" />

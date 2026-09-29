@@ -12,7 +12,7 @@ describe('formatBinding', () => {
     expect(formatBinding({ key: 'k', ctrlOrMeta: true }, 'mac')).toBe('⌘K');
   });
   it('labels special keys and codes', () => {
-    expect(formatBinding({ key: 'delete' }, 'other')).toBe('Del');
+    expect(formatBinding({ key: 'delete' }, 'other')).toBe('Delete');
     expect(formatBinding({ key: 'escape' }, 'other')).toBe('Esc');
     expect(formatBinding({ key: ' ' }, 'other')).toBe('Space');
     expect(formatBinding({ key: '?' }, 'other')).toBe('?');

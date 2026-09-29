@@ -74,9 +74,30 @@ export function shapeValues(schema: ConfigSchema | null, values: Record<string, 
     if (v === undefined || v === null) continue;
     const def = schema?.options[k];
     if (schema && !def && !k.startsWith(ORCA_COMPAT_PREFIX)) continue;
-    out[k] = normalizeValue(def, v);
+    out[k] = validEnum(def, k, normalizeValue(def, v));
   }
   return out;
+}
+
+/**
+ * Where an invalid enum value falls back to, when the schema default isn't the
+ * right choice. (Some vendor profiles ship typos, e.g. Creality's
+ * `"sparse_infill_pattern": "zig-zag"`, which Orca spells `zigzag`.)
+ */
+const ENUM_FALLBACK: Record<string, string> = { sparse_infill_pattern: 'cubic' };
+
+/** Replace values an enum option doesn't know (per element for enum lists). */
+function validEnum(def: ConfigOptionDef | undefined, key: string, v: ConfigValue): ConfigValue {
+  const allowed = def?.enumValues;
+  if (!def || !allowed?.length || def.type !== 'enum') return v;
+  const fallback = () => {
+    const f = ENUM_FALLBACK[key];
+    if (f && allowed.includes(f)) return f;
+    const d = String(def.default ?? '').split(',')[0];
+    return allowed.includes(d) ? d : allowed[0];
+  };
+  const fix = (x: string) => (allowed.includes(x) ? x : fallback());
+  return Array.isArray(v) ? v.map(fix) : fix(v);
 }
 
 function apply(target: FlatConfig, src: PresetValues | undefined): void {
@@ -173,6 +194,12 @@ export function resolveConfig(input: ResolveInput): FlatConfig {
     if (names.filaments) {
       const def = schema?.options.filament_settings_id;
       set('filament_settings_id', def && !isVectorType(def.type) ? escapeStrings(names.filaments) : names.filaments.slice());
+    }
+    // No printer preset (bare engine defaults): Orca defaults to relative E with an
+    // empty layer G-code, which it refuses to slice. Reset E per layer like its presets do.
+    const rel = String(asArray(out.use_relative_e_distances)[0] ?? '');
+    if (names.printer === '' && (rel === '1' || rel === 'true') && 'layer_gcode' in out && !/G92\s+E0/i.test(String(out.layer_gcode ?? ''))) {
+      out.layer_gcode = `G92 E0${out.layer_gcode ? `\n${out.layer_gcode}` : ''}`;
     }
   }
   return out;

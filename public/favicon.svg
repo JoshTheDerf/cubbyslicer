@@ -1,20 +1,36 @@
 <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-  <!-- Always-black mark; on a dark OS theme a paper halo lifts it off dark tabs. -->
+  <!-- Cubby Slicer: the CubbyCAD cat, sliced into layers. Inverts on a dark colour scheme. -->
   <style>
-    .halo { display: none; }
-    @media (prefers-color-scheme: dark) { .halo { display: inline; } }
+    .ink { fill: #0a0a0a; }
+    .paper { fill: #fafaf7; }
+    .pupil { fill: #111; }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #fafaf7; }
+      .paper { fill: #0a0a0a; }
+      .pupil { fill: #fafaf7; }
+    }
   </style>
-  <g class="halo" stroke="#fafaf7" stroke-width="3" stroke-linejoin="round" fill="#fafaf7">
-    <path d="M3 13 L7.5 0.5 L14 10 Z" />
-    <path d="M18 10 L24.5 0.5 L29 13 Z" />
-    <path d="M8 8 L24 8 A5 5 0 0 1 29 13 L29 22 A8 8 0 0 1 21 30 L11 30 A8 8 0 0 1 3 22 L3 13 A5 5 0 0 1 8 8 Z" />
+  <defs>
+    <mask id="layers" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32">
+      <rect x="0" y="0" width="32" height="32" fill="#fff" />
+      <g fill="#000">
+        <rect x="0" y="5.6" width="32" height="1" />
+        <rect x="0" y="10.0" width="32" height="1" />
+        <rect x="0" y="14.4" width="32" height="1" />
+        <rect x="0" y="18.8" width="32" height="1" />
+        <rect x="0" y="23.2" width="32" height="1" />
+        <rect x="0" y="27.6" width="32" height="1" />
+      </g>
+    </mask>
+  </defs>
+  <g mask="url(#layers)">
+    <path class="ink" d="M3 13 L7.5 0.5 L14 10 Z" />
+    <path class="ink" d="M18 10 L24.5 0.5 L29 13 Z" />
+    <path class="ink" d="M8 8 L24 8 A5 5 0 0 1 29 13 L29 22 A8 8 0 0 1 21 30 L11 30 A8 8 0 0 1 3 22 L3 13 A5 5 0 0 1 8 8 Z" />
+    <circle class="paper" cx="11.5" cy="19" r="3.6" />
+    <circle class="paper" cx="20.5" cy="19" r="3.6" />
+    <circle class="pupil" cx="11.5" cy="19" r="2.76" />
+    <circle class="pupil" cx="20.5" cy="19" r="2.76" />
+    <path class="paper" d="M14.8 23.5 L16 25 L17.2 23.5 Z" />
   </g>
-  <path d="M3 13 L7.5 0.5 L14 10 Z" fill="#0a0a0a" />
-  <path d="M18 10 L24.5 0.5 L29 13 Z" fill="#0a0a0a" />
-  <path d="M8 8 L24 8 A5 5 0 0 1 29 13 L29 22 A8 8 0 0 1 21 30 L11 30 A8 8 0 0 1 3 22 L3 13 A5 5 0 0 1 8 8 Z" fill="#0a0a0a" />
-  <circle cx="11.5" cy="19" r="3.6" fill="#fafaf7" />
-  <circle cx="20.5" cy="19" r="3.6" fill="#fafaf7" />
-  <circle cx="11.5" cy="19" r="2.76" fill="#111" />
-  <circle cx="20.5" cy="19" r="2.76" fill="#111" />
-  <path d="M14.8 23.5 L16 25 L17.2 23.5 Z" fill="#fafaf7" />
 </svg>

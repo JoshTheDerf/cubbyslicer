@@ -10,6 +10,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { activeEngine } from './app/state';
+import { startPresets } from './presets/store';
 import { useToast } from '@nuxt/ui/composables';
 import TopBar from './app/shell/TopBar.vue';
 import ObjectList from './app/shell/ObjectList.vue';
@@ -25,6 +26,7 @@ import LayerHeightPanel from './layers/LayerHeightPanel.vue';
 import PlateSettingsDialog from './plates/PlateSettingsDialog.vue';
 import { layersUi } from './layers/store';
 import PrintHostDialogs from './printhost/PrintHostDialogs.vue';
+import BridgeDialogs from './bridge/BridgeDialogs.vue';
 import DialogsHost from './dialogs/DialogsHost.vue';
 import CloudDialog from './cloud/CloudDialog.vue';
 import LocalFolderDialog from './localfs/LocalFolderDialog.vue';
@@ -115,6 +117,9 @@ const toaster = computed(() => ({
   ui: { viewport: activeView.value === 'preview' ? 'bottom-24 right-16' : 'bottom-4 right-4' },
 }));
 
+// Presets resolve from startup (the sidebar may be a closed drawer on phones).
+startPresets();
+
 // UI accent follows the engine: Orca green, preFlight orange (theme.css [data-engine]).
 watch(activeEngine, (e) => { document.documentElement.dataset.engine = e; }, { immediate: true });
 
@@ -194,6 +199,7 @@ onBeforeUnmount(() => stopHandoff?.());
       <ShellDialogs />
       <PlateSettingsDialog />
       <PrintHostDialogs />
+      <BridgeDialogs />
       <DialogsHost />
       <CloudDialog />
       <LocalFolderDialog />

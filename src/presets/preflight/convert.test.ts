@@ -38,6 +38,12 @@ describe('orcaToPreflight printer fix-ups', () => {
     expect(out.solid_infill_acceleration).toBe('5000');
     expect(out.bridge_acceleration).toBe('2500');
   });
+  it("reads Orca's % line widths against the nozzle", () => {
+    const isNative = (k: string) => ['extrusion_width_percent_of_nozzle', 'top_infill_extrusion_width'].includes(k);
+    const out = orcaToPreflight('process', { top_surface_line_width: '93.75%' }, isNative);
+    expect(out.top_infill_extrusion_width).toBe('93.75%');
+    expect(out.extrusion_width_percent_of_nozzle).toBe('1');
+  });
 });
 
 describe('splitOrcaCompat', () => {

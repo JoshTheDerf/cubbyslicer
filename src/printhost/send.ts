@@ -42,13 +42,29 @@ function fmtBytes(n: number): string {
 }
 
 export async function sendToPrinter(opts: { filename: string; folder: string; print: boolean }): Promise<boolean> {
+  return (await sendToPrinterDetailed(opts)).ok;
+}
+
+export interface SendOutcome {
+  ok: boolean;
+  /** Result or error text (as toasted). */
+  message: string;
+  detail?: string;
+  printed?: boolean;
+  /** Where the host stored the file, when it says. */
+  path?: string;
+  host?: string;
+}
+
+/** `sendToPrinter` with the outcome spelled out (the Claude Code bridge reports it back). */
+export async function sendToPrinterDetailed(opts: { filename: string; folder: string; print: boolean }): Promise<SendOutcome> {
   const pp = physicalPrinter.value;
   const slice = lastSlice.value;
-  if (!pp) { toast.info('Set up a physical printer first.'); printhostUi.setupOpen = true; return false; }
-  if (!slice) { toast.info('Slice the plate before sending it to the printer.'); return false; }
-  if (printhostUi.uploading) { toast.info('An upload is already running.'); return false; }
+  if (!pp) { toast.info('Set up a physical printer first.'); printhostUi.setupOpen = true; return { ok: false, message: 'No physical printer is set up for the selected printer preset.' }; }
+  if (!slice) { toast.info('Slice the plate before sending it to the printer.'); return { ok: false, message: 'The plate is not sliced.' }; }
+  if (printhostUi.uploading) { toast.info('An upload is already running.'); return { ok: false, message: 'An upload is already running.' }; }
   const meta = hostMeta(pp.config.type);
-  if (!meta?.driver) { toast.error(`${meta?.label ?? pp.config.type} can’t be used from a browser.`, { detail: meta?.note }); return false; }
+  if (!meta?.driver) { toast.error(`${meta?.label ?? pp.config.type} can’t be used from a browser.`, { detail: meta?.note }); return { ok: false, message: `${meta?.label ?? pp.config.type} can’t be used from a browser.`, detail: meta?.note }; }
 
   const file = new Blob([slice.gcode as BlobPart], { type: 'text/x-gcode' });
   const ctx = hostContext(pp.config);
@@ -81,13 +97,13 @@ export async function sendToPrinter(opts: { filename: string; folder: string; pr
       action: web ? { label: 'Open printer', run: () => openWebUi(pp.config) } : undefined,
       timeout: 7000,
     });
-    return true;
+    return { ok: true, message: res.message, printed: res.printed, path: res.path, host: pp.config.host };
   } catch (e) {
     dismissToast(PROGRESS_ID);
-    if (e instanceof HostError && e.kind === 'cancelled') { toast.info('Upload cancelled.'); return false; }
+    if (e instanceof HostError && e.kind === 'cancelled') { toast.info('Upload cancelled.'); return { ok: false, message: 'Upload cancelled.', host: pp.config.host }; }
     const d = describeError(e);
     toast.error(`Couldn’t send to ${meta.label}: ${d.message}`, { detail: d.detail, timeout: 15000 });
-    return false;
+    return { ok: false, message: `Couldn’t send to ${meta.label}: ${d.message}`, detail: d.detail, host: pp.config.host };
   } finally {
     printhostUi.uploading = false;
     printhostUi.status = '';

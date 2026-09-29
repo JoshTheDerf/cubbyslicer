@@ -10,7 +10,7 @@ import { phone } from '../app/shell/uiState';
 import { confirmAction } from '../app/shell/uiState';
 import { toast } from '../ui';
 import { isModelFileName } from '../project/import';
-import { PROJECT_EXT } from '../project/persistence/projectFile';
+import { SAVE_EXT } from '../project/persistence/orca3mfWriter';
 import { exportPayload, suggestedProjectName } from '../cloud/commands';
 import {
   addFolder, deleteInFolder, ensurePermission, existsInFolder, folderAccessSupported, forget, listFolder, loadSaved, local,
@@ -23,7 +23,7 @@ const mode = computed(() => folderDialog.value?.mode ?? 'open');
 const exportKind = computed(() => folderDialog.value?.exportKind ?? 'gcode');
 const title = computed(() => mode.value === 'open' ? 'Open from a local folder' : mode.value === 'save' ? 'Save project to a local folder'
   : `Export ${exportKind.value === 'gcode' ? 'G-code' : '3MF'} to a local folder`);
-const ext = computed(() => mode.value === 'save' ? PROJECT_EXT : exportKind.value === 'gcode' ? '.gcode' : '.3mf');
+const ext = computed(() => mode.value === 'save' ? SAVE_EXT : exportKind.value === 'gcode' ? '.gcode' : '.3mf');
 
 const tab = ref<'folders' | 'recent'>('folders');
 const root = shallowRef<SavedHandle<FileSystemDirectoryHandle> | null>(null);
@@ -38,7 +38,7 @@ const busy = ref(false);
 const cwd = computed(() => stack.value[stack.value.length - 1] ?? root.value?.handle ?? null);
 const relevant = (n: string) => {
   const l = n.toLowerCase();
-  return mode.value === 'open' ? l.endsWith(PROJECT_EXT) || isModelFileName(l) : l.endsWith(ext.value);
+  return mode.value === 'open' ? isModelFileName(l) : l.endsWith(ext.value);
 };
 const rows = computed(() => entries.value.filter((e) => e.kind === 'directory' || relevant(e.name)));
 const target = computed(() => { let n = name.value.trim(); if (n && !n.toLowerCase().endsWith(ext.value)) n += ext.value; return n; });
@@ -120,7 +120,7 @@ async function pickRecent(r: SavedHandle<FileSystemFileHandle>): Promise<void> {
 
 const size = (n?: number) => (n == null ? '' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 const when = (t?: number) => (t ? new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
-const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.name.toLowerCase().endsWith(PROJECT_EXT) ? 'i-lucide-layers' : e.name.toLowerCase().endsWith('.gcode') ? 'i-lucide-file-code' : 'i-lucide-box';
+const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.name.toLowerCase().endsWith('.3mf') ? 'i-lucide-layers' : e.name.toLowerCase().endsWith('.gcode') ? 'i-lucide-file-code' : 'i-lucide-box';
 </script>
 
 <template>

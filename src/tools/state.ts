@@ -3,6 +3,7 @@
  * which Orca gizmo-style tool is open (measure / text / SVG / simplify /
  * boolean / brim ears) and the live PrepareScene the tools draw into.
  */
+import { Vector3 } from 'three';
 import { reactive, shallowRef } from 'vue';
 import type { PrepareScene, ToolHandler } from '../viewport/scene';
 
@@ -86,11 +87,9 @@ if (typeof window !== 'undefined' && (import.meta.env.DEV || new URLSearchParams
         if (!s) return null;
         const cam = s.camera;
         cam.updateMatrixWorld();
-        const e = cam.matrixWorldInverse.elements, p = cam.projectionMatrix.elements;
-        const vx = e[0] * x + e[4] * y + e[8] * z + e[12], vy = e[1] * x + e[5] * y + e[9] * z + e[13], vz = e[2] * x + e[6] * y + e[10] * z + e[14];
-        const cx = p[0] * vx + p[8] * vz, cy = p[5] * vy + p[9] * vz, cw = -vz;
+        const v = new Vector3(x, y, z).project(cam);
         const r = s.renderer.domElement.getBoundingClientRect();
-        return [r.left + ((cx / cw + 1) / 2) * r.width, r.top + ((1 - cy / cw) / 2) * r.height];
+        return [r.left + ((v.x + 1) / 2) * r.width, r.top + ((1 - v.y) / 2) * r.height];
       },
     },
   });

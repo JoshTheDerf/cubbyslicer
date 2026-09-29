@@ -8,7 +8,7 @@
  * Fields are read through getters, so reading them inside a computed tracks
  * the underlying refs and the dispatcher always sees current values.
  */
-import type { GizmoMode, ViewPreset } from '../../viewport/controller';
+import type { CameraType, GizmoMode, ViewPreset } from '../../viewport/controller';
 
 export interface SelectionSlice {
   count: number;
@@ -98,6 +98,10 @@ export interface ActionDispatch {
   fitBed(): void;
   /** +1 zoom in, -1 zoom out. */
   zoom(dir: 1 | -1): void;
+  /** Perspective / orthographic projection of the Prepare view. */
+  setCameraType(t: CameraType): void;
+  /** Grid snap for gizmo drags and arrow nudges, mm (0 = off). */
+  setSnapIncrement(v: number): void;
   setActiveView(v: 'prepare' | 'preview'): void;
   toggleSidebar(): void;
   // slice
@@ -122,6 +126,9 @@ export interface AppContext {
   readonly redoLabel: string | null;
   readonly gizmo: GizmoMode;
   readonly layOnFace: boolean;
+  readonly cameraType: CameraType;
+  /** Grid snap increment, mm (0 = off). */
+  readonly snapIncrement: number;
   /** The settings/objects sidebar is showing. */
   readonly sidebar: boolean;
   /** Something is on the in-app object clipboard. */

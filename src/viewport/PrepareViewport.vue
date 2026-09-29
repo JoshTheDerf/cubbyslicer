@@ -5,7 +5,7 @@
  */
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import {
-  activePlate, bed, clearSelection, getMesh, layOnFace, meshRevision, objectIssues, objects, plates, select, selectedIds,
+  activePlate, bed, clearSelection, endGesture, getMesh, layOnFace, meshRevision, objectIssues, objects, plates, select, selectedIds,
   selectedPart, setActivePlate, setPartTransform, setTransforms,
 } from '../project/store';
 import type { MeshData, ObjectIssue } from '../project/types';
@@ -58,6 +58,7 @@ onMounted(() => {
       onBoxRect: (r) => { box.value = r; },
       onTransformEnd: (res, mode) => {
         setTransforms(res, mode === 'translate' ? 'Move' : mode === 'rotate' ? 'Rotate' : 'Scale', { drop: mode !== 'translate' });
+        endGesture(); // one gizmo drag = one undo step
       },
       onLayOnFace: (id, n) => { layOnFace(id, n); toggleLayOnFace(false); },
       onContextMenu: (id, x, y) => {
@@ -66,8 +67,10 @@ onMounted(() => {
       },
       onHover: (id) => emit('hover', id),
       onPlateClick: (i) => setActivePlate(i),
-      onPartTransformEnd: (objectId, partId, t, mode) => setPartTransform(objectId, partId, t,
-        mode === 'translate' ? 'Move part' : mode === 'rotate' ? 'Rotate part' : 'Scale part'),
+      onPartTransformEnd: (objectId, partId, t, mode) => {
+        setPartTransform(objectId, partId, t, mode === 'translate' ? 'Move part' : mode === 'rotate' ? 'Rotate part' : 'Scale part');
+        endGesture();
+      },
     });
     scene.value = s;
     bindToolScene(s);
@@ -76,8 +79,8 @@ onMounted(() => {
     s.setPlates(bed.value, plates.value.length, activePlate.value);
     s.setBedAssets(bedAssets.value);
     stopCameraPrefs = bindCameraPrefs({
-      controls: s.orbit, camera: s.camera, host: host.value, requestRender: () => s.orbit.dispatchEvent({ type: 'change' }),
-      pickRoots: () => s.scene.children.filter((c) => c !== s.gizmo.getHelper()),
+      controls: s.orbit, camera: () => s.camera, host: host.value, requestRender: () => s.orbit.dispatchEvent({ type: 'change' }),
+      pickRoots: () => s.scene.children.filter((c) => c !== s.gizmo.object),
     });
     s.setGizmoMode(viewportState.gizmo);
     s.sync(items(), selectedIds.value);
@@ -99,6 +102,8 @@ watch(bedAssets, (a) => scene.value?.setBedAssets(a));
 watch([objects, selectedIds, objectIssues, meshRevision, () => toolState.active === 'assembly', () => assemblyUi.explosion,
   () => currentPresets.value.selection.filaments.map((_, i) => currentPresets.value.filamentColour(i)).join(), mixedFilaments], () => scene.value?.sync(items(), selectedIds.value), { deep: true });
 watch(() => viewportState.gizmo, (m) => scene.value?.setGizmoMode(m));
+watch([() => viewportState.camera, scene], ([t]) => scene.value?.setCameraType(t), { immediate: true });
+watch([() => viewportState.snap, scene], ([v]) => scene.value?.setSnapIncrement(v), { immediate: true });
 watch([selectedPart, scene], ([p]) => scene.value?.setActivePart(p), { immediate: true });
 // The accent follows the engine (App.vue sets <html data-engine>); post-flush so the CSS is applied.
 watch(activeEngine, () => scene.value?.refreshAccent(), { flush: 'post' });
@@ -134,6 +139,10 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 .vp :deep(.vp-canvas) { position: absolute; inset: 0; display: block; outline: none; touch-action: none; }
+/* Gizmo dimension labels / rotation readout (CSS2DRenderer, @cubby/shared/gizmo). */
+.vp :deep(.vp-labels) { position: absolute; inset: 0; pointer-events: none; }
+.vp :deep(.cubby-3d-label) { background: color-mix(in srgb, var(--bg-1) 92%, transparent); color: var(--fg-0); }
+.vp :deep(.cubby-3d-label-input) { background: var(--bg-2); color: var(--fg-0); }
 .vp__marquee {
   position: absolute; pointer-events: none; z-index: 2;
   border: 1px dashed var(--info);

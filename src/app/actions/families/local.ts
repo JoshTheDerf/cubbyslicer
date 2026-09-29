@@ -10,7 +10,7 @@ import { folderDialog, saveLocalAs } from '../../../localfs/commands';
 
 export function localFileActions(): Action[] {
   return [
-    { id: 'file.save-as', title: 'Save project as…', icon: 'i-lucide-save-all', category: 'File', aliases: ['save copy', 'cubbyslice'],
+    { id: 'file.save-as', title: 'Save project as…', icon: 'i-lucide-save-all', category: 'File', aliases: ['save copy', '3mf'],
       binding: { key: 's', ctrlOrMeta: true, alt: true }, run: (c) => (fsAccessSupported ? saveLocalAs() : c.dispatch.saveProject()) },
     { id: 'local.folders', title: 'Open from local folder…', icon: 'i-lucide-folder-tree', category: 'File', aliases: ['folder', 'directory', 'workspace', 'recent', 'file system'],
       when: () => folderAccessSupported, run: () => { folderDialog.value = { mode: 'open' }; } },

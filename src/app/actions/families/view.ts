@@ -1,9 +1,11 @@
+import { SNAP_OPTIONS } from '@cubby/shared/snap';
 import type { Action } from '../types';
 import type { ViewPreset } from '../../../viewport/controller';
 
 // Orca: Tab Prepare/Preview, Shift+Tab collapse sidebar, 0-6 camera views (Orca uses Ctrl+0-6,
 // which browsers reserve for tab switching; bare digits match the Preview's view keys),
-// Z zoom to selection, I / O zoom in / out.
+// Z zoom to selection, I / O zoom in / out, K perspective / orthographic camera (Orca).
+// Grid snap steps (@cubby/shared/snap, same list as CubbyCAD) are palette / menu only.
 const preset = (p: ViewPreset, title: string, icon: string, key: string): Action => ({
   id: `view.camera.${p}`, title, icon, category: 'View', aliases: ['camera', 'view'],
   binding: { key, scope: 'prepare' }, when: (c) => c.view === 'prepare', run: (c) => c.dispatch.setView(p),
@@ -36,6 +38,18 @@ export function viewActions(): Action[] {
       binding: { key: 'i', scope: 'prepare' }, when: inPrepare, run: (c) => c.dispatch.zoom(1) },
     { id: 'view.zoom-out', title: 'Zoom out', icon: 'i-lucide-zoom-out', category: 'View',
       binding: { key: 'o', scope: 'prepare' }, when: inPrepare, run: (c) => c.dispatch.zoom(-1) },
+    { id: 'view.camera.perspective', title: 'Perspective camera', icon: 'i-lucide-view', category: 'View', aliases: ['3d', 'projection'],
+      state: (c) => (c.cameraType === 'perspective' ? 'on' : 'off'), run: (c) => c.dispatch.setCameraType('perspective') },
+    { id: 'view.camera.orthographic', title: 'Orthographic camera', icon: 'i-lucide-square', category: 'View', aliases: ['ortho', 'parallel', 'projection'],
+      state: (c) => (c.cameraType === 'orthographic' ? 'on' : 'off'), run: (c) => c.dispatch.setCameraType('orthographic') },
+    { id: 'view.camera.toggle-projection', title: 'Switch perspective / orthographic', icon: 'i-lucide-aperture', category: 'View',
+      aliases: ['ortho', 'perspective', 'projection', 'camera type'], binding: { key: 'k', scope: 'prepare' }, when: inPrepare,
+      run: (c) => c.dispatch.setCameraType(c.cameraType === 'perspective' ? 'orthographic' : 'perspective') },
+    ...SNAP_OPTIONS.map((o): Action => ({
+      id: `view.snap.${o.value}`, title: o.value ? `Grid snap ${o.label}` : 'Grid snap off', icon: 'i-lucide-magnet', category: 'View',
+      aliases: ['snap', 'grid', 'increment'], state: (c) => (c.snapIncrement === o.value ? 'on' : 'off'),
+      run: (c) => c.dispatch.setSnapIncrement(o.value),
+    })),
     { id: 'view.panel.sidebar', title: 'Sidebar', icon: 'i-lucide-panel-left', category: 'View', aliases: ['settings panel', 'object list', 'collapse sidebar'],
       binding: { key: 'tab', shift: true, whenFocusIdle: true, passThroughWhenUnavailable: true },
       state: (c) => (c.sidebar ? 'on' : 'off'), run: (c) => c.dispatch.toggleSidebar() },

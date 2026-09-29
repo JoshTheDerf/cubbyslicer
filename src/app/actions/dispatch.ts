@@ -1,5 +1,6 @@
 /**
- * The one keyboard dispatcher (mirrors cad-project/src/actions/dispatch.ts).
+ * The one keyboard dispatcher. Key matching is shared with CubbyCAD
+ * (@cubby/shared/actions); the gating policy below is the slicer's.
  *
  *  - Text inputs: skipped, except Ctrl/⌘ + Z / Y / S / O / I / K / E / G / P, which
  *    should work even while typing. (Z/Y inside a field is the field's own
@@ -17,21 +18,13 @@
 import type { AppContext } from './context';
 import type { Action, ActionScope } from './types';
 import { runAction } from './run';
+import { bindingMatchesKey, isTextInputFocused } from '@cubby/shared/actions';
+
+export { isTextInputFocused };
 
 let activeScope: ActionScope = 'prepare';
 export function setActionScope(s: ActionScope): void { activeScope = s; }
 export function getActionScope(): ActionScope { return activeScope; }
-
-export function isTextInputFocused(): boolean {
-  const el = typeof document !== 'undefined' ? document.activeElement : null;
-  if (!el) return false;
-  if (el instanceof HTMLInputElement) {
-    const t = el.type.toLowerCase();
-    return !['button', 'checkbox', 'radio', 'submit', 'range', 'color', 'file'].includes(t);
-  }
-  if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
-  return el instanceof HTMLElement && el.isContentEditable;
-}
 
 const TYPING_SAFE = new Set(['s', 'o', 'i', 'k', 'e', 'g', 'p']);
 
@@ -39,20 +32,7 @@ function scopeAllows(s: ActionScope | undefined): boolean {
   return !s || s === 'global' || s === activeScope;
 }
 
-export function actionMatchesKey(a: Action, e: KeyboardEvent): boolean {
-  const b = a.binding;
-  if (!b || b.displayOnly) return false;
-  if (b.code) { if (b.code !== e.code) return false; }
-  else {
-    if (!b.key) return false;
-    if (b.key.toLowerCase() !== e.key.toLowerCase()) return false;
-  }
-  if ((b.ctrlOrMeta ?? false) !== (e.ctrlKey || e.metaKey)) return false;
-  const keyEncodesShift = !b.code && !!b.key && b.key.length === 1 && !/[a-z0-9]/i.test(b.key);
-  if (!keyEncodesShift && (b.shift ?? false) !== e.shiftKey) return false;
-  if ((b.alt ?? false) !== e.altKey) return false;
-  return true;
-}
+export function actionMatchesKey(a: Action, e: KeyboardEvent): boolean { return bindingMatchesKey(a.binding, e); }
 
 export interface DispatchOptions { textInputFocused?: boolean }
 

@@ -4,15 +4,16 @@
  * - `objects` is deeply reactive (small data: transforms, names, overrides).
  * - Meshes live in a plain Map of `markRaw` typed arrays, never proxied or
  *   JSON-serialised; `meshRevision` signals changes.
- * - Every mutation goes through `mutate()` which records an undo snapshot and
- *   calls `markSliceInputsChanged()` when slicing is affected.
+ * - Every mutation goes through `mutate()`, which records a snapshot operation
+ *   on the shared (CubbyCAD) HistoryManager and calls `markSliceInputsChanged()`
+ *   when slicing is affected.
  */
 import { computed, markRaw, ref, shallowRef, toRaw, watch } from 'vue';
 import { bedFromConfig, markSliceInputsChanged, resolvedConfig } from '../app/state';
 import type { ConfigValue, FlatConfig, PaintLayer, PaintLayers, PaintMap, SliceObjectInput } from '../engine/types';
 import { arrange, type ArrangeItem, type Rect } from './arrange';
 import { mergeWorldInfo, partWorldInfo, worldInfo, type WorldInfo } from './geometry';
-import { History } from './history';
+import { HistoryManager, type Operation } from '@cubby/shared/history';
 import {
   composeTRS, decomposeTRS, mat4Determinant3, mat4Identity, mat4InvertAffine, mat4Multiply, quatFromAxisAngle, transformPoint, quatFromUnitVectors, quatMultiply, quatNormalize,
   type Quat, type Vec3,
@@ -61,12 +62,35 @@ export const activePlateBed = computed(() => plateBedOf(Math.min(activePlate.val
 export const meshPaint = shallowRef<Record<string, PaintLayers>>({});
 
 interface Snapshot { objects: ProjectObject[]; plates: PlateMeta[]; paint: Record<string, PaintLayers> }
-const history = new History<Snapshot>(100);
+
+/**
+ * Undo entry: the project before and after one `mutate()`. Snapshots are cheap
+ * (objects are small; meshes and paint maps are shared by reference).
+ * Coalescing keeps the first `before` and the newest `after`.
+ */
+class SnapshotOperation implements Operation<ProjectState> {
+  readonly type = 'snapshot';
+  readonly timestamp = Date.now();
+  constructor(readonly description: string, readonly before: Snapshot, readonly after: Snapshot, readonly coalesceKey?: string) {}
+  coalesceWith(prev: Operation<ProjectState>): Operation<ProjectState> | null {
+    return prev instanceof SnapshotOperation ? new SnapshotOperation(prev.description, prev.before, this.after, this.coalesceKey) : null;
+  }
+  apply(): void { restore(this.after); }
+  unapply(): void { restore(this.before); }
+}
+/** The live project is module state; operations restore into it directly. */
+type ProjectState = Record<string, never>;
+const history = new HistoryManager<ProjectState>({ maxHistorySize: 100 });
+history.initialize({});
+function* heldSnapshots(): Iterable<Snapshot> {
+  for (const op of [...history.getUndoOperations(), ...history.getRedoOperations()]) {
+    if (op instanceof SnapshotOperation) { yield op.before; yield op.after; }
+  }
+}
 export const historyState = ref<{ undo: string | null; redo: string | null }>({ undo: null, redo: null });
 /** Mesh bytes that may be kept alive only for undo. */
 const HISTORY_MESH_BYTES = 512 * 1024 * 1024;
 
-let lastMerge: { key: string; at: number } | null = null;
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -195,7 +219,7 @@ export function clearMeshPaint(meshIds: string[], layer: PaintLayer, label = 'Er
 }
 
 function refreshHistoryState(): void {
-  historyState.value = { undo: history.undoLabel, redo: history.redoLabel };
+  historyState.value = { undo: history.getLastOperationDescription(), redo: history.getRedoDescription() };
 }
 
 /** Drop meshes nobody (current plate or history) references; trim history under memory pressure. */
@@ -203,7 +227,7 @@ function collectMeshes(): void {
   const live = new Set(objects.value.flatMap(meshIdsOf));
   for (;;) {
     const held = new Set<string>();
-    for (const s of history.snapshots()) for (const o of s.objects) for (const id of meshIdsOf(o)) held.add(id);
+    for (const s of heldSnapshots()) for (const o of s.objects) for (const id of meshIdsOf(o)) held.add(id);
     let bytes = 0;
     for (const id of held) {
       if (live.has(id)) continue;
@@ -228,17 +252,15 @@ function changed(slice: boolean): void {
 
 /**
  * Run `fn` as one undoable step. `mergeKey` coalesces rapid repeated edits
- * (e.g. typing in a setting) into one entry.
+ * (e.g. typing in a setting, a drag) into one entry while they come less than
+ * a second apart; `endGesture()` closes the entry early.
  */
 export function mutate(label: string, fn: () => void, opts: { slice?: boolean; mergeKey?: string } = {}): void {
   const before = snapshot();
   fn();
   const after = snapshot();
   if (sameSnapshot(before, after)) return;
-  const now = Date.now();
-  const canMerge = !!opts.mergeKey && lastMerge?.key === opts.mergeKey && now - lastMerge.at < 1500;
-  if (!(canMerge && history.mergeIntoTop(after))) history.push({ label, before, after });
-  lastMerge = opts.mergeKey ? { key: opts.mergeKey, at: now } : null;
+  history.recordOperation(new SnapshotOperation(label, before, after, opts.mergeKey));
   pruneSelection();
   collectMeshes();
   refreshHistoryState();
@@ -255,22 +277,21 @@ function restore(s: Snapshot): void {
   changed(true);
 }
 
+/** Gesture boundary (drag end, dialog close): the next edit starts a new undo entry. */
+export function endGesture(): void { history.finalizeActiveTransform(); }
+
 export function undo(): string | null {
-  const e = history.undo();
-  if (!e) return null;
-  lastMerge = null;
-  restore(e.before);
+  const label = history.getLastOperationDescription();
+  if (!history.undo()) return null;
   refreshHistoryState();
-  return e.label;
+  return label;
 }
 
 export function redo(): string | null {
-  const e = history.redo();
-  if (!e) return null;
-  lastMerge = null;
-  restore(e.after);
+  const label = history.getRedoDescription();
+  if (!history.redo()) return null;
   refreshHistoryState();
-  return e.label;
+  return label;
 }
 
 function clampActivePlate(): void {
@@ -1320,8 +1341,12 @@ export interface ProjectData {
   paint?: Record<string, PaintLayers>;
 }
 
+/** Bumped whenever a whole project is loaded (new / open / import as project). */
+export const projectLoads = ref(0);
+
 /** Replace the whole project (clears undo history). */
 export function loadProjectData(data: ProjectData): void {
+  projectLoads.value++;
   meshes.clear();
   for (const m of data.meshes) addMesh(m.positions, m.indices, m.id);
   objects.value = data.objects.filter((o) => meshes.has(o.meshId)).map((o) => {
@@ -1337,7 +1362,6 @@ export function loadProjectData(data: ProjectData): void {
   projectName.value = data.name || 'Untitled project';
   selectedIds.value = [];
   history.clear();
-  lastMerge = null;
   refreshHistoryState();
   meshRevision.value++;
   changed(true);

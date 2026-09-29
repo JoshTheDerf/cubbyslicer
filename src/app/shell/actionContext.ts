@@ -6,7 +6,9 @@
 import { onBeforeUnmount, watch } from 'vue';
 import { activeView, lastSlice } from '../state';
 import { activePlate, historyState, objects, objectPlate, plates, selectedIds } from '../../project/store';
-import { fitBed, fitSelection, setGizmo, setView, toggleLayOnFace, viewportState, zoomView } from '../../viewport/controller';
+import {
+  fitBed, fitSelection, setCameraType, setGizmo, setSnapIncrement, setView, toggleLayOnFace, viewportState, zoomView,
+} from '../../viewport/controller';
 import { buildActions } from '../actions/buildActions';
 import { bindPaintDispatch } from '../actions/families/paint';
 import { closePaint, togglePaint } from '../../paint/controller';
@@ -98,6 +100,8 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     fitSelection,
     fitBed,
     zoom: zoomView,
+    setCameraType,
+    setSnapIncrement,
     setActiveView: (v) => { activeView.value = v; },
     toggleSidebar: () => toggleSidebar(),
     slice: cmd.sliceNow,
@@ -128,6 +132,8 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     get redoLabel() { return historyState.value.redo; },
     get gizmo() { return viewportState.gizmo; },
     get layOnFace() { return viewportState.layOnFace; },
+    get cameraType() { return viewportState.camera; },
+    get snapIncrement() { return viewportState.snap; },
     get sidebar() { return sidebarOpen(); },
     get clipboard() { return !!ui.clipboard; },
     get orienting() { return ui.orienting; },

@@ -5,9 +5,9 @@ export function fileActions(): Action[] {
   return [
     { id: 'file.new', title: 'New project', icon: 'i-lucide-file-plus', category: 'File', aliases: ['clear plate', 'reset'],
       run: (c) => c.dispatch.newProject() },
-    { id: 'file.open', title: 'Open project…', icon: 'i-lucide-folder-open', category: 'File', aliases: ['load', 'cubbyslice'],
+    { id: 'file.open', title: 'Open project…', icon: 'i-lucide-folder-open', category: 'File', aliases: ['load', '3mf'],
       binding: { key: 'o', ctrlOrMeta: true }, run: (c) => c.dispatch.openProject() },
-    { id: 'file.save', title: 'Save project', icon: 'i-lucide-save', category: 'File', aliases: ['download project', 'cubbyslice'],
+    { id: 'file.save', title: 'Save project', icon: 'i-lucide-save', category: 'File', aliases: ['download project', '3mf'],
       binding: { key: 's', ctrlOrMeta: true }, run: (c) => c.dispatch.saveProject() },
     { id: 'file.import', title: 'Import model…', icon: 'i-lucide-file-input', category: 'File', aliases: ['add', 'open stl', 'obj', '3mf', 'upload'],
       binding: { key: 'i', ctrlOrMeta: true }, run: (c) => c.dispatch.importModels() },

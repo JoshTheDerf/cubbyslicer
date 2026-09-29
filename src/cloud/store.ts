@@ -60,7 +60,7 @@ export function setCloudLocation(loc: CloudLocation | null): void {
   if (loc) local.location = null; // one save target at a time
   cloud.savedRevision = projectRevision.value;
   if (loc) {
-    const stem = loc.path.split('/').pop()!.replace(/\.cubbyslice$/i, '');
+    const stem = loc.path.split('/').pop()!.replace(/\.(gcode\.3mf|3mf)$/i, '');
     if (stem) projectName.value = stem;
   }
   syncCloudUrl();

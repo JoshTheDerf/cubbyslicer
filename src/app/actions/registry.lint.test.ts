@@ -17,10 +17,11 @@ import type { Action } from './types';
 import { settingsActions } from '../../settings/actions';
 import { previewActions } from '../../preview/actions';
 import { printhostActions } from '../../printhost/actions';
+import { bridgeActions } from '../../bridge/actions';
 
 // Core actions plus every area's registered contributions, so ids/bindings
 // are linted across the whole app, not just the shell.
-const ACTIONS = [...buildActions(), ...(settingsActions as unknown as Action[]), ...(previewActions as unknown as Action[]), ...printhostActions];
+const ACTIONS = [...buildActions(), ...(settingsActions as unknown as Action[]), ...(previewActions as unknown as Action[]), ...printhostActions, ...bridgeActions];
 const IDS = new Set(ACTIONS.map((a) => a.id));
 
 /** Same key, mutually exclusive `when` gates. First registered wins. */

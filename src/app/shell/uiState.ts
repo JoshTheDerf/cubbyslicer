@@ -72,13 +72,23 @@ export interface ConfirmRequest {
   message: string;
   confirmLabel: string;
   danger?: boolean;
-  resolve: (ok: boolean) => void;
+  /** Optional second choice next to the confirm button. */
+  altLabel?: string;
+  resolve: (answer: boolean | 'alt') => void;
 }
 export const confirmRequest = ref<ConfirmRequest | null>(null);
 
-export function confirmAction(opts: Omit<ConfirmRequest, 'resolve'>): Promise<boolean> {
+export function confirmAction(opts: Omit<ConfirmRequest, 'resolve' | 'altLabel'>): Promise<boolean> {
   return new Promise((resolve) => {
     confirmRequest.value?.resolve(false);
-    confirmRequest.value = { ...opts, resolve };
+    confirmRequest.value = { ...opts, resolve: (a) => resolve(a === true) };
+  });
+}
+
+/** Confirm with two choices: 'confirm', 'alt', or null (cancelled). */
+export function chooseAction(opts: Omit<ConfirmRequest, 'resolve'> & { altLabel: string }): Promise<'confirm' | 'alt' | null> {
+  return new Promise((resolve) => {
+    confirmRequest.value?.resolve(false);
+    confirmRequest.value = { ...opts, resolve: (a) => resolve(a === true ? 'confirm' : a === 'alt' ? 'alt' : null) };
   });
 }
