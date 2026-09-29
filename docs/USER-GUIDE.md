@@ -8,6 +8,10 @@ Pick OrcaSlicer, preFlight or Full Spectrum at the top of the Printer section. E
 
 Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full Spectrum).
 
+## Moving objects
+
+The transform gizmo is CubbyCAD's: move, rotate and scale handles on one gizmo (G). M, R and S limit it to one of them, and pressing the same key again brings back the full gizmo. View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches between perspective and orthographic.
+
 ## Files
 
 Projects are 3MF files in OrcaSlicer's project format, so desktop OrcaSlicer and Bambu Studio open them with their plates, parts, painting and settings. Opening an Orca or Bambu project 3MF works the other way round. Sliced 3MFs show each plate's G-code in the preview until you re-slice.
@@ -56,7 +60,7 @@ The [CubbyCAD editor](https://cubbycad.com/editor) sends the current model with 
 
 Claude Code can drive the slicer (and the CubbyCAD editor) through cubby-mcp, a small MCP server that runs on your computer. Nothing leaves your machine: the tab connects to `ws://127.0.0.1:18711`, and cubbycad.com has no server side for this.
 
-1. Add the server once: `claude mcp add cubby -- npx -y cubby-mcp`.
+1. Add the server once: `claude mcp add --scope user cubby -- npx -y cubby-mcp`. (Until it's on npm, run `npm install` in a cubby-mcp checkout and use `node <checkout>/dist/cli.js` in place of `npx -y cubby-mcp`.)
 2. In Claude Code, ask for the pairing code (Claude reads it with `cubby_status`).
 3. Here, Help ▸ Connect to Claude Code, paste the code, Connect. Or open `/slicer/?claude=<code>`, which fills it in.
 

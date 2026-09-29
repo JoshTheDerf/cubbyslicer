@@ -46,7 +46,7 @@ export const VIEW_MENU: MenuLayout = {
 
 export const OBJECT_MENU: MenuLayout = {
   groups: [
-    ['object.gizmo.move', 'object.gizmo.rotate', 'object.gizmo.scale', 'object.lay-on-face'],
+    ['object.gizmo.all', 'object.gizmo.move', 'object.gizmo.rotate', 'object.gizmo.scale', 'object.lay-on-face'],
     ['object.auto-orient', 'object.drop', 'object.center', 'object.scale-to-fit'],
     [
       { label: 'Mirror', icon: 'i-lucide-flip-horizontal-2', children: ['object.mirror.x', 'object.mirror.y', 'object.mirror.z'] },

@@ -7,7 +7,10 @@ import { reactive } from 'vue';
 import type { CameraType } from '@cubby/shared/camera';
 import { SnapSetting } from '@cubby/shared/snap';
 
-export type GizmoMode = 'translate' | 'rotate' | 'scale';
+/** 'all' is CubbyCAD's full edit gizmo (move, rotate and scale handles together), the default. */
+export type GizmoMode = 'all' | 'translate' | 'rotate' | 'scale';
+/** What a finished gizmo drag did. */
+export type TransformKind = Exclude<GizmoMode, 'all'>;
 export type ViewPreset = 'iso' | 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right';
 export type { CameraType };
 
@@ -20,7 +23,7 @@ function storedCameraType(): CameraType {
 }
 
 export const viewportState = reactive({
-  gizmo: 'translate' as GizmoMode,
+  gizmo: 'all' as GizmoMode,
   layOnFace: false,
   camera: storedCameraType(),
   snap: snapSetting.value,
@@ -41,7 +44,11 @@ export function fitSelection(): void { handle?.fitSelection(); }
 export function fitBed(): void { handle?.fitBed(); }
 export function zoomView(dir: 1 | -1): void { handle?.zoom(dir); }
 
-export function setGizmo(m: GizmoMode): void { viewportState.gizmo = m; viewportState.layOnFace = false; }
+/** Pick a gizmo mode; picking the active single mode again returns to the full gizmo. */
+export function setGizmo(m: GizmoMode): void {
+  viewportState.gizmo = m !== 'all' && viewportState.gizmo === m ? 'all' : m;
+  viewportState.layOnFace = false;
+}
 export function toggleLayOnFace(on = !viewportState.layOnFace): void { viewportState.layOnFace = on; }
 
 /** Perspective / orthographic projection of the Prepare view (the scene watches it). */

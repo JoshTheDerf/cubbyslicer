@@ -43,6 +43,7 @@ export const SUB_SOURCES: Array<[SubSource, string]> = [
 export function objectActions(): Action[] {
   const sel = (c: AppContext) => c.selection.count > 0;
   return [
+    gizmo('object.gizmo.all', 'all', 'Transform', 'i-lucide-move-3d', 'g', ['full gizmo', 'edit gizmo', 'move rotate scale']),
     gizmo('object.gizmo.move', 'translate', 'Move', 'i-lucide-move', 'm', ['translate', 'gizmo']),
     gizmo('object.gizmo.rotate', 'rotate', 'Rotate', 'i-lucide-rotate-3d', 'r', ['gizmo', 'turn']),
     gizmo('object.gizmo.scale', 'scale', 'Scale', 'i-lucide-scaling', 's', ['gizmo', 'resize']),

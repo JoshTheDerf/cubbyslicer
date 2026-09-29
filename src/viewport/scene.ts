@@ -9,7 +9,7 @@
 import {
   AmbientLight, Box3, MOUSE, BufferAttribute, BufferGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide,
   Float32BufferAttribute, Group, HemisphereLight, LineBasicMaterial, LineSegments, Matrix3, Matrix4, Mesh, MeshBasicMaterial,
-  MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Raycaster, Scene, Sphere, Vector2, Vector3, WebGLRenderer,
+  MeshStandardMaterial, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, Sphere, Vector2, Vector3, WebGLRenderer,
   type Intersection, type Ray,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -23,7 +23,7 @@ import { buildBed, buildBedExtras, disposeObject3D, plateLabelSprite } from './b
 import { plateBed, plateIndexAt } from '../project/plates';
 import { loadBedMesh, loadBedTexture } from './bedAssets';
 import type { BedAssets } from '../presets/types';
-import type { GizmoMode, ViewPreset } from './controller';
+import type { GizmoMode, TransformKind, ViewPreset } from './controller';
 import { readViewportTheme, type ViewportTheme } from './tokens';
 import { ViewCube } from './viewCube';
 
@@ -50,17 +50,29 @@ export interface SceneCallbacks {
   onPick(id: string | null, mode: 'replace' | 'toggle'): void;
   onBoxSelect(ids: string[], additive: boolean): void;
   onBoxRect(rect: { x: number; y: number; w: number; h: number } | null): void;
-  onTransformEnd(results: TransformResult[], mode: GizmoMode): void;
+  onTransformEnd(results: TransformResult[], kind: TransformKind): void;
   onLayOnFace(id: string, worldNormal: Vec3): void;
   onContextMenu(id: string | null, clientX: number, clientY: number): void;
   onHover(id: string | null): void;
   /** A click on empty space over plate `index` (multi-plate: makes it active). */
   onPlateClick?(index: number): void;
   /** Gizmo drag of a single part ended: its new transform in the object's frame. */
-  onPartTransformEnd?(objectId: string, partId: string, t: { position: Vec3; rotation: Quat; scale: Vec3 }, mode: GizmoMode): void;
+  onPartTransformEnd?(objectId: string, partId: string, t: { position: Vec3; rotation: Quat; scale: Vec3 }, kind: TransformKind): void;
 }
 
 /** A surface hit handed to an interactive tool (src/tools: measure, text placement, brim ears, …). */
+/**
+ * What a gizmo drag did, from its world-space change: any size change is a
+ * scale (even about an anchor, which also moves), any turn a rotate, and
+ * otherwise a move. The full gizmo offers all three, so the mode can't tell.
+ */
+export function transformKind(delta: Matrix4): TransformKind {
+  const p = new Vector3(), q = new Quaternion(), s = new Vector3();
+  delta.decompose(p, q, s);
+  if (Math.abs(s.x - 1) > 1e-6 || Math.abs(s.y - 1) > 1e-6 || Math.abs(s.z - 1) > 1e-6) return 'scale';
+  return 1 - Math.abs(q.w) > 1e-9 ? 'rotate' : 'translate';
+}
+
 export interface ToolHit { objectId: string; partId: string | null; point: Vector3; normal: Vector3; faceIndex: number; object: Mesh }
 export interface ToolPointerEvent {
   /**
@@ -139,7 +151,6 @@ export class PrepareScene {
   } | null = null;
   /** Part picked in the object list: the gizmo manipulates it instead of the whole object. */
   private activePart: { objectId: string; partId: string } | null = null;
-  private mode: GizmoMode = 'translate';
   private layOnFace = false;
   private faceMarker: Mesh;
   private raycaster = new Raycaster();
@@ -229,7 +240,7 @@ export class PrepareScene {
     this.gizmo.addEventListener('hover-changed', () => this.requestRender());
     this.gizmo.addEventListener('drag-start', () => this.beginDrag());
     this.gizmo.addEventListener('change', () => this.requestRender());
-    this.gizmo.addEventListener('drag-end', () => this.endDrag());
+    this.gizmo.addEventListener('drag-end', (e) => this.endDrag(transformKind(e.delta)));
     this.labels = new CSS2DRenderer();
     this.labels.domElement.classList.add('vp-labels');
     container.appendChild(this.labels.domElement);
@@ -634,7 +645,6 @@ export class PrepareScene {
   // ---- gizmo ------------------------------------------------------------------
 
   setGizmoMode(mode: GizmoMode): void {
-    this.mode = mode;
     this.gizmo.setMode(mode);
     this.gizmo.setSpace(mode === 'scale' ? 'local' : 'world');
     this.updateGizmo();
@@ -688,7 +698,7 @@ export class PrepareScene {
       : { items: this.selectedEntries() };
   }
 
-  private endDrag(): void {
+  private endDrag(kind: TransformKind): void {
     const ds = this.dragStart;
     if (!ds) return;
     this.dragStart = null;
@@ -698,7 +708,7 @@ export class PrepareScene {
         position: [m.position.x, m.position.y, m.position.z],
         rotation: [m.quaternion.x, m.quaternion.y, m.quaternion.z, m.quaternion.w],
         scale: [m.scale.x, m.scale.y, m.scale.z],
-      }, this.mode);
+      }, kind);
       return;
     }
     const results: TransformResult[] = ds.items.map((entry) => {
@@ -710,7 +720,7 @@ export class PrepareScene {
         scale: [m.scale.x, m.scale.y, m.scale.z],
       };
     });
-    this.cb.onTransformEnd(results, this.mode);
+    this.cb.onTransformEnd(results, kind);
   }
 
   // ---- picking ------------------------------------------------------------------

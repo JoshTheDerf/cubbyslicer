@@ -10,7 +10,7 @@ export const PLATE_TOOLBAR: ToolbarLayout = {
     ['file.import', 'object.auto-orient', 'arrange.all'],
     ['edit.duplicate', 'edit.delete'],
     ['layers.edit'],
-    ['object.gizmo.move', 'object.gizmo.rotate', 'object.gizmo.scale', 'object.lay-on-face'],
+    ['object.gizmo.all', 'object.gizmo.move', 'object.gizmo.rotate', 'object.gizmo.scale', 'object.lay-on-face'],
     ['tool.cut', 'paint.support', 'paint.seam', 'paint.color', 'paint.fuzzy'],
     ['tool.boolean', 'tool.text', 'tool.measure', 'tool.brim-ears'],
   ],

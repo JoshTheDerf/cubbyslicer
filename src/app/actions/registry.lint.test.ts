@@ -98,6 +98,7 @@ describe('action registry lint', () => {
     expect(b('edit.instance-remove')).toBe('-');
     expect(b('object.auto-orient')).toBe('Q');
     expect(b('plate.auto-orient-all')).toBe('Shift+Q');
+    expect(b('object.gizmo.all')).toBe('G');
     expect(b('object.gizmo.move')).toBe('M');
     expect(b('object.gizmo.rotate')).toBe('R');
     expect(b('object.gizmo.scale')).toBe('S');

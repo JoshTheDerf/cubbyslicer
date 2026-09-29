@@ -56,8 +56,8 @@ onMounted(() => {
       onPick: (id, mode) => { if (id) select([id], mode); else clearSelection(); },
       onBoxSelect: (ids, additive) => select(ids, additive ? 'add' : 'replace'),
       onBoxRect: (r) => { box.value = r; },
-      onTransformEnd: (res, mode) => {
-        setTransforms(res, mode === 'translate' ? 'Move' : mode === 'rotate' ? 'Rotate' : 'Scale', { drop: mode !== 'translate' });
+      onTransformEnd: (res, kind) => {
+        setTransforms(res, kind === 'translate' ? 'Move' : kind === 'rotate' ? 'Rotate' : 'Scale', { drop: kind !== 'translate' });
         endGesture(); // one gizmo drag = one undo step
       },
       onLayOnFace: (id, n) => { layOnFace(id, n); toggleLayOnFace(false); },
@@ -67,8 +67,8 @@ onMounted(() => {
       },
       onHover: (id) => emit('hover', id),
       onPlateClick: (i) => setActivePlate(i),
-      onPartTransformEnd: (objectId, partId, t, mode) => {
-        setPartTransform(objectId, partId, t, mode === 'translate' ? 'Move part' : mode === 'rotate' ? 'Rotate part' : 'Scale part');
+      onPartTransformEnd: (objectId, partId, t, kind) => {
+        setPartTransform(objectId, partId, t, kind === 'translate' ? 'Move part' : kind === 'rotate' ? 'Rotate part' : 'Scale part');
         endGesture();
       },
     });
