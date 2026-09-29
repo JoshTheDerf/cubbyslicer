@@ -50,7 +50,7 @@ const confirmOpen = computed({
         <template v-if="!connected">
           <p class="text-toned">
             Claude Code drives this tab through the cubby MCP server on your computer (127.0.0.1). Add it once with
-            <code>claude mcp add cubby -- npx -y cubby-mcp</code>, ask Claude for the pairing code, and paste it here.
+            <code>claude mcp add --scope user cubby -- npx -y cubby-mcp</code>, ask Claude for the pairing code, and paste it here.
           </p>
           <UFormField :label="s.paired ? 'Pairing code (only to pair again)' : 'Pairing code'">
             <UInput v-model="code" placeholder="K7QD-93XM" spellcheck="false" autocomplete="off" class="w-full font-mono" data-testid="bridge-code"
