@@ -66,7 +66,21 @@ Claude Code can drive the slicer (and the CubbyCAD editor) through cubby-mcp, a 
 
 The code works once. The tab keeps a token for this site, so later connections only need Connect. Tick "Reconnect when this page loads" to skip that too; Disconnect turns it off again, and Forget pairing drops the token. The top bar shows a robot icon while Claude is connected.
 
-Claude can list and pick printer, process and filament presets, import models (from CubbyCAD with `cad_to_slicer`, a file on your computer or a URL), arrange, change settings, slice, export G-code or 3MF, and set up and use a print host. Uploading and printing always ask you here first. Tick "Allow without asking until I disconnect" if you don't want to confirm each one.
+Claude can do what you can do in the app:
+
+- switch engines, pick and compare presets, set filament slots and colours, save, rename and delete your own presets, and run the setup steps;
+- change any setting, for the whole print or for one object, part, height range or plate;
+- import models (from CubbyCAD with `cad_to_slicer`, a file on your computer or a URL), move, rotate, scale, mirror, orient, split, copy and rename them, and add parts, modifiers, negative parts and support blockers or enforcers;
+- add, rename, lock and set up plates, and move objects between them;
+- paint supports, seams, colours and fuzzy skin (whole objects, height bands, around a point, fill regions, or faces pointing one way);
+- set variable layer heights, height range modifiers, and filament changes, pauses or custom G-code at a layer;
+- cut, combine (mesh boolean), simplify, add text or SVG, measure, add brim ears, and set up calibration prints and test models;
+- manage Full Spectrum mixed filaments;
+- slice, read the results per plate and per line type, set the preview layers and colours, take screenshots of Prepare and Preview, and export G-code, 3MF or STL;
+- open and save projects in CubbyCAD, and set up and use a print host;
+- run any command from the menus (the same list as the command palette).
+
+Most changes can be undone with Ctrl+Z like your own. Some actions ask you here first: uploading and printing, changing or removing the print host, and deleting a preset. Tick "Allow without asking until I disconnect" if you don't want to confirm each one. Actions that would throw away your work show the app's usual prompt: a new project, opening a project over the plate, deleting a plate with objects on it, starting a calibration, and replacing a file in CubbyCAD.
 
 Chrome's Local Network Access: on `https://cubbycad.com` the browser asks once whether the site may reach devices on your local network. Allow it. If you blocked it, reopen the padlock ▸ Site settings ▸ Local network access. Firefox allows `127.0.0.1` from https pages. Safari may block it; use Chrome, Edge or Firefox.
 

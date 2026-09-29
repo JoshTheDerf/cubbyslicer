@@ -73,3 +73,13 @@ export function primitiveFor(kind: PrimitiveKind, size: [number, number, number]
     case 'slab': return boxMesh(sx * 1.2, sy * 1.2, Math.max(0.5, Math.min(5, sz * 0.1)));
   }
 }
+
+/** A shape with an exact bounding box `size` (mm), centred on the origin: an ellipsoid / elliptic cylinder when the sides differ. */
+export function primitiveOfSize(kind: PrimitiveKind, size: [number, number, number]): PrimitiveMesh {
+  const [sx, sy, sz] = size.map((v) => Math.max(0.01, v));
+  if (kind === 'box' || kind === 'slab') return boxMesh(sx, sy, sz);
+  const m = kind === 'cylinder' ? cylinderMesh(0.5, 1) : sphereMesh(0.5);
+  const p = m.positions;
+  for (let i = 0; i < p.length; i += 3) { p[i] *= sx; p[i + 1] *= sy; p[i + 2] *= sz; }
+  return m;
+}

@@ -43,7 +43,7 @@ function scene() { return toolScene.value; }
  * Painting runs in an Orca-family engine's TriangleSelector: Full Spectrum's
  * own when it is active (its states go to 255, for mixed filaments), else Orca.
  */
-function paintEngine(): EngineId { return activeEngine.value === 'fullspectrum' ? 'fullspectrum' : 'orca'; }
+export function paintEngine(): EngineId { return activeEngine.value === 'fullspectrum' ? 'fullspectrum' : 'orca'; }
 function paintTool<T>(op: string, args: unknown, meshes: ToolMesh[] = []) { return engineTool<T>(op, args, meshes, paintEngine()); }
 // A session lives in one engine: switching engines closes it.
 watch(activeEngine, () => { if (paintUi.layer) void closePaint(); });

@@ -225,6 +225,12 @@ export function loadPlateGcode(plate: number, gcode: Uint8Array): void {
   if (plate === activePlate.value) lastSlice.value = next[plate]!.result;
 }
 
+/** Plate `i`'s sliced result, whether it is out of date, and its G-code file name (null = not sliced). */
+export function plateSliceResult(i: number): { result: SliceResult; stale: boolean; name: string } | null {
+  const r = resultFor(i);
+  return r ? { result: r.result, stale: plateStale(i), name: gcodeFilename(i) } : null;
+}
+
 /** The active plate's sliced G-code and its export name (null = not sliced). */
 export function activeGcode(): { bytes: Uint8Array; name: string } | null {
   const r = lastSlice.value;

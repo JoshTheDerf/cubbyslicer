@@ -127,3 +127,15 @@ export function corneringParams(start: number, end: number, model: number, junct
   if (![start, end].every(Number.isFinite) || start < 0 || end > d.max || start >= end) return `Please enter valid values: 0 ≤ start < end ≤ ${d.max.toFixed(3)}.`;
   return { params: { mode: 'cornering', start, end, step: 0, testModel: model }, warning: end > d.warn ? `High values may cause layer shifts (> ${d.warn.toFixed(3)} ${d.unit}).` : undefined };
 }
+
+// ---- dialog defaults (calib_dlg.cpp) ----------------------------------------------------------
+
+/** Retraction / max volumetric speed / VFA dialogs' start, end and step. */
+export function rangeDefaults(mode: 'retraction_tower' | 'vol_speed_tower' | 'vfa_tower'): { start: number; end: number; step: number } {
+  if (mode === 'retraction_tower') return { start: 0, end: 2, step: 0.1 };
+  if (mode === 'vol_speed_tower') return { start: 5, end: 20, step: 0.5 };
+  return { start: 40, end: 200, step: 10 };
+}
+
+export const SHAPING_FREQ_DEFAULTS: Omit<ShapingFreqForm, 'shaper'> = { model: 0, startX: 15, endX: 110, startY: 15, endY: 110, damp: 0.15 };
+export const SHAPING_DAMP_DEFAULTS: Omit<ShapingDampForm, 'shaper'> = { model: 0, freqX: 30, freqY: 30, start: 0, end: 0.4 };

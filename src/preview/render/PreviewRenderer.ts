@@ -360,6 +360,16 @@ export class PreviewRenderer {
 
   view(preset: ViewPreset, box = this.bounds()): void {
     this.lastPreset = preset;
+    const pose = this.framePose(preset, box, this.camera.fov, this.camera.aspect);
+    this.controls.target.copy(pose.target);
+    this.camera.position.copy(pose.position);
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+    this.requestRender();
+  }
+
+  /** Camera position + target that fit `box` from the `preset` direction. */
+  private framePose(preset: ViewPreset, box: THREE.Box3, fovDeg: number, aspect: number): { position: THREE.Vector3; target: THREE.Vector3 } {
     const dirs: Record<ViewPreset, [number, number, number]> = {
       iso: [0.55, -1, 0.85],
       top: [0, -0.0001, 1],
@@ -376,8 +386,8 @@ export class PreviewRenderer {
     const upHint = Math.abs(fwd.z) > 0.999 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
     const right = new THREE.Vector3().crossVectors(fwd, upHint).normalize();
     const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
-    const tanY = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
-    const tanX = tanY * this.camera.aspect;
+    const tanY = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2);
+    const tanX = tanY * aspect;
     let dist = 10;
     const c = new THREE.Vector3();
     for (let i = 0; i < 8; i++) {
@@ -386,11 +396,60 @@ export class PreviewRenderer {
       dist = Math.max(dist, -z + Math.abs(c.dot(right)) / tanX, -z + Math.abs(c.dot(up)) / tanY);
     }
     dist *= 1.12;
-    this.controls.target.copy(center);
-    this.camera.position.copy(center).addScaledVector(dir, dist);
-    this.camera.updateProjectionMatrix();
-    this.controls.update();
-    this.requestRender();
+    return { position: center.clone().addScaledVector(dir, dist), target: center };
+  }
+
+  /**
+   * Render one PNG at `width` x `height` without touching the on-screen view:
+   * the current camera, or a `preset` framing the print ('print') or the bed ('plate').
+   */
+  async capture(opts: { width: number; height: number; preset?: ViewPreset; fit?: 'print' | 'plate' }): Promise<Blob> {
+    const { width: w, height: h } = opts;
+    const cam = this.camera.clone();
+    cam.aspect = w / h;
+    let target = this.controls.target.clone();
+    if (opts.preset || opts.fit) {
+      const b = this.bed;
+      const box = opts.fit === 'plate' && b
+        ? new THREE.Box3(new THREE.Vector3(b.min[0], b.min[1], 0), new THREE.Vector3(b.max[0], b.max[1], 10))
+        : this.bounds();
+      const pose = this.framePose(opts.preset ?? this.lastPreset, box, cam.fov, cam.aspect);
+      cam.position.copy(pose.position);
+      cam.up.set(0, 0, 1);
+      cam.lookAt(pose.target);
+      target = pose.target;
+    }
+    const d = cam.position.distanceTo(target);
+    cam.near = Math.max(0.02, d * 0.004);
+    cam.far = Math.max(2000, d * 40);
+    cam.updateProjectionMatrix();
+    const r = this.renderer;
+    const prevSize = r.getSize(new THREE.Vector2());
+    const prevRatio = r.getPixelRatio();
+    const u = this.uniforms;
+    const prev = { viewport: u.uViewport.value.clone(), point: u.uPointPx.value, min: u.uMinPx.value, near: u.uNear.value };
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    try {
+      r.setPixelRatio(1);
+      r.setSize(w, h, false);
+      u.uViewport.value.set(w, h);
+      u.uPointPx.value = 7;
+      u.uMinPx.value = 0.55;
+      u.uNear.value = cam.near;
+      r.render(this.scene, cam);
+      // Same task as the render: the drawing buffer is still valid.
+      out.getContext('2d')!.drawImage(r.domElement, 0, 0, w, h);
+    } finally {
+      r.setPixelRatio(prevRatio);
+      r.setSize(prevSize.x, prevSize.y, false);
+      u.uViewport.value.copy(prev.viewport);
+      u.uPointPx.value = prev.point;
+      u.uMinPx.value = prev.min;
+      u.uNear.value = prev.near;
+      this.requestRender();
+    }
+    return new Promise((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error('The screenshot could not be encoded.'))), 'image/png'));
   }
 
   /** Frame the print (or the bed when empty) keeping the current view direction preset. */

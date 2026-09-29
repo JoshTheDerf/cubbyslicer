@@ -13,7 +13,8 @@ import { currentPresets } from '../presets/store';
 import { asArray } from '../presets/values';
 import { toast } from '../ui';
 import {
-  corneringDefaults, corneringParams, paDefaults, paParams, rangeParams, shaperTypesFor, shapingDampParams, shapingFreqParams, snapTemp,
+  corneringDefaults, corneringParams, paDefaults, paParams, rangeDefaults, rangeParams, shaperTypesFor, shapingDampParams, shapingFreqParams, snapTemp,
+  SHAPING_DAMP_DEFAULTS, SHAPING_FREQ_DEFAULTS,
   TEMP_FILAMENTS, tempFilamentOf, tempParams, tempRangeFor, type PAMethod, type TempFilament,
 } from './forms';
 import {
@@ -48,8 +49,8 @@ const temp = reactive({ filament: 'PLA' as TempFilament, start: 230, end: 190 })
 const flow = reactive({ type: 2 as 0 | 1 | 2 | 3, pattern: 'archimedeanchords' as FlowPass['pattern'] });
 const pa = reactive({ method: 'pa_tower' as PAMethod, bowden: false, start: 0, end: 0.1, step: 0.002, printNumbers: false, accels: '', speeds: '' });
 const range = reactive({ start: 0, end: 0, step: 0 });
-const isf = reactive({ model: 0 as 0 | 1, shaper: 'Default', startX: 15, endX: 110, startY: 15, endY: 110, damp: 0.15 });
-const isd = reactive({ model: 0 as 0 | 1, shaper: 'Default', freqX: 30, freqY: 30, start: 0, end: 0.4 });
+const isf = reactive({ ...SHAPING_FREQ_DEFAULTS, shaper: 'Default' });
+const isd = reactive({ ...SHAPING_DAMP_DEFAULTS, shaper: 'Default' });
 const corner = reactive({ model: 0, start: 1, end: 15 });
 
 const reprap = computed(() => facts.value.flavor === 'reprapfirmware');
@@ -68,9 +69,9 @@ function reset(which: CalibDialogId): void {
     pa.bowden = asArray(cfg.extruder_type)[0] === 'Bowden';
     pa.accels = ''; pa.speeds = '';
     Object.assign(pa, paDefaults(pa.method, pa.bowden));
-  } else if (which === 'retraction') Object.assign(range, { start: 0, end: 2, step: 0.1 });
-  else if (which === 'volumetric') Object.assign(range, { start: 5, end: 20, step: 0.5 });
-  else if (which === 'vfa') Object.assign(range, { start: 40, end: 200, step: 10 });
+  } else if (which === 'retraction') Object.assign(range, rangeDefaults('retraction_tower'));
+  else if (which === 'volumetric') Object.assign(range, rangeDefaults('vol_speed_tower'));
+  else if (which === 'vfa') Object.assign(range, rangeDefaults('vfa_tower'));
   else if (which === 'is_freq') { isf.shaper = shaperTypesFor(facts.value.flavor)[0]; }
   else if (which === 'is_damp') { isd.shaper = shaperTypesFor(facts.value.flavor)[0]; }
   else if (which === 'cornering') Object.assign(corner, { start: cornerDef.value.start, end: cornerDef.value.end });

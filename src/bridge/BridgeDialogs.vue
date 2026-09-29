@@ -63,7 +63,7 @@ const confirmOpen = computed({
         </template>
         <template v-else>
           <p class="text-toned">
-            Claude can import models, change settings and slice. Uploads and prints ask you here first
+            Claude can use everything in the slicer, like you can. Uploads, prints, print host changes and deleting presets ask you here first
             <template v-if="bridge.isSessionAllowed('print') || bridge.isSessionAllowed('upload')">
               (you allowed them without asking for this session. <ULink as="button" class="text-info" @click="bridge.revokeSessionAllow('print'); bridge.revokeSessionAllow('upload')">Ask again</ULink>)
             </template>.

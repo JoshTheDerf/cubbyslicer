@@ -37,7 +37,7 @@ import { registerPresetsSection } from './projectAdapter';
 import { configProblems } from './validate';
 import { registerSettingsActions } from './actions';
 import { currentPageOf, jumpToSetting, pageDirty, pageIcon, selectPage, settingsLayout } from './useLayout';
-import { openSettingsTab, panelRequest, settingsUi, SETUP_DONE_KEY, type SidebarSection } from './uiState';
+import { openSettingsTab, panelRequest, settingsUi, setupWizardState, SETUP_DONE_KEY, type SidebarSection } from './uiState';
 import FilamentSectionActions from '../dialogs/FilamentSectionActions.vue';
 import { openDialog } from '../dialogs/state';
 
@@ -82,6 +82,8 @@ const setupOpen = ref(false);
 watch(() => panelRequest.focusSearch, () => { searchOpen.value = true; });
 watch(() => panelRequest.addPrinter, () => { addPrinter.value = true; });
 watch(() => panelRequest.setupWizard, () => { setupOpen.value = true; });
+watch(() => panelRequest.closeSetupWizard, () => { if (setupOpen.value) closeSetup(); });
+watch(setupOpen, (o) => { setupWizardState.open = o; }, { immediate: true });
 watch(() => panelRequest.importFiles, () => fileInput.value?.click());
 // First visit: walk the user through picking their printer and filament.
 if (!lsGet<boolean>(SETUP_DONE_KEY)) void p.value.ready.then(() => { if (!lsGet<boolean>(SETUP_DONE_KEY)) setupOpen.value = true; });

@@ -161,10 +161,11 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { bedFromConfig, lastSlice, resolvedConfig } from '../app/state';
-import type { FlatConfig, SliceResult } from '../engine/types';
+import type { SliceResult } from '../engine/types';
 import { parseGcodeAsync } from './parser/client';
+import { parseOptionsFrom } from './parseOptions';
 import type { ParseHandle } from './parser/client';
-import type { ParseOptions, ParsedGcode } from './parser/types';
+import type { ParsedGcode } from './parser/types';
 import { FEATURES, Feature, isExtrusionFeature } from './parser/features';
 import { PreviewRenderer } from './render/PreviewRenderer';
 import type { ViewPreset } from './render/PreviewRenderer';
@@ -174,7 +175,7 @@ import { buildFeatureRows, buildSummary } from './summary';
 import {
   colorScheme as scheme, featureVisible, layerHi as hi, layerLo as lo, legendCollapsed, moveIndex as move,
   onCameraCommand, previewData as parsed, previewOptions as options, showGcodeViewer as showViewer,
-  singleLayer as single, cameraCommand,
+  singleLayer as single, cameraCommand, registerPreviewHandle,
 } from './store';
 import type { LegendOptions } from './summary';
 import { attachViewCube } from './viewCube';
@@ -291,22 +292,12 @@ let handle: ParseHandle | null = null;
 let framed = false;
 let generation = 0;
 
-function parseOptionsFrom(cfg: FlatConfig): ParseOptions {
-  const num = (k: string) => {
-    const v = cfg[k];
-    const s = Array.isArray(v) ? v[0] : v;
-    const n = s === undefined ? NaN : parseFloat(s);
-    return Number.isFinite(n) && n > 0 ? n : undefined;
-  };
-  return {
-    filamentDiameter: num('filament_diameter'),
-    acceleration: num('default_acceleration') ?? num('machine_max_acceleration_extruding'),
-    travelAcceleration: num('travel_acceleration') ?? num('machine_max_acceleration_travel'),
-  };
-}
+/** The result on screen once `phase` is 'ready' (the bridge's capture waits for it). */
+let shown: SliceResult | null = null;
 
 async function load(s: SliceResult | null) {
   const gen = ++generation;
+  shown = null;
   handle?.cancel();
   handle = null;
   moveSlider.value?.stop();
@@ -353,7 +344,7 @@ async function load(s: SliceResult | null) {
   // Frame the first result; keep the user's camera on re-slices.
   if (!framed) { renderer.view('iso'); framed = true; }
   await first;
-  if (gen === generation) phase.value = 'ready';
+  if (gen === generation) { phase.value = 'ready'; shown = s; }
 }
 
 // ---- renderer sync -------------------------------------------------------
@@ -456,6 +447,10 @@ onMounted(() => {
   // Preferences → Camera (zoom to mouse, reverse zoom, orbit speed / centre, swapped buttons).
   offCameraPrefs = bindCameraPrefs({ controls: renderer.controls, camera: renderer.camera, host: host.value });
   void load(lastSlice.value);
+  registerPreviewHandle({
+    capture: (o) => renderer ? renderer.capture(o) : Promise.reject(new Error('The preview is not ready.')),
+    status: () => ({ phase: phase.value, current: !!lastSlice.value && shown === lastSlice.value, error: errorMsg.value || null }),
+  });
 });
 
 // ---- view cube -----------------------------------------------------------------
@@ -469,6 +464,7 @@ watch(rendererRef, (r) => {
 });
 
 onBeforeUnmount(() => {
+  registerPreviewHandle(null);
   generation++;
   handle?.cancel();
   handle = null;

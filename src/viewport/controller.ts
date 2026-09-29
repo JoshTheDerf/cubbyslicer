@@ -34,7 +34,11 @@ export interface ViewportHandle {
   fitSelection(): void;
   fitBed(): void;
   zoom(dir: 1 | -1): void;
+  /** PNG of the Prepare view (see PrepareScene.capture). */
+  capture?(opts: CaptureOptions): Promise<Blob>;
 }
+
+export interface CaptureOptions { width: number; height: number; view?: ViewPreset; fit?: 'selection' | 'objects' | 'plate' }
 
 let handle: ViewportHandle | null = null;
 export function registerViewport(h: ViewportHandle | null): void { handle = h; }
@@ -43,6 +47,8 @@ export function setView(p: ViewPreset): void { handle?.setView(p); }
 export function fitSelection(): void { handle?.fitSelection(); }
 export function fitBed(): void { handle?.fitBed(); }
 export function zoomView(dir: 1 | -1): void { handle?.zoom(dir); }
+/** Screenshot of the Prepare view; null while no viewport is mounted. */
+export function captureViewport(opts: CaptureOptions): Promise<Blob> | null { return handle?.capture?.(opts) ?? null; }
 
 /** Pick a gizmo mode; picking the active single mode again returns to the full gizmo. */
 export function setGizmo(m: GizmoMode): void {

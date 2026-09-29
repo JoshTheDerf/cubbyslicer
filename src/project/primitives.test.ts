@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { boxMesh, cylinderMesh, primitiveFor, sphereMesh } from './primitives';
+import { boxMesh, cylinderMesh, primitiveFor, primitiveOfSize, sphereMesh } from './primitives';
+import { computeBBox } from './mesh';
 
 /** Signed volume (divergence theorem): positive for outward-facing closed meshes. */
 function volume(p: Float32Array, ix: Uint32Array): number {
@@ -24,5 +25,15 @@ describe('primitives', () => {
     const slab = primitiveFor('slab', [100, 50, 20]);
     const xs = [...slab.positions].filter((_, i) => i % 3 === 0);
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(120);
+  });
+});
+
+describe('primitiveOfSize', () => {
+  it('gives each shape the exact bounding box', () => {
+    for (const k of ['box', 'cylinder', 'sphere', 'slab'] as const) {
+      const b = computeBBox(primitiveOfSize(k, [10, 6, 3]).positions);
+      expect(b.max.map((v, i) => +(v - b.min[i]).toFixed(4))).toEqual([10, 6, 3]);
+      expect(b.min.map((v, i) => +((v + b.max[i]) / 2).toFixed(4) || 0)).toEqual([0, 0, 0]);
+    }
   });
 });

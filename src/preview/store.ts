@@ -73,3 +73,13 @@ export function setSingleLayer(on: boolean): void {
   if (on) layerLo.value = layerHi.value;
   else layerLo.value = 0;
 }
+
+/** What the mounted PreviewView offers the Claude Code bridge (screenshots, readiness). */
+export interface PreviewHandle {
+  capture(opts: { width: number; height: number; preset?: ViewPreset; fit?: 'print' | 'plate' }): Promise<Blob>;
+  /** `current`: the active plate's result is parsed and on the GPU. */
+  status(): { phase: 'idle' | 'parsing' | 'uploading' | 'ready' | 'error'; current: boolean; error: string | null };
+}
+let previewHandle: PreviewHandle | null = null;
+export function registerPreviewHandle(h: PreviewHandle | null): void { previewHandle = h; }
+export function getPreviewHandle(): PreviewHandle | null { return previewHandle; }

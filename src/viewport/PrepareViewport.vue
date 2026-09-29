@@ -89,6 +89,7 @@ onMounted(() => {
       fitSelection: () => s.fitSelection(),
       fitBed: () => s.fitBed(),
       zoom: (d) => s.zoom(d),
+      capture: (o) => s.capture(o),
     });
   } catch (e) {
     failed.value = (e as Error)?.message || 'WebGL is unavailable';

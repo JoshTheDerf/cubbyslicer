@@ -22,7 +22,7 @@ import {
 } from '../../project/store';
 import { NudgeBurst } from '@cubby/shared/nudge';
 import { plateLabel } from '../../project/plates';
-import { PRIMITIVE_LABELS, primitiveFor, type PrimitiveKind } from '../../project/primitives';
+import { PRIMITIVE_LABELS, primitiveFor, primitiveOfSize, type PrimitiveKind } from '../../project/primitives';
 import { PART_TYPE_LABELS, type PartType } from '../../project/types';
 import { orientObjects } from '../../project/orient';
 import { autoOrient as engineAutoOrient } from '../../engine/client';
@@ -293,45 +293,74 @@ export function splitSelectionToParts(): void {
  */
 export async function addSubObject(type: PartType, source: PrimitiveKind | 'file'): Promise<void> {
   const id = selectedIds.value.length === 1 ? selectedIds.value[0] : null;
-  const o = id ? objects.value.find((x) => x.id === id) : undefined;
-  const mesh = o ? getMesh(o.meshId) : undefined;
-  if (!o || !mesh) { toast.info('Select one object first.'); return; }
-  const b = mesh.bbox;
-  const center: [number, number, number] = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
-  const typeLabel = PART_TYPE_LABELS[type];
+  if (!id || !objects.value.some((x) => x.id === id)) { toast.info('Select one object first.'); return; }
   if (source !== 'file') {
-    const size: [number, number, number] = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
-    const shape = primitiveFor(source, size);
-    // A slab sits on the bottom of the object (a layer-range modifier); the rest in its middle.
-    const at: [number, number, number] = source === 'slab' ? [center[0], center[1], b.min[2] + Math.max(0.5, Math.min(5, size[2] * 0.1)) / 2] : center;
-    addPart(o.id, type, `${typeLabel} ${PRIMITIVE_LABELS[source].toLowerCase()}`, shape.positions, shape.indices, at);
+    addPrimitivePart(id, type, source);
     if (type === 'modifier') revealObjectSettings();
     return;
   }
   const [f] = await pickFiles(MODEL_ACCEPT, false);
   if (!f) return;
   try {
-    const res = await withBusy(`Loading ${f.name}…`, async () => parseModelFile(f.name, await f.arrayBuffer()));
-    if (!res.objects.length) { toast.error(`No geometry in ${f.name}.`); return; }
-    // Merge everything in the file into one volume, centred on its own bbox.
-    let nv = 0, nt = 0;
-    for (const p of res.objects) { nv += p.positions.length; nt += p.indices.length; }
-    const pos = new Float32Array(nv), idx = new Uint32Array(nt);
-    let vo = 0, io = 0;
-    for (const p of res.objects) {
-      pos.set(p.positions, vo);
-      for (let i = 0; i < p.indices.length; i++) idx[io + i] = p.indices[i] + vo / 3;
-      vo += p.positions.length; io += p.indices.length;
-    }
-    const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
-    for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], pos[i + k]); mx[k] = Math.max(mx[k], pos[i + k]); }
-    const c = [0, 1, 2].map((k) => (mn[k] + mx[k]) / 2);
-    for (let i = 0; i < pos.length; i += 3) { pos[i] -= c[0]; pos[i + 1] -= c[1]; pos[i + 2] -= c[2]; }
-    addPart(o.id, type, f.name.replace(/\.[a-z0-9]+$/i, ''), pos, idx, center);
+    const pid = await withBusy(`Loading ${f.name}…`, async () => addModelPart(id, type, f.name, await f.arrayBuffer()));
+    if (!pid) { toast.error(`No geometry in ${f.name}.`); return; }
     if (type === 'modifier') revealObjectSettings();
   } catch (e) {
     toast.error(`Couldn’t load ${f.name}.`, { detail: (e as Error)?.message });
   }
+}
+
+/** Centre of an object's own mesh bbox (object-local frame). */
+function meshCentre(objectId: string): { center: [number, number, number]; size: [number, number, number]; min: [number, number, number] } | null {
+  const o = objects.value.find((x) => x.id === objectId);
+  const mesh = o ? getMesh(o.meshId) : undefined;
+  if (!mesh) return null;
+  const b = mesh.bbox;
+  return {
+    center: [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2],
+    size: [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]],
+    min: [b.min[0], b.min[1], b.min[2]],
+  };
+}
+
+/**
+ * Add a generic shape to an object (Orca load_generic_subobject). Without
+ * `size` it is sized from the object like the menu does; without `at` it sits
+ * in the object's middle (a slab on its bottom). `at` / `size` are mm in the
+ * object's local frame. Returns the part id.
+ */
+export function addPrimitivePart(objectId: string, type: PartType, source: PrimitiveKind,
+  opts: { size?: [number, number, number]; at?: [number, number, number]; name?: string } = {}): string | null {
+  const c = meshCentre(objectId);
+  if (!c) return null;
+  const shape = opts.size ? primitiveOfSize(source, opts.size) : primitiveFor(source, c.size);
+  // A slab sits on the bottom of the object (a layer-range modifier); the rest in its middle.
+  const slabH = opts.size ? opts.size[2] : Math.max(0.5, Math.min(5, c.size[2] * 0.1));
+  const at = opts.at ?? (source === 'slab' ? [c.center[0], c.center[1], c.min[2] + slabH / 2] as [number, number, number] : c.center);
+  return addPart(objectId, type, opts.name ?? `${PART_TYPE_LABELS[type]} ${PRIMITIVE_LABELS[source].toLowerCase()}`, shape.positions, shape.indices, at);
+}
+
+/** Add a model file's geometry (every mesh in it merged, centred on its own bbox) as a part. Returns the part id, null when the file has no geometry. */
+export async function addModelPart(objectId: string, type: PartType, fileName: string, buffer: ArrayBuffer,
+  opts: { at?: [number, number, number]; name?: string } = {}): Promise<string | null> {
+  const c = meshCentre(objectId);
+  if (!c) return null;
+  const res = await parseModelFile(fileName, buffer);
+  if (!res.objects.length) return null;
+  let nv = 0, nt = 0;
+  for (const p of res.objects) { nv += p.positions.length; nt += p.indices.length; }
+  const pos = new Float32Array(nv), idx = new Uint32Array(nt);
+  let vo = 0, io = 0;
+  for (const p of res.objects) {
+    pos.set(p.positions, vo);
+    for (let i = 0; i < p.indices.length; i++) idx[io + i] = p.indices[i] + vo / 3;
+    vo += p.positions.length; io += p.indices.length;
+  }
+  const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], pos[i + k]); mx[k] = Math.max(mx[k], pos[i + k]); }
+  const m = [0, 1, 2].map((k) => (mn[k] + mx[k]) / 2);
+  for (let i = 0; i < pos.length; i += 3) { pos[i] -= m[0]; pos[i + 1] -= m[1]; pos[i + 2] -= m[2]; }
+  return addPart(objectId, type, opts.name ?? fileName.replace(/\.[a-z0-9]+$/i, ''), pos, idx, opts.at ?? c.center);
 }
 
 export function splitSelectionToObjects(): void {

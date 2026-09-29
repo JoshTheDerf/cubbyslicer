@@ -6,15 +6,13 @@
  * "Delete input" is off. One undo step.
  */
 import { computed, ref, watch } from 'vue';
-import { Matrix4 } from 'three';
-import { commitBoolean, getObject, selectedIds } from '../../project/store';
+import { getObject, selectedIds } from '../../project/store';
 import { PART_TYPE_LABELS } from '../../project/types';
 import { toast } from '../../ui';
 import ToolPanel from '../ToolPanel.vue';
 import { closeTool } from '../state';
-import { volumeMatrix, volumeMesh } from '../overlay';
-import { flipped, transformed } from '../geom/meshUtil';
-import { BOOLEAN_LABELS, meshBoolean, type BooleanOp } from './boolean';
+import { BOOLEAN_LABELS, type BooleanOp } from './boolean';
+import { runMeshBoolean } from './run';
 
 interface Vol { key: string; objectId: string; partId: string | null; label: string }
 
@@ -56,25 +54,9 @@ async function run(): Promise<void> {
   const src = volumes.value.find((v) => v.key === source.value);
   const tv = volumes.value.filter((v) => tools.value.includes(v.key));
   if (!src || !tv.length) return;
-  const sm = volumeMesh(src.objectId, src.partId), sMat = volumeMatrix(src.objectId, src.partId);
-  if (!sm || !sMat) return;
-  const inv = new Matrix4().fromArray(sMat).invert();
-  const toolMeshes = [];
-  for (const t of tv) {
-    const m = volumeMesh(t.objectId, t.partId), w = volumeMatrix(t.objectId, t.partId);
-    if (!m || !w) continue;
-    const rel = inv.clone().multiply(new Matrix4().fromArray(w));
-    toolMeshes.push({ positions: transformed(m.positions, rel.elements), indices: rel.determinant() < 0 ? flipped(m.indices) : m.indices });
-  }
   busy.value = true;
   try {
-    const res = await meshBoolean(op.value, { positions: sm.positions, indices: sm.indices }, toolMeshes);
-    commitBoolean({
-      label: `Mesh boolean: ${BOOLEAN_LABELS[op.value].toLowerCase()}`,
-      objectId: src.objectId, partId: src.partId, mesh: res,
-      removeObjects: deleteInput.value ? tv.filter((t) => !t.partId && t.objectId !== src.objectId).map((t) => t.objectId) : [],
-      removeParts: deleteInput.value ? tv.filter((t) => t.partId).map((t) => ({ objectId: t.objectId, partId: t.partId! })) : [],
-    });
+    await runMeshBoolean(op.value, src, tv, deleteInput.value);
     toast.success(`${BOOLEAN_LABELS[op.value]} done.`, { timeout: 2000 });
   } catch (e) {
     toast.error('Mesh boolean failed.', { detail: (e as Error)?.message });

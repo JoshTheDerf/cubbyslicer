@@ -1064,6 +1064,74 @@ export class PrepareScene {
 
   fitBed(): void { this.fitBox(this.bedBox()); }
 
+  /**
+   * Render one PNG at `width` x `height` without moving the on-screen camera:
+   * the current view, or `view` framing `fit` ('selection', 'objects' = every
+   * visible object, 'plate' = the active plate). The gizmo, selection box and
+   * DOM labels are left out.
+   */
+  async capture(opts: { width: number; height: number; view?: ViewPreset; fit?: 'selection' | 'objects' | 'plate'; background?: string }): Promise<Blob> {
+    const { width: w, height: h } = opts;
+    const aspect = w / h;
+    let cam: PerspectiveCamera | OrthographicCamera;
+    if (opts.view || opts.fit) {
+      const p = this.projection.perspective.clone();
+      p.aspect = aspect;
+      p.updateProjectionMatrix();
+      const visible = [...this.entries.values()].filter((e) => e.mesh.visible);
+      const box = opts.fit === 'plate' ? this.bedBox()
+        : opts.fit === 'selection' ? (this.worldBoxOf(this.selectedEntries()) ?? this.worldBoxOf(visible) ?? this.bedBox())
+          : opts.fit === 'objects' ? (this.worldBoxOf(visible) ?? this.bedBox())
+            : (this.worldBoxOf(visible)?.union(this.bedBox()) ?? this.bedBox());
+      const sphere = box.getBoundingSphere(new Sphere());
+      const fov = (p.fov * Math.PI) / 180;
+      const fovMin = Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * aspect));
+      const dist = (Math.max(sphere.radius, 5) / Math.sin(fovMin / 2)) * 1.05;
+      const dir = opts.view ? this.viewDir(opts.view) : this.camera.position.clone().sub(this.orbit.target).normalize();
+      p.position.copy(sphere.center).addScaledVector(dir, dist);
+      p.up.set(0, 0, 1);
+      p.lookAt(sphere.center);
+      p.near = Math.max(0.1, dist / 500);
+      p.far = Math.max(5000, dist * 20);
+      p.updateProjectionMatrix();
+      cam = p;
+    } else if (this.camera instanceof OrthographicCamera) {
+      const o = this.camera.clone();
+      const cx = (o.left + o.right) / 2, half = ((o.top - o.bottom) * aspect) / 2;
+      o.left = cx - half; o.right = cx + half;
+      o.updateProjectionMatrix();
+      cam = o;
+    } else {
+      const p = this.camera.clone();
+      p.aspect = aspect;
+      p.updateProjectionMatrix();
+      cam = p;
+    }
+    const r = this.renderer;
+    const prevSize = r.getSize(new Vector2());
+    const prevRatio = r.getPixelRatio();
+    const hidden = [this.gizmo.object, this.selectionBox, this.faceMarker].map((o) => [o, o.visible] as const);
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const ctx = out.getContext('2d')!;
+    ctx.fillStyle = opts.background || getComputedStyle(this.container).getPropertyValue('--bg-0').trim() || '#16181c';
+    ctx.fillRect(0, 0, w, h);
+    try {
+      for (const [o] of hidden) o.visible = false;
+      r.setPixelRatio(1);
+      r.setSize(w, h, false);
+      r.render(this.scene, cam);
+      // Same task as the render: the drawing buffer is still valid.
+      ctx.drawImage(r.domElement, 0, 0, w, h);
+    } finally {
+      for (const [o, v] of hidden) o.visible = v;
+      r.setPixelRatio(prevRatio);
+      r.setSize(prevSize.x, prevSize.y, false);
+      this.requestRender();
+    }
+    return new Promise((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error('The screenshot could not be encoded.'))), 'image/png'));
+  }
+
   /** Dolly toward (+1) / away from (-1) the orbit target (Orca's I / O); orthographic: zoom the frustum. */
   zoom(dir: 1 | -1): void {
     const cam = this.camera;

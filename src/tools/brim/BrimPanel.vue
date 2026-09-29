@@ -7,35 +7,22 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { Matrix4, Plane, Vector3 } from 'three';
-import { getObject, objectInfo, objects, meshRevision, selectedIds, setBrimPoints, setObjectOverride } from '../../project/store';
+import { getObject, objects, meshRevision, selectedIds, setBrimPoints, setObjectOverride } from '../../project/store';
 import { resolvedConfig } from '../../app/state';
 import type { BrimPoint } from '../../project/types';
-import type { Vec3, Pt } from '../../project/math';
+import type { Pt } from '../../project/math';
 import type { ToolPointerEvent } from '../../viewport/scene';
 import { touch } from '../../app/shell/uiState';
 import ToolPanel from '../ToolPanel.vue';
 import { closeTool, installHandler, toolScene } from '../state';
-import { COLORS, ToolOverlay, circleLine, disc, render, volumeMatrix, volumeMesh } from '../overlay';
-import { transformed, mergeMeshes } from '../geom/meshUtil';
-import { EAR_DEFAULTS, autoEarPoints, defaultHeadDiameter, detectionRadiusMax, invalidEars, sliceAtZ, type Loop } from './brimEars';
+import { COLORS, ToolOverlay, circleLine, disc, render, volumeMatrix } from '../overlay';
+import { EAR_DEFAULTS, detectionRadiusMax, invalidEars, type Loop } from './brimEars';
+import { autoEars, defaultEarDiameter, earToLocal, firstLayer } from './objectEars';
 
 const objId = computed(() => (selectedIds.value.length === 1 ? selectedIds.value[0] : null));
 const obj = computed(() => (objId.value ? getObject(objId.value) ?? null : null));
 
-const cfgNum = (k: string, d: number) => {
-  const v = resolvedConfig.value[k];
-  const s = Array.isArray(v) ? v[0] : v;
-  const n = parseFloat(String(s ?? ''));
-  return Number.isFinite(n) ? n : d;
-};
-const nozzle = computed(() => cfgNum('nozzle_diameter', 0.4));
-const initialWidth = computed(() => {
-  const v = resolvedConfig.value.initial_layer_line_width;
-  const s = String((Array.isArray(v) ? v[0] : v) ?? '');
-  return s.endsWith('%') ? (parseFloat(s) / 100) * nozzle.value : parseFloat(s) || nozzle.value * 1.25;
-});
-
-const diameter = ref(defaultHeadDiameter(initialWidth.value, nozzle.value));
+const diameter = ref(defaultEarDiameter());
 const maxAngle = ref(EAR_DEFAULTS.maxAngle);
 const detection = ref(EAR_DEFAULTS.detectionRadius);
 const selected = ref<Set<number>>(new Set());
@@ -45,18 +32,8 @@ const overlay = new ToolOverlay('brim');
 /** First layer of the object: model parts sliced 0.1 mm above its bottom (world XY). */
 const layer = shallowRef<{ loops: Loop[]; bottom: number } | null>(null);
 function computeLayer(): void {
-  const o = obj.value;
-  const info = o ? objectInfo.value.get(o.id) : undefined;
-  if (!o || !info) { layer.value = null; return; }
-  const vols = [{ partId: null as string | null }, ...(o.parts ?? []).filter((p) => p.type === 'part').map((p) => ({ partId: p.id as string | null }))];
-  const meshes = vols.flatMap((v) => {
-    const m = volumeMesh(o.id, v.partId), w = volumeMatrix(o.id, v.partId);
-    return m && w ? [{ positions: transformed(m.positions, w), indices: m.indices }] : [];
-  });
-  const all = mergeMeshes(meshes);
-  layer.value = { loops: sliceAtZ(all.positions, all.indices, info.min[2] + 0.1), bottom: info.min[2] };
+  layer.value = obj.value ? firstLayer(obj.value.id) : null;
 }
-
 const points = computed<BrimPoint[]>(() => obj.value?.brimPoints ?? []);
 function objMatrix(): Matrix4 | null {
   const m = obj.value ? volumeMatrix(obj.value.id, null) : null;
@@ -81,14 +58,6 @@ const brimType = computed(() => {
   return (Array.isArray(v) ? v[0] : v) as string | undefined;
 });
 const hasBrimType = computed(() => 'brim_type' in resolvedConfig.value || !!obj.value?.overrides.brim_type);
-
-function toLocal(x: number, y: number): Vec3 | null {
-  const m = objMatrix();
-  const l = layer.value;
-  if (!m || !l) return null;
-  const v = new Vector3(x, y, l.bottom - 0.0001).applyMatrix4(m.clone().invert());
-  return [v.x, v.y, v.z];
-}
 
 function commit(pts: BrimPoint[], label: string): void {
   if (obj.value) setBrimPoints(obj.value.id, pts, label);
@@ -128,7 +97,7 @@ function onPointer(e: ToolPointerEvent): boolean {
   }
   if (selected.value.size) { selected.value = new Set(); draw(); return true; }
   if (e.hit && e.hit.objectId === obj.value.id) {
-    const pos = toLocal(e.hit.point.x, e.hit.point.y);
+    const pos = layer.value ? earToLocal(obj.value.id, e.hit.point.x, e.hit.point.y, layer.value.bottom) : null;
     if (pos) commit([...points.value, { pos, radius: diameter.value / 2 }], 'Add brim ear');
     return true;
   }
@@ -136,10 +105,8 @@ function onPointer(e: ToolPointerEvent): boolean {
 }
 
 function autoGenerate(): void {
-  const l = layer.value;
-  if (!l) return;
-  const pts = autoEarPoints(l.loops, detection.value, maxAngle.value);
-  const add = pts.map(([x, y]) => toLocal(x, y)).filter((p): p is Vec3 => !!p).map((pos) => ({ pos, radius: diameter.value / 2 }));
+  if (!obj.value) return;
+  const add = autoEars(obj.value.id, { detectionRadius: detection.value, maxAngle: maxAngle.value, diameter: diameter.value });
   if (add.length) commit([...points.value, ...add], 'Auto generate brim ear');
 }
 function deleteSelected(): void {
