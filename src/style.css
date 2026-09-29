@@ -1,0 +1,48 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+/* Keep Tailwind's class scan to the app source (build outputs + staged engine profiles are huge). */
+@source not "../dist";
+@source not "../dist-staging";
+@source not "../dist-staging-mt";
+@source not "../public/wasm";
+@source not "../e2e-out";
+
+/* Global base styles. Colours come from src/ui/theme.css tokens only. */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #app { margin: 0; padding: 0; height: 100%; width: 100%; }
+
+body {
+  font-family: var(--font);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  color: var(--fg-0);
+  background: var(--bg-0);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  min-width: 320px;
+}
+
+/* Layered so Nuxt UI's text-* utilities (e.g. solid buttons' text-inverted) still win. */
+@layer base {
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--info); }
+}
+::selection { background: var(--accent-soft); }
+
+/* Thin dark scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--line-strong); border: 3px solid transparent; background-clip: padding-box; border-radius: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Loading / error placeholder for lazily loaded areas (src/app/shell/external.ts) */
+.shell-placeholder {
+  display: grid; place-items: center; min-height: 120px; height: 100%; padding: 16px; text-align: center;
+  font-size: var(--fs-sm); color: var(--fg-2);
+}
+.shell-placeholder:empty { min-height: 0; padding: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}

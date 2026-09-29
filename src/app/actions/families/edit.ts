@@ -1,0 +1,45 @@
+import type { Action } from '../types';
+
+// Orca: Ctrl+Z / Ctrl+Y, Ctrl+A select all, Esc deselect, Del delete, Ctrl+D delete all,
+// Ctrl+C / Ctrl+X / Ctrl+V clipboard. (Orca's Ctrl+K "clone" is our command palette.)
+export function editActions(): Action[] {
+  return [
+    { id: 'edit.undo', title: 'Undo', icon: 'i-lucide-undo-2', category: 'Edit',
+      dynamicTitle: (c) => (c.undoLabel ? `Undo ${c.undoLabel.toLowerCase()}` : 'Undo'),
+      binding: { key: 'z', ctrlOrMeta: true }, when: (c) => c.canUndo, run: (c) => c.dispatch.undo() },
+    { id: 'edit.redo', title: 'Redo', icon: 'i-lucide-redo-2', category: 'Edit',
+      dynamicTitle: (c) => (c.redoLabel ? `Redo ${c.redoLabel.toLowerCase()}` : 'Redo'),
+      binding: { key: 'y', ctrlOrMeta: true }, when: (c) => c.canRedo, run: (c) => c.dispatch.redo() },
+    { id: 'edit.redo-shift-z', title: 'Redo', icon: 'i-lucide-redo-2', category: 'Edit', hidden: true, paletteHidden: true,
+      binding: { key: 'z', ctrlOrMeta: true, shift: true }, when: (c) => c.canRedo, run: (c) => c.dispatch.redo() },
+    { id: 'edit.select-all', title: 'Select all', icon: 'i-lucide-box-select', category: 'Edit',
+      binding: { key: 'a', ctrlOrMeta: true, scope: 'prepare' }, when: (c) => c.objectCount > 0, run: (c) => c.dispatch.selectAll() },
+    { id: 'edit.select-none', title: 'Clear selection', icon: 'i-lucide-x', category: 'Edit', aliases: ['deselect'],
+      binding: { key: 'escape', scope: 'prepare', passThroughWhenUnavailable: true },
+      when: (c) => c.selection.count > 0 && !c.layOnFace, run: (c) => c.dispatch.clearSelection() },
+    { id: 'edit.copy', title: 'Copy', icon: 'i-lucide-copy', category: 'Edit', aliases: ['clipboard'],
+      binding: { key: 'c', ctrlOrMeta: true, scope: 'prepare', whenFocusIdle: true },
+      when: (c) => c.selection.count > 0, run: (c) => c.dispatch.copy() },
+    { id: 'edit.cut', title: 'Cut', icon: 'i-lucide-scissors', category: 'Edit', aliases: ['clipboard'],
+      binding: { key: 'x', ctrlOrMeta: true, scope: 'prepare', whenFocusIdle: true },
+      when: (c) => c.selection.count > 0, run: (c) => c.dispatch.cut() },
+    { id: 'edit.paste', title: 'Paste', icon: 'i-lucide-clipboard-paste', category: 'Edit', aliases: ['clipboard'],
+      binding: { key: 'v', ctrlOrMeta: true, scope: 'prepare', whenFocusIdle: true },
+      when: (c) => c.clipboard, run: (c) => c.dispatch.paste() },
+    { id: 'edit.delete', title: 'Delete', icon: 'i-lucide-trash-2', category: 'Edit', tone: 'danger', aliases: ['remove'],
+      binding: { key: 'delete', scope: 'prepare' }, when: (c) => c.selection.count > 0, run: (c) => c.dispatch.deleteSelection() },
+    { id: 'edit.delete-backspace', title: 'Delete', icon: 'i-lucide-trash-2', category: 'Edit', hidden: true, paletteHidden: true,
+      binding: { key: 'backspace', scope: 'prepare' }, when: (c) => c.selection.count > 0, run: (c) => c.dispatch.deleteSelection() },
+    { id: 'edit.delete-all', title: 'Delete all', icon: 'i-lucide-trash', category: 'Edit', tone: 'danger', aliases: ['clear plate', 'remove all'],
+      binding: { key: 'd', ctrlOrMeta: true, scope: 'prepare' }, when: (c) => c.objectCount > 0, run: (c) => c.dispatch.deleteAll() },
+    // Orca: + add instance, - remove instance, "Set number of instances".
+    { id: 'edit.duplicate', title: 'Add instance', icon: 'i-lucide-copy-plus', category: 'Edit', aliases: ['duplicate', 'clone', 'more'],
+      binding: { key: '+', scope: 'prepare', whenFocusIdle: true }, when: (c) => c.selection.count > 0, run: (c) => c.dispatch.duplicate() },
+    { id: 'edit.instance-remove', title: 'Remove instance', icon: 'i-lucide-copy-minus', category: 'Edit', aliases: ['fewer', 'less'],
+      binding: { key: '-', scope: 'prepare', whenFocusIdle: true }, when: (c) => c.selection.count > 0, run: (c) => c.dispatch.removeInstance() },
+    { id: 'edit.instances', title: 'Set number of instances…', icon: 'i-lucide-boxes', category: 'Edit', aliases: ['copies', 'array', 'multiply', 'add instances', 'quantity', 'count'],
+      when: (c) => c.selection.count > 0, run: (c) => c.dispatch.addInstances() },
+    { id: 'edit.rename', title: 'Rename', icon: 'i-lucide-text-cursor-input', category: 'Edit',
+      binding: { key: 'f2', scope: 'prepare' }, when: (c) => !!c.selection.single, run: (c) => c.dispatch.rename() },
+  ];
+}

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-*/
+e2e-out/
+*.local
+.DS_Store
+
+# Staged AGPL slicer WASM artifacts (large; fetched via scripts/, not committed).
+public/wasm/orca/
+public/wasm/preflight/
+
+# Orca calibration models (scripts/stage-calib.mjs).
+public/calib/
+
+public/wasm/fullspectrum/

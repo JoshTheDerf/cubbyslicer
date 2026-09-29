@@ -1,0 +1,135 @@
+/*
+ * Shared design tokens. App code uses these vars (no hard-coded colours), and
+ * Nuxt UI's --ui-* variables are mapped onto them at the end of this file so
+ * Nuxt UI components and our own chrome read as one dark theme.
+ */
+:root {
+  color-scheme: dark;
+  --bg-0: #0d0f12;          /* app background / viewport clear */
+  --bg-1: #15181d;          /* panels */
+  --bg-2: #1c2027;          /* raised controls, inputs */
+  --bg-3: #252a33;          /* hover */
+  --line: #2c323c;          /* borders / dividers */
+  --line-strong: #3a414d;
+  --fg-0: #e8eaed;          /* primary text */
+  --fg-1: #b3b9c2;          /* secondary text */
+  --fg-2: #7d8591;          /* muted / hints */
+  --accent: #19c37d;        /* primary action (slice, selection) */
+  --accent-2: #13a86a;
+  --accent-fg: #06140d;
+  --info: #4ea1ff;
+  --warn: #f5b041;
+  --danger: #ef5b5b;
+  --modified: #f5b041;      /* setting differs from preset */
+  --radius: 6px;
+  --radius-sm: 4px;
+  --gap: 8px;
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  --topbar-h: 44px;
+  --sidebar-w: 300px;
+  --settings-w: 380px;
+
+  /* Shell */
+  --accent-soft: rgba(25, 195, 125, 0.14);
+  --accent-line: rgba(25, 195, 125, 0.45);
+  --overlay: rgba(6, 8, 10, 0.62);
+  --focus-ring: 0 0 0 2px rgba(78, 161, 255, 0.55);
+  --z-toolbar: 10;
+  --z-drawer: 40;
+  --z-popover: 60;
+  --z-dialog: 80;
+  --z-toast: 90;
+
+  /* Prepare viewport (read by three.js via getComputedStyle) */
+  --vp-bg-top: #1a1e25;
+  --vp-bg: #0d0f12;
+  --vp-bed: #20252d;
+  --vp-bed-edge: #4a5261;
+  --vp-grid: #2a3039;
+  --vp-grid-strong: #3a4250;
+  --vp-volume: #3a4250;
+  --vp-exclude: #ef5b5b;
+  --vp-object: #8fa3b8;
+  --vp-selected: #19c37d;
+  --vp-hover: #4ea1ff;
+  --vp-warn: #f5b041;
+  --vp-axis-x: #ef5b5b;
+  --vp-axis-y: #19c37d;
+  --vp-axis-z: #4ea1ff;
+}
+
+/* preFlight: orange accent (Orca stays green) so the active engine is obvious at a glance. */
+:root[data-engine='preflight'] {
+  --accent: #f97316;
+  --accent-2: #ea580c;
+  --accent-fg: #1c0a02;
+  --accent-soft: rgba(249, 115, 22, 0.14);
+  --accent-line: rgba(249, 115, 22, 0.45);
+  --vp-selected: #f97316;
+  --ui-color-primary-50: #fff7ed;
+  --ui-color-primary-100: #ffedd5;
+  --ui-color-primary-200: #fed7aa;
+  --ui-color-primary-300: #fdba74;
+  --ui-color-primary-400: #fb923c;
+  --ui-color-primary-500: #f97316;
+  --ui-color-primary-600: #ea580c;
+  --ui-color-primary-700: #c2410c;
+  --ui-color-primary-800: #9a3412;
+  --ui-color-primary-900: #7c2d12;
+  --ui-color-primary-950: #431407;
+}
+
+/* Full Spectrum: fuchsia accent. */
+:root[data-engine='fullspectrum'] {
+  --accent: #d946ef;
+  --accent-2: #c026d3;
+  --accent-fg: #1f0322;
+  --accent-soft: rgba(217, 70, 239, 0.14);
+  --accent-line: rgba(217, 70, 239, 0.45);
+  --vp-selected: #d946ef;
+  --ui-color-primary-50: #fdf4ff;
+  --ui-color-primary-100: #fae8ff;
+  --ui-color-primary-200: #f5d0fe;
+  --ui-color-primary-300: #f0abfc;
+  --ui-color-primary-400: #e879f9;
+  --ui-color-primary-500: #d946ef;
+  --ui-color-primary-600: #c026d3;
+  --ui-color-primary-700: #a21caf;
+  --ui-color-primary-800: #86198f;
+  --ui-color-primary-900: #701a75;
+  --ui-color-primary-950: #4a044e;
+}
+
+/*
+ * Nuxt UI theme bridge. Nuxt UI declares its variables inside `@layer theme`;
+ * these are unlayered, so they win without !important.
+ */
+:root, .dark {
+  --ui-bg: var(--bg-1);
+  --ui-bg-muted: var(--bg-2);
+  --ui-bg-elevated: var(--bg-2);
+  --ui-bg-accented: var(--bg-3);
+  --ui-bg-inverted: var(--fg-0);
+  --ui-text-dimmed: var(--fg-2);
+  --ui-text-muted: #9aa1ab;
+  --ui-text-toned: var(--fg-1);
+  --ui-text: var(--fg-0);
+  --ui-text-highlighted: #ffffff;
+  --ui-text-inverted: var(--accent-fg);
+  --ui-border: var(--line);
+  --ui-border-muted: var(--line);
+  --ui-border-accented: var(--line-strong);
+  --ui-border-inverted: var(--fg-0);
+  --ui-primary: var(--accent);
+  --ui-success: var(--accent);
+  --ui-info: var(--info);
+  --ui-warning: var(--warn);
+  --ui-error: var(--danger);
+  --ui-radius: 0.25rem;
+}
