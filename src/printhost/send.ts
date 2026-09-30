@@ -56,7 +56,7 @@ export interface SendOutcome {
   host?: string;
 }
 
-/** `sendToPrinter` with the outcome spelled out (the Claude Code bridge reports it back). */
+/** `sendToPrinter` with the outcome spelled out (the MCP bridge reports it back). */
 export async function sendToPrinterDetailed(opts: { filename: string; folder: string; print: boolean }): Promise<SendOutcome> {
   const pp = physicalPrinter.value;
   const slice = lastSlice.value;

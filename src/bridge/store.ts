@@ -1,7 +1,8 @@
 /**
- * Claude Code bridge: this tab's connection to the local cubby-mcp server
- * (see @cubby/shared/bridge and the cubby-mcp package). Off until the user connects
- * from Help → Connect to Claude Code or opens the app with `?claude`.
+ * MCP bridge: this tab's connection to the local cubby-mcp server
+ * (see @cubby/shared/bridge and the cubby-mcp package), which any AI agent with
+ * the server added can drive. Off until the user connects from
+ * Help → Connect an AI agent or opens the app with `?mcp` (`?claude` is the old name).
  * The tool handlers (./tools.ts) load on first connect.
  */
 import { reactive, shallowRef } from 'vue';
@@ -11,7 +12,7 @@ type PendingConfirm = ConfirmRequest & { resolve: (r: { ok: boolean; always: boo
 
 export const bridgeUi = reactive({
   open: false,
-  /** Code to prefill (from `?claude=CODE`). */
+  /** Code to prefill (from `?mcp=CODE`). */
   prefill: '',
   confirm: null as PendingConfirm | null,
 });
@@ -41,15 +42,19 @@ export function answerConfirm(ok: boolean, always = false): void {
 }
 
 let started = false;
-/** Startup: `?claude[=CODE]` opens the dialog; otherwise reconnect only if the user opted in before. */
+/** URL params that open the connect dialog (`?claude` is the old name, kept so existing links work). */
+const PAIR_PARAMS = ['mcp', 'claude'];
+
+/** Startup: `?mcp[=CODE]` opens the dialog; otherwise reconnect only if the user opted in before. */
 export function startBridge(): void {
   if (started || typeof location === 'undefined') return;
   started = true;
   const q = new URLSearchParams(location.search);
-  if (q.has('claude')) {
-    openBridgeDialog(q.get('claude') ?? '');
+  const param = PAIR_PARAMS.find((p) => q.has(p));
+  if (param) {
+    openBridgeDialog(q.get(param) ?? '');
     const u = new URL(location.href);
-    u.searchParams.delete('claude');
+    for (const p of PAIR_PARAMS) u.searchParams.delete(p);
     history.replaceState(history.state, '', u);
     return;
   }

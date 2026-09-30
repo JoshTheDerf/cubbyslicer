@@ -1,5 +1,5 @@
 /**
- * Claude Code bridge e2e: a real MCP client spawns cubby-mcp over stdio, a
+ * MCP bridge e2e: a real MCP client spawns cubby-mcp over stdio, a
  * Playwright Cubby Slicer tab pairs with it, and the test drives a path
  * through every tool group (engines, presets, objects / parts, plates,
  * painting, layers, tools, slicing, preview screenshots, export, commands).
@@ -81,10 +81,10 @@ async function answerAppConfirm(label) {
 try {
   const status = await client.callTool({ name: 'cubby_status', arguments: {} });
   const code = JSON.parse(status.content[0].text).pairingCode;
-  await page.goto(`${SLICER_URL}?claude=${encodeURIComponent(code)}&cubby-debug`, { waitUntil: 'commit', timeout: 180_000 });
+  await page.goto(`${SLICER_URL}?mcp=${encodeURIComponent(code)}&cubby-debug`, { waitUntil: 'commit', timeout: 180_000 });
   await page.getByTestId('bridge-connect').waitFor({ timeout: 120_000 });
   await waitFor(async () => { await page.getByTestId('bridge-connect').click({ timeout: 2000 }); return true; }, 'the Connect button', 60_000);
-  await page.getByText(/Connected as slicer-1/).waitFor({ timeout: 30_000 });
+  await page.getByText(/Connected as slicer-1\. Your agent can use this tab/).waitFor({ timeout: 30_000 });
   await page.keyboard.press('Escape');
   const tools = await waitFor(async () => { const n = (await client.listTools()).tools.map((t) => t.name); return n.includes('slicer_capture_viewport') ? n : null; }, 'tools/list');
   log(`${tools.filter((t) => t.startsWith('slicer_')).length} slicer tools`);
@@ -106,9 +106,9 @@ try {
   check(set1.applied.layer_height === '0.2' && set1.rejected?.wall_loops, 'set_settings applies and rejects with a reason');
   const cmp = (await call('compare_presets', { kind: 'process' })).data;
   check(cmp.unsaved.some((u) => u.key === 'sparse_infill_density'), 'compare_presets shows the unsaved edit');
-  const saved = (await call('save_preset', { kind: 'process', name: 'Claude e2e process' })).data;
-  check(saved.saved.id.startsWith('user:') && saved.process.name === 'Claude e2e process', 'saved a user process preset');
-  check((await call('rename_preset', { id: saved.saved.id, name: 'Claude e2e renamed' })).data.name === 'Claude e2e renamed', 'renamed it');
+  const saved = (await call('save_preset', { kind: 'process', name: 'Agent e2e process' })).data;
+  check(saved.saved.id.startsWith('user:') && saved.process.name === 'Agent e2e process', 'saved a user process preset');
+  check((await call('rename_preset', { id: saved.saved.id, name: 'Agent e2e renamed' })).data.name === 'Agent e2e renamed', 'renamed it');
   const cmp2 = (await call('compare_presets', { kind: 'process' })).data;
   check(cmp2.vsSystem?.some((v) => v.key === 'sparse_infill_density'), 'compare_presets diffs the user preset against its system parent');
 

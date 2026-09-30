@@ -1,5 +1,5 @@
 /**
- * Slicer tools for the Claude Code bridge, grouped by area (./groups). Each
+ * Slicer tools for the MCP bridge, grouped by area (./groups). Each
  * tool goes through the same store functions and commands the UI uses, so a
  * call behaves like the matching click, lands in undo history where the UI's
  * does, and shows the same prompts (printer uploads, print host changes,

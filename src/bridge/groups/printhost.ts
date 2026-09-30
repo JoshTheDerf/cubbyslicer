@@ -89,7 +89,7 @@ export function printHostTools(): BridgeTool[] {
         const ok = await bridge.confirm({
           key: 'printhost-config',
           title: 'Change the print host?',
-          message: `Claude Code wants to send G-code for “${boundPrinter.value.name}” to ${meta.label} at ${config.host}.`,
+          message: `Your agent wants to send G-code for “${boundPrinter.value.name}” to ${meta.label} at ${config.host}.`,
           confirmLabel: 'Save',
         });
         if (!ok) return { data: { ok: false, error: 'The user declined.' } };
@@ -106,7 +106,7 @@ export function printHostTools(): BridgeTool[] {
       async run() {
         const pp = physicalPrinter.value;
         if (!pp) throw new Error('No print host is set for the selected printer.');
-        const ok = await bridge.confirm({ key: 'printhost-remove', title: 'Remove the print host?', message: `Claude Code wants to remove the print host for “${boundPrinter.value.name}” (${pp.config.host}).`, confirmLabel: 'Remove' });
+        const ok = await bridge.confirm({ key: 'printhost-remove', title: 'Remove the print host?', message: `Your agent wants to remove the print host for “${boundPrinter.value.name}” (${pp.config.host}).`, confirmLabel: 'Remove' });
         if (!ok) return { data: { ok: false, error: 'The user declined.' } };
         removePhysicalPrinter();
         return { data: { ok: true, printer: boundPrinter.value.name } };
@@ -169,7 +169,7 @@ export function printHostTools(): BridgeTool[] {
         const ok = await bridge.confirm({
           key: print ? 'print' : 'upload',
           title: print ? 'Start a print?' : 'Upload to the printer?',
-          message: `Claude Code wants to ${print ? 'upload and start printing' : 'upload'} ${filename} (${stats ? `${fmtTime(stats.printTimeSec)}, ${round(sum(stats.filamentG), 1)} g` : `${Math.round(g.bytes.byteLength / 1024)} KB`}) on ${meta?.label ?? pp.config.type} at ${pp.config.host}.`,
+          message: `Your agent wants to ${print ? 'upload and start printing' : 'upload'} ${filename} (${stats ? `${fmtTime(stats.printTimeSec)}, ${round(sum(stats.filamentG), 1)} g` : `${Math.round(g.bytes.byteLength / 1024)} KB`}) on ${meta?.label ?? pp.config.type} at ${pp.config.host}.`,
           confirmLabel: print ? 'Print' : 'Upload',
         });
         if (!ok) return { data: { ok: false, error: 'The user declined.' } };

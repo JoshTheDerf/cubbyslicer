@@ -1,6 +1,6 @@
 /**
- * Run a mesh boolean between volumes (the Mesh boolean panel and the Claude
- * Code bridge): tool volumes are brought into the source volume's mesh
+ * Run a mesh boolean between volumes (the Mesh boolean panel and the MCP
+ * bridge): tool volumes are brought into the source volume's mesh
  * frame, combined, and the result replaces the source (one undo step).
  */
 import { Matrix4 } from 'three';

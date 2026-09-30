@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /**
- * "Connect to Claude Code" dialog and the confirm Claude's printer tools
+ * "Connect an AI agent" dialog and the confirm the agent's printer tools
  * wait on. Mounted once by App.vue; registers the bridge actions.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { answerConfirm, bridge, bridgeState, bridgeUi, startBridge } from './store';
 import { registerBridgeActions } from './actions';
+import McpSetup from './McpSetup.vue';
 
 onBeforeUnmount(registerBridgeActions());
 onMounted(startBridge);
@@ -21,11 +22,11 @@ const connected = computed(() => s.value.status === 'connected');
 const busy = computed(() => s.value.status === 'connecting');
 const statusText = computed(() => {
   switch (s.value.status) {
-    case 'connected': return `Connected as ${s.value.tab}. Claude Code can use this tab.`;
+    case 'connected': return `Connected as ${s.value.tab}. Your agent can use this tab.`;
     case 'connecting': return 'Connecting…';
-    case 'needs-code': return 'Enter the pairing code from Claude Code.';
+    case 'needs-code': return 'Enter the pairing code from your agent.';
     case 'error': return 'Not connected.';
-    default: return s.value.paired ? 'This site is paired. Connect to let Claude Code use this tab.' : 'Not connected.';
+    default: return s.value.paired ? 'This site is paired. Connect to let your agent use this tab.' : 'Not connected.';
   }
 });
 
@@ -40,7 +41,7 @@ const confirmOpen = computed({
 </script>
 
 <template>
-  <UModal v-model:open="bridgeUi.open" title="Connect to Claude Code" :ui="{ content: 'sm:max-w-md' }">
+  <UModal v-model:open="bridgeUi.open" title="Connect an AI agent" :ui="{ content: 'sm:max-w-md' }">
     <template #body>
       <div class="bd dlg-flow text-sm" data-testid="bridge-dialog">
         <p class="bd__status dlg-span" :class="{ 'bd__status--on': connected }" data-testid="bridge-status">
@@ -49,9 +50,10 @@ const confirmOpen = computed({
         <p v-if="s.error" class="bd__error dlg-span" role="alert">{{ s.error }}</p>
         <template v-if="!connected">
           <p class="text-toned dlg-span">
-            Claude Code drives this tab through the cubby MCP server on your computer (127.0.0.1). Add it once with
-            <code>claude mcp add --scope user cubby -- npx -y cubby-mcp</code>, ask Claude for the pairing code, and paste it here.
+            Your AI agent drives this tab through the cubby MCP server on your computer (127.0.0.1). Add it to your agent once
+            (any MCP client works), ask the agent for the pairing code, and paste it here.
           </p>
+          <McpSetup class="dlg-span" />
           <UFormField :label="s.paired ? 'Pairing code (only to pair again)' : 'Pairing code'">
             <UInput v-model="code" placeholder="K7QD-93XM" spellcheck="false" autocomplete="off" class="w-full font-mono" data-testid="bridge-code"
                     @keydown.enter="connect" />
@@ -63,7 +65,7 @@ const confirmOpen = computed({
         </template>
         <template v-else>
           <p class="text-toned dlg-span">
-            Claude can use everything in the slicer, like you can. Uploads, prints, print host changes and deleting presets ask you here first
+            Your agent can use everything in the slicer, like you can. Uploads, prints, print host changes and deleting presets ask you here first
             <template v-if="bridge.isSessionAllowed('print') || bridge.isSessionAllowed('upload')">
               (you allowed them without asking for this session. <ULink as="button" class="text-info" @click="bridge.revokeSessionAllow('print'); bridge.revokeSessionAllow('upload')">Ask again</ULink>)
             </template>.

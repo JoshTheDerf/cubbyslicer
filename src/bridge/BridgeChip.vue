@@ -1,11 +1,11 @@
 <script setup lang="ts">
-/** Top-bar indicator while Claude Code is connected (or reconnecting). Click: the connect dialog. */
+/** Top-bar indicator while an AI agent is connected (or reconnecting). Click: the connect dialog. */
 import { computed } from 'vue';
 import { bridgeState, openBridgeDialog } from './store';
 
 const s = bridgeState;
 const show = computed(() => s.value.status === 'connected' || s.value.status === 'connecting');
-const label = computed(() => (s.value.status === 'connected' ? (s.value.busy ? `Claude Code: ${s.value.lastTool?.name ?? 'working'}…` : 'Claude Code connected') : 'Claude Code: reconnecting'));
+const label = computed(() => (s.value.status === 'connected' ? (s.value.busy ? `Agent: ${s.value.lastTool?.name ?? 'working'}…` : 'Agent connected') : 'Agent: reconnecting'));
 </script>
 
 <template>

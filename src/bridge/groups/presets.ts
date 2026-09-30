@@ -254,7 +254,7 @@ export function presetTools(): BridgeTool[] {
         const p = currentPresets.value;
         const u = p.users.get(id);
         if (!u) throw new Error(`"${id}" isn’t a user preset (system presets can’t be deleted).`);
-        const ok = await bridge.confirm({ key: 'preset-delete', title: 'Delete preset?', message: `Claude Code wants to delete the user preset “${u.name}”. This cannot be undone.`, confirmLabel: 'Delete' });
+        const ok = await bridge.confirm({ key: 'preset-delete', title: 'Delete preset?', message: `Your agent wants to delete the user preset “${u.name}”. This cannot be undone.`, confirmLabel: 'Delete' });
         if (!ok) return { data: { ok: false, error: 'The user declined.' } };
         await p.deletePreset(id);
         await settled();

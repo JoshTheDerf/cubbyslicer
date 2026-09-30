@@ -23,7 +23,7 @@ src/
   printhost/    print host drivers
   dialogs/      flushing volumes, bed shape, preset wizard, preferences, …
   cad/          CubbyCAD modelling: node trees on objects, frames, .cubby, shape panel
-  bridge/       Claude Code bridge tools (see the cubby-mcp README)
+  bridge/       MCP bridge tools for AI agents (see the cubby-mcp README)
 docs/           ENGINE-CONTRACT.md, this file, user guide
 scripts/        engine staging; dev/ has e2e and screenshot scripts
 ```
@@ -91,7 +91,7 @@ npm run typecheck
 npx playwright install chromium
 node scripts/dev/e2e-slice.mjs http://localhost:5173/slicer/      # and the other e2e-*.mjs
 node scripts/dev/screenshots.mjs http://localhost:5399/slicer/    # docs/screenshots/, from `npx vite preview --port 5399`
-node scripts/dev/e2e-bridge.mjs http://localhost:5393/slicer/     # Claude Code bridge tools through a real MCP client (needs ../cubby-mcp built)
+node scripts/dev/e2e-bridge.mjs http://localhost:5393/slicer/     # MCP bridge tools through a real MCP client (needs ../cubby-mcp built)
 ```
 
 The e2e scripts use `?cubby-debug`, which exposes `window.__cubbyProject`, `__cubbyActions`, `__cubbyPresets`, `__cubbyTools` and `__cubbyCad`.

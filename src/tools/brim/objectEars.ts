@@ -1,7 +1,7 @@
 /**
  * Brim ears of a project object (Orca GLGizmoBrimEars): its first layer
  * outline, bed ↔ mesh-local conversion and auto-generated ears. Shared by the
- * brim ears panel and the Claude Code bridge.
+ * brim ears panel and the MCP bridge.
  */
 import { Matrix4, Vector3 } from 'three';
 import { getObject, objectInfo } from '../../project/store';

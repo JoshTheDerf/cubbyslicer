@@ -76,22 +76,27 @@ The [CubbyCAD editor](https://cubbycad.com/editor) sends the current model with 
 - `?model=<url>` loads a model on startup (the URL must allow CORS).
 - Open `/slicer/?handoff=<id>`, wait for `{ type: 'cubby-slicer:ready', handoff: id }` on `BroadcastChannel('cubby-slicer-handoff')`, then post `{ type: 'cubby-slicer:model', handoff: id, stl, name }` (same origin only). This works across the slicer's cross-origin isolation, which the older `window.opener` `postMessage` path doesn't.
 
-## Claude Code
+## AI agents (MCP)
 
-Claude Code can drive the slicer (and the CubbyCAD editor) through cubby-mcp, a small MCP server that runs on your computer. Nothing leaves your machine: the tab connects to `ws://127.0.0.1:18711`, and cubbycad.com has no server side for this.
+An AI agent can drive the slicer (and the CubbyCAD editor) through cubby-mcp, a small MCP server that runs on your computer. Any MCP client works: Claude Code, Codex CLI, Cursor, Windsurf, Claude Desktop and others. Nothing leaves your machine: the tab connects to `ws://127.0.0.1:18711`, and cubbycad.com has no server side for this.
 
-1. Add the server once: `claude mcp add --scope user cubby -- npx -y cubby-mcp`.
-2. In Claude Code, ask for the pairing code (Claude reads it with `cubby_status`).
-3. Here, Help ▸ Connect to Claude Code, paste the code, Connect. Or open `/slicer/?claude=<code>`, which fills it in.
+1. Add the server to your agent once. It is a stdio server started with `npx -y cubby-mcp`. For example:
+   - Claude Code: `claude mcp add --scope user cubby -- npx -y cubby-mcp`
+   - Codex CLI: `codex mcp add cubby -- npx -y cubby-mcp`
+   - Clients with an `mcpServers` config (Cursor, Windsurf, Claude Desktop, …): `{ "mcpServers": { "cubby": { "command": "npx", "args": ["-y", "cubby-mcp"] } } }`
 
-The code works once. The tab keeps a token for this site, so later connections only need Connect. Tick "Reconnect when this page loads" to skip that too; Disconnect turns it off again, and Forget pairing drops the token. The top bar shows a robot icon while Claude is connected.
+   The connect dialog shows the same examples with a copy button.
+2. Ask your agent for the pairing code (it reads it with `cubby_status`).
+3. Here, Help ▸ Connect an AI agent, paste the code, Connect. Or open `/slicer/?mcp=<code>`, which fills it in (`?claude=<code>` still works).
 
-Claude can do what you can do in the app:
+The code works once. The tab keeps a token for this site, so later connections only need Connect. Tick "Reconnect when this page loads" to skip that too; Disconnect turns it off again, and Forget pairing drops the token. The top bar shows a robot icon while the agent is connected.
+
+The agent can do what you can do in the app:
 
 - switch engines, pick and compare presets, set filament slots and colours, save, rename and delete your own presets, and run the setup steps;
 - change any setting, for the whole print or for one object, part, height range or plate;
 - import models (from CubbyCAD with `cad_to_slicer`, a file on your computer or a URL), move, rotate, scale, mirror, orient, split, copy and rename them, and add parts, modifiers, negative parts and support blockers or enforcers;
-- model with CubbyCAD shapes: add primitives, change their parameters, make holes, group and ungroup, and move, hide, lock or delete nodes in a shape's tree. The tools have the same names and arguments as the CubbyCAD ones (`slicer_add_primitive` / `cad_add_primitive`, `set_node`, `transform_node`, `group`, …), so Claude drives both apps the same way;
+- model with CubbyCAD shapes: add primitives, change their parameters, make holes, group and ungroup, and move, hide, lock or delete nodes in a shape's tree. The tools have the same names and arguments as the CubbyCAD ones (`slicer_add_primitive` / `cad_add_primitive`, `set_node`, `transform_node`, `group`, …), so an agent drives both apps the same way;
 - add, rename, lock and set up plates, and move objects between them;
 - paint supports, seams, colours and fuzzy skin (whole objects, height bands, around a point, fill regions, or faces pointing one way);
 - set variable layer heights, height range modifiers, and filament changes, pauses or custom G-code at a layer;

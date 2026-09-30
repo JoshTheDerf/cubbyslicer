@@ -1,5 +1,5 @@
 /**
- * Pure helpers behind the Claude Code bridge tools: argument checks with
+ * Pure helpers behind the MCP bridge tools: argument checks with
  * errors that name the valid options, mesh queries for scriptable painting
  * and "lay on largest face", paint map merging and layer snapping. No Vue,
  * no three, no app state (unit-tested in logic.test.ts).
