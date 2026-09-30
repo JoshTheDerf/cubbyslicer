@@ -7,7 +7,7 @@
  * cadence, Local-Z sublayer cap and per-filament surface bias.
  */
 import { computed, reactive, ref, watch } from 'vue';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { currentPresets } from '../presets/store';
 import { previewBackground } from './preview';
 import { editMixedFilaments, filamentColourOf, type MixedDefinition, type MixedFilament } from './store';
@@ -145,7 +145,7 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :fullscreen="phone" :ui="{ content: 'sm:max-w-xl', body: 'flex gap-4' }">
+  <UModal v-model:open="open" :title="title" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-xl', body: 'flex gap-4' }">
     <template #body>
       <div class="me__strip" :style="{ background: preview }" role="img" aria-label="Colour along the height (bottom to top)">
         <span class="me__top">top</span><span class="me__bot">bottom</span>
@@ -274,5 +274,7 @@ async function save(): Promise<void> {
 .me__lbl--wide { width: 128px; }
 .me__hint { font-size: var(--fs-xs); color: var(--fg-2); }
 .me__err { font-size: var(--fs-xs); color: var(--ui-error); }
+/* Phones: the strip follows the form's height instead of setting it. */
+@media (max-width: 640px), (max-height: 500px) { .me__strip { width: 32px; min-height: 160px; } }
 .me__adv { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); color: var(--fg-1); align-self: flex-start; }
 </style>

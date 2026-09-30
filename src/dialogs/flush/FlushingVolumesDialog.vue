@@ -5,7 +5,7 @@
  * one matrix per extruder on multi-nozzle printers.
  */
 import { computed, ref, watch } from 'vue';
-import { phone } from '../../app/shell/uiState';
+import { mobileDialog } from '../../ui/mobileDialog';
 import { preferences } from '../../app/preferences';
 import { MAX_FLUSH_VOLUME } from './flushCalc';
 import { autoMatrixFor, readFlush, writeFlush, type FlushState } from './flushStore';
@@ -43,6 +43,12 @@ function apply(): void {
   writeFlush({ matrices: m, multipliers: s.multipliers });
   dialogs.flushing = false;
 }
+/** Phones with more than 4 filaments: one "from" row at a time instead of the whole matrix. */
+const rowPicker = computed(() => mobileDialog.value && matrix.value.length > 4);
+const fromIdx = ref(0);
+watch(() => matrix.value.length, (n) => { if (fromIdx.value >= n) fromIdx.value = 0; });
+const fromItems = computed(() => matrix.value.map((_, i) => ({ value: i, label: `From filament ${i + 1}` })));
+
 const textOn = (hex: string) => {
   const h = hex.replace('#', '');
   const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
@@ -51,17 +57,33 @@ const textOn = (hex: string) => {
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.flushing" title="Flushing volumes for filament change" :fullscreen="phone"
+  <UModal v-model:open="dialogs.flushing" title="Flushing volumes for filament change" :fullscreen="mobileDialog"
           :ui="{ content: 'sm:max-w-3xl', body: 'flex flex-col gap-3' }">
     <template #body>
       <template v-if="state">
         <UTabs v-if="tabs.length" v-model="tab" :items="tabs" :content="false" size="xs" />
         <p class="text-sm text-muted">Flushing volume (mm³) for each filament pair. Suggestion: flushing volume in range [0, 700].</p>
-        <div class="fv__scroll">
+        <div v-if="rowPicker && state" class="fv__rows">
+          <USelect v-model="fromIdx" :items="fromItems" value-key="value" size="sm" class="w-full" aria-label="From filament">
+            <template #leading><span class="fv__chip fv__chip--sm" :style="{ background: state.colours[fromIdx], color: textOn(state.colours[fromIdx]) }">{{ fromIdx + 1 }}</span></template>
+          </USelect>
+          <div class="fv__rowgrid">
+            <template v-for="(v, j) in matrix[fromIdx]" :key="j">
+              <label v-if="j !== fromIdx" class="fv__to">
+                <span class="text-xs text-muted">To</span>
+                <span class="fv__chip" :style="{ background: state.colours[j], color: textOn(state.colours[j]) }">{{ j + 1 }}</span>
+                <UInputNumber :model-value="v" :min="0" :max="MAX_FLUSH_VOLUME" :step="10" size="xs" :increment="false" :decrement="false"
+                              :aria-label="`Flush from filament ${fromIdx + 1} to ${j + 1}`" class="min-w-0 flex-1" :color="v > 700 ? 'warning' : 'primary'" :highlight="v > 700"
+                              @update:model-value="(x: number | null) => setCell(fromIdx, j, x)" />
+              </label>
+            </template>
+          </div>
+        </div>
+        <div v-else class="fv__scroll" :class="{ 'fv__scroll--fluid': mobileDialog }">
           <table class="fv">
             <thead>
               <tr>
-                <th class="fv__corner"><span>From ↓ &nbsp; To →</span></th>
+                <th class="fv__corner"><span v-if="mobileDialog">From ↓<br>To →</span><span v-else>From ↓ &nbsp; To →</span></th>
                 <th v-for="(c, j) in state.colours" :key="j">
                   <span class="fv__chip" :style="{ background: c, color: textOn(c) }">{{ j + 1 }}</span>
                 </th>
@@ -113,5 +135,15 @@ const textOn = (hex: string) => {
 .fv__in { width: 72px; }
 .fv__in :deep(input) { text-align: right; font-variant-numeric: tabular-nums; }
 .fv__diag { color: var(--ui-text-dimmed); display: inline-block; width: 72px; }
+.fv__scroll--fluid { overflow: hidden; max-height: none; }
+.fv__scroll--fluid .fv { width: 100%; table-layout: fixed; }
+.fv__scroll--fluid .fv th, .fv__scroll--fluid .fv td { padding: 3px 2px; }
+.fv__scroll--fluid .fv__corner { width: 52px; white-space: normal; line-height: 1.2; }
+.fv__scroll--fluid .fv__in, .fv__scroll--fluid .fv__diag { width: 100%; }
+.fv__scroll--fluid .fv__chip { min-width: 22px; }
+.fv__rows { display: flex; flex-direction: column; gap: 8px; }
+.fv__rowgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px 12px; }
+.fv__to { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fv__chip--sm { min-width: 20px; height: 18px; font-size: 11px; }
 .fv__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 </style>

@@ -6,7 +6,7 @@
  * existing brace), with the cursor placed in the vector brackets.
  */
 import { computed, nextTick, ref, watch } from 'vue';
-import { phone } from '../../app/shell/uiState';
+import { mobileDialog } from '../../ui/mobileDialog';
 import { currentPresets } from '../../presets/store';
 import { settingsLayout } from '../../settings/useLayout';
 import { filterTree, insertionText, insideBraces, placeholderTree, type PlaceholderGroup, type PlaceholderItem } from './placeholders';
@@ -26,11 +26,12 @@ watch(() => props.open, (o) => {
   draft.value = props.value;
   search.value = '';
   selected.value = null;
-  showTree.value = !phone.value;
+  showTree.value = !mobileDialog.value;
   // Orca expands only the "Specific for …" group by default.
   collapsed.value = new Set(tree.value.map((g) => g.id).filter((id) => id !== 'specific'));
   for (const g of tree.value) for (const s of g.groups ?? []) { collapsed.value.add(s.id); for (const t of s.groups ?? []) collapsed.value.add(t.id); }
-  void nextTick(() => ta.value?.focus());
+  // Phones: no autofocus (the keyboard would cover half the editor before the user asked for it).
+  if (!mobileDialog.value) void nextTick(() => ta.value?.focus());
 });
 
 const tree = computed<PlaceholderGroup[]>(() => placeholderTree(props.optKey, currentPresets.value.schema.value, settingsLayout.value));
@@ -52,6 +53,7 @@ function insert(item = selected.value): void {
   const atEnd = start === draft.value.length && draft.value.length > 0 && !draft.value.endsWith('\n');
   const text = (atEnd ? '\n' : '') + insertionText(item, insideBraces(draft.value, start));
   draft.value = draft.value.slice(0, start) + text + draft.value.slice(end);
+  if (mobileDialog.value) showTree.value = false; // phones show the placeholders instead of the editor
   const caret = start + text.length - (item.vector ? (text.endsWith('}') ? 2 : 1) : 0);
   void nextTick(() => { if (el) { el.focus(); el.selectionStart = el.selectionEnd = caret; } });
 }
@@ -70,10 +72,13 @@ function apply(): void { emit('apply', draft.value); close(); }
 </script>
 
 <template>
-  <UModal :open="open" :title="`Edit custom G-code (${optKey})`" :description="title" :dismissible="false" :fullscreen="phone"
-          :ui="{ content: 'sm:max-w-6xl', body: 'p-0 sm:p-0' }" @update:open="(o: boolean) => { if (!o) close(); }">
+  <UModal :open="open" :title="`Edit custom G-code (${optKey})`" :description="title" :dismissible="false" :fullscreen="mobileDialog"
+          :ui="{ content: 'sm:max-w-6xl', body: 'p-0 sm:p-0 phone:p-0 phone:flex phone:flex-col phone:overflow-hidden' }" @update:open="(o: boolean) => { if (!o) close(); }">
     <template #body>
-      <div class="ge" :class="{ 'ge--notree': !showTree }">
+      <!-- Phones: the editor and the placeholder list take turns (one scroll region at a time). -->
+      <UTabs v-if="mobileDialog" :model-value="showTree ? 'tree' : 'code'" :items="[{ value: 'code', label: `G-code (${lines} line${lines === 1 ? '' : 's'})` }, { value: 'tree', label: 'Placeholders' }]"
+             :content="false" size="sm" class="ge__tabs" @update:model-value="(v: string | number) => { showTree = v === 'tree'; }" />
+      <div class="ge" :class="{ 'ge--notree': !showTree, 'ge--phone': mobileDialog }">
         <aside v-show="showTree" class="ge__side">
           <p class="ge__hint">Built-in placeholders (double-click to add to the G-code)</p>
           <UInput v-model="search" icon="i-lucide-search" placeholder="Search G-code placeholders" size="sm" class="w-full" autocomplete="off" />
@@ -122,13 +127,13 @@ function apply(): void { emit('apply', draft.value); close(); }
             <p v-else class="text-dimmed">Select a placeholder to see its description.</p>
           </div>
         </aside>
-        <div class="ge__main">
-          <div class="ge__bar">
+        <div v-show="!mobileDialog || !showTree" class="ge__main">
+          <div v-if="!mobileDialog" class="ge__bar">
             <UButton size="xs" variant="ghost" :icon="showTree ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'" :label="showTree ? 'Hide placeholders' : 'Placeholders'" @click="showTree = !showTree" />
             <span class="flex-1" />
             <span class="text-xs text-dimmed">{{ lines }} line{{ lines === 1 ? '' : 's' }}</span>
           </div>
-          <textarea ref="ta" v-model="draft" class="ge__ta" spellcheck="false" wrap="off" :disabled="disabled" :aria-label="title" @keydown="onKey" />
+          <textarea ref="ta" v-model="draft" class="ge__ta" spellcheck="false" :wrap="mobileDialog ? 'soft' : 'off'" :disabled="disabled" :aria-label="title" @keydown="onKey" />
         </div>
       </div>
     </template>
@@ -167,8 +172,12 @@ function apply(): void { emit('apply', draft.value); close(); }
   flex: 1; min-height: 0; width: 100%; resize: none; border: 0; outline: none; padding: 10px 12px; background: var(--ui-bg);
   color: var(--ui-text); font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre; tab-size: 2;
 }
-@media (max-width: 640px) {
-  .ge { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: calc(100dvh - 140px); }
-  .ge__side { border-right: 0; border-bottom: 1px solid var(--ui-border); max-height: 45dvh; }
-}
+.ge__tabs { flex: none; padding: 6px 12px 0; }
+.ge--phone { flex: 1; min-height: 0; height: auto; display: flex; flex-direction: column; }
+.ge--phone .ge__side { flex: 1; border-right: 0; }
+.ge--phone .ge__main { flex: 1; }
+.ge--phone .ge__ta { font-size: 16px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; }
+.ge--phone .ge__item { font-size: 13px; }
+.ge--phone .ge__desc { flex: none; max-height: none; overflow: visible; }
+.ge--phone .ge__desc p { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 </style>

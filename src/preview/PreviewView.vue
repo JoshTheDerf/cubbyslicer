@@ -567,6 +567,7 @@ function fit() { cameraCommand({ kind: 'fit' }); }
 .pv-topright > :not(.pv-cube-space) { pointer-events: auto; }
 .pv-keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: center; padding: 10px 12px; }
 .pv-keys > :first-child { grid-column: 1 / -1; }
+@media (max-height: 500px) and (min-width: 560px) { .pv-keys { grid-template-columns: auto 1fr auto 1fr; } }
 
 .pv-right {
   position: absolute;

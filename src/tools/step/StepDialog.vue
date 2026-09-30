@@ -41,8 +41,8 @@ onBeforeUnmount(() => setStepOptionsProvider(null));
 <template>
   <UModal v-model:open="open" title="STEP import" :description="req ? `Tessellation settings for ${req.name}` : ''" :ui="{ content: 'sm:max-w-md' }">
     <template #body>
-      <div class="flex flex-col gap-4">
-        <p class="text-xs text-muted">Smaller linear and angular deflections result in higher-quality meshes but increase the processing time.</p>
+      <div class="dlg-flow flex flex-col gap-4">
+        <p class="dlg-span text-xs text-muted">Smaller linear and angular deflections result in higher-quality meshes but increase the processing time.</p>
         <UFormField label="Linear deflection" :error="linOk ? undefined : `Enter a value between ${STEP_LIMITS.linear[0]} and ${STEP_LIMITS.linear[1]}`" hint="mm">
           <UInputNumber v-model="opts.linearDeflection" :min="STEP_LIMITS.linear[0]" :max="STEP_LIMITS.linear[1]" :step="0.001"
                         :format-options="{ maximumFractionDigits: 4 }" class="w-40" aria-label="Linear deflection (mm)" />
@@ -51,7 +51,7 @@ onBeforeUnmount(() => setStepOptionsProvider(null));
           <UInputNumber v-model="opts.angularDeflection" :min="STEP_LIMITS.angular[0]" :max="STEP_LIMITS.angular[1]" :step="0.01"
                         :format-options="{ maximumFractionDigits: 3 }" class="w-40" aria-label="Angle deflection (radians)" />
         </UFormField>
-        <UCheckbox v-model="opts.split" label="Split compound and compsolid into multiple objects" />
+        <UCheckbox v-model="opts.split" class="dlg-span" label="Split compound and compsolid into multiple objects" />
       </div>
     </template>
     <template #footer>

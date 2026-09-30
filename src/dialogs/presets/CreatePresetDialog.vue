@@ -6,7 +6,7 @@
  * printers). Both are saved as user presets.
  */
 import { computed, reactive, ref, watch } from 'vue';
-import { phone } from '../../app/shell/uiState';
+import { mobileDialog } from '../../ui/mobileDialog';
 import { currentPresets } from '../../presets/store';
 import { DEFAULT_PRESET_ID, type PresetInfo, type PresetValues } from '../../presets/types';
 import { PresetNameError } from '../../presets/userPresets';
@@ -28,6 +28,8 @@ const busy = ref(false);
 const nameTouched = ref(false);
 const name = ref('');
 const useNow = ref(true);
+/** Phones: the bed origin fields start collapsed. */
+const showOrigin = ref(false);
 
 // ---- printer ---------------------------------------------------------------------------
 const pf = reactive({ vendor: '', model: '', nozzle: '0.4', width: 220, depth: 220, originX: 0, originY: 0, height: 250, template: '' });
@@ -137,10 +139,11 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="kind === 'printer' ? 'Create printer' : 'Create filament'" :fullscreen="phone" :dismissible="!busy"
-          :description="kind === 'printer' ? 'A custom printer saved as a user preset, based on a template printer.' : 'A custom filament saved as a user preset, based on an existing filament.'"
-          :ui="{ content: 'sm:max-w-xl', body: 'flex flex-col gap-3' }">
+  <UModal v-model:open="open" :title="kind === 'printer' ? 'Create printer' : 'Create filament'" :fullscreen="mobileDialog" :dismissible="!busy"
+          :description="mobileDialog ? undefined : kind === 'printer' ? 'A custom printer saved as a user preset, based on a template printer.' : 'A custom filament saved as a user preset, based on an existing filament.'"
+          :ui="{ content: 'sm:max-w-xl' }">
     <template #body>
+      <div class="cp">
       <template v-if="kind === 'printer'">
         <div class="cp__grid2">
           <UFormField label="Vendor" required>
@@ -152,24 +155,28 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
             <datalist id="cp-models"><option v-for="m in models" :key="m" :value="m" /></datalist>
           </UFormField>
         </div>
-        <div class="cp__grid3">
+        <div class="cp__grid3 cp__grid3--2">
           <UFormField label="Nozzle diameter"><USelect v-model="pf.nozzle" :items="nozzleItems" value-key="value" size="sm" class="w-full" /></UFormField>
           <UFormField label="Printable height" hint="mm"><UInputNumber :model-value="pf.height" :min="1" size="sm" @update:model-value="(v: number | null) => (pf.height = num(v, 250))" /></UFormField>
         </div>
         <div class="cp__grid4">
           <UFormField label="Bed width" hint="mm"><UInputNumber :model-value="pf.width" :min="1" size="sm" @update:model-value="(v: number | null) => (pf.width = num(v, 220))" /></UFormField>
           <UFormField label="Bed depth" hint="mm"><UInputNumber :model-value="pf.depth" :min="1" size="sm" @update:model-value="(v: number | null) => (pf.depth = num(v, 220))" /></UFormField>
-          <UFormField label="Origin X" hint="mm"><UInputNumber :model-value="pf.originX" size="sm" @update:model-value="(v: number | null) => (pf.originX = num(v))" /></UFormField>
-          <UFormField label="Origin Y" hint="mm"><UInputNumber :model-value="pf.originY" size="sm" @update:model-value="(v: number | null) => (pf.originY = num(v))" /></UFormField>
+          <template v-if="!mobileDialog || showOrigin">
+            <UFormField label="Origin X" hint="mm"><UInputNumber :model-value="pf.originX" size="sm" @update:model-value="(v: number | null) => (pf.originX = num(v))" /></UFormField>
+            <UFormField label="Origin Y" hint="mm"><UInputNumber :model-value="pf.originY" size="sm" @update:model-value="(v: number | null) => (pf.originY = num(v))" /></UFormField>
+          </template>
         </div>
-        <p class="text-xs text-dimmed -mt-1">Rectangular bed. The origin is where X0 Y0 is, measured from the front-left corner (e.g. half the size for a centre origin). Use Bed shape… for round or custom beds.</p>
-        <UFormField label="Based on" description="G-code, speeds, limits and other settings are copied from this printer; its processes and filaments stay compatible.">
+        <UButton v-if="mobileDialog && !showOrigin" size="xs" variant="link" color="neutral" icon="i-lucide-chevron-right" class="-my-1 self-start"
+                 :label="`Bed origin (${pf.originX}, ${pf.originY})`" @click="showOrigin = true" />
+        <p v-if="!mobileDialog || showOrigin" class="cp__full text-xs text-dimmed -mt-1">Rectangular bed. The origin is where X0 Y0 is, measured from the front-left corner (e.g. half the size for a centre origin). Use Bed shape… for round or custom beds.</p>
+        <UFormField label="Based on" :description="mobileDialog ? undefined : 'G-code, speeds, limits and other settings are copied from this printer; its processes and filaments stay compatible.'">
           <USelectMenu v-model="pf.template" :items="templateItems" value-key="value" size="sm" class="w-full" />
         </UFormField>
       </template>
 
       <template v-else>
-        <div class="cp__grid3">
+        <div class="cp__grid3 cp__grid3--f">
           <UFormField label="Vendor" required>
             <UInput v-model="ff.vendor" list="cf-vendors" placeholder="e.g. Acme" size="sm" class="w-full" />
             <datalist id="cf-vendors"><option v-for="v in filamentVendors" :key="v" :value="v" /></datalist>
@@ -177,10 +184,14 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
           <UFormField label="Type"><USelectMenu v-model="ff.type" :items="types" size="sm" class="w-full" /></UFormField>
           <UFormField label="Serial" hint="optional"><UInput v-model="ff.serial" placeholder="e.g. Silk" size="sm" class="w-full" /></UFormField>
         </div>
-        <UFormField label="Based on" description="Temperatures, cooling, flow and the other filament settings are copied from this filament.">
+        <UFormField label="Based on" :description="mobileDialog ? undefined : 'Temperatures, cooling, flow and the other filament settings are copied from this filament.'">
           <USelectMenu v-model="ff.base" :items="baseItems" value-key="value" size="sm" class="w-full" placeholder="Choose a filament" />
         </UFormField>
-        <UFormField label="Printers" description="The filament is offered for these printers (none ticked = every printer).">
+        <UFormField v-if="mobileDialog" label="Printers" hint="none = every printer">
+          <USelectMenu v-model="ff.printers" :items="printerChoices.map((pi) => pi.name)" multiple size="sm" class="w-full" placeholder="Every printer"
+                       :search-input="{ placeholder: 'Search printers…' }" aria-label="Printers" />
+        </UFormField>
+        <UFormField v-else label="Printers" description="The filament is offered for these printers (none ticked = every printer).">
           <div class="cp__printers">
             <label v-for="pi in printerChoices" :key="pi.id" class="cp__printer">
               <UCheckbox :model-value="ff.printers.includes(pi.name)" @update:model-value="(v: boolean | 'indeterminate') => togglePrinter(pi.name, v === true)" />
@@ -194,11 +205,13 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
       <UFormField label="Preset name">
         <UInput v-model="name" size="sm" class="w-full" spellcheck="false" @input="nameTouched = true" />
       </UFormField>
-      <UCheckbox v-model="useNow" :label="kind === 'printer' ? 'Use this printer now' : `Use it for filament ${ff.slot + 1}`" />
-      <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
+      <UCheckbox v-if="!mobileDialog" v-model="useNow" :label="kind === 'printer' ? 'Use this printer now' : `Use it for filament ${ff.slot + 1}`" />
+      <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" class="cp__full" />
+      </div>
     </template>
     <template #footer>
-      <div class="flex w-full justify-end gap-2">
+      <div class="flex w-full items-center justify-end gap-2">
+        <UCheckbox v-if="mobileDialog" v-model="useNow" :label="kind === 'printer' ? 'Use now' : `Use for filament ${ff.slot + 1}`" class="me-auto min-w-0" />
         <UButton variant="ghost" color="neutral" label="Cancel" :disabled="busy" @click="open = false" />
         <UButton color="primary" label="Create" :loading="busy" :disabled="!name.trim()" @click="create" />
       </div>
@@ -207,13 +220,26 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
 </template>
 
 <style scoped>
+.cp { display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 640px), (max-height: 500px) { .cp { gap: 8px; } }
 .cp__grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .cp__grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .cp__grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .cp__printers { max-height: 180px; overflow: auto; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); padding: 4px; }
 .cp__printer { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 13px; cursor: pointer; }
-@media (max-width: 640px) {
-  .cp__grid2, .cp__grid3 { grid-template-columns: 1fr; }
-  .cp__grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 640px), (max-height: 500px) {
+  .cp__grid2, .cp__grid3, .cp__grid4 { gap: 8px; }
+  .cp__grid3 { grid-template-columns: 1fr; }
+  .cp__grid3--2, .cp__grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cp__grid3--f { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cp__grid3--f > :first-child { grid-column: 1 / -1; }
+}
+/* Landscape phones: the fields flow in two columns so the form fits without scrolling. */
+@media (max-height: 500px) and (min-width: 560px) {
+  .cp { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 8px 12px; }
+  .cp__full, .cp__grid3--f, .cp__grid4:has(> :nth-child(3)) { grid-column: 1 / -1; }
+  .cp__grid4:has(> :nth-child(3)), .cp__grid3--f { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .cp__grid3--f > :first-child { grid-column: span 2; }
+  .cp > button { align-self: center; }
 }
 </style>

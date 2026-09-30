@@ -42,13 +42,13 @@ const confirmOpen = computed({
 <template>
   <UModal v-model:open="bridgeUi.open" title="Connect to Claude Code" :ui="{ content: 'sm:max-w-md' }">
     <template #body>
-      <div class="bd text-sm" data-testid="bridge-dialog">
-        <p class="bd__status" :class="{ 'bd__status--on': connected }" data-testid="bridge-status">
+      <div class="bd dlg-flow text-sm" data-testid="bridge-dialog">
+        <p class="bd__status dlg-span" :class="{ 'bd__status--on': connected }" data-testid="bridge-status">
           <span class="bd__dot" />{{ statusText }}
         </p>
-        <p v-if="s.error" class="bd__error" role="alert">{{ s.error }}</p>
+        <p v-if="s.error" class="bd__error dlg-span" role="alert">{{ s.error }}</p>
         <template v-if="!connected">
-          <p class="text-toned">
+          <p class="text-toned dlg-span">
             Claude Code drives this tab through the cubby MCP server on your computer (127.0.0.1). Add it once with
             <code>claude mcp add --scope user cubby -- npx -y cubby-mcp</code>, ask Claude for the pairing code, and paste it here.
           </p>
@@ -56,13 +56,13 @@ const confirmOpen = computed({
             <UInput v-model="code" placeholder="K7QD-93XM" spellcheck="false" autocomplete="off" class="w-full font-mono" data-testid="bridge-code"
                     @keydown.enter="connect" />
           </UFormField>
-          <UCheckbox v-model="auto" label="Reconnect when this page loads" class="mt-3" data-testid="bridge-auto" />
-          <p class="text-dimmed mt-3">
+          <UCheckbox v-model="auto" label="Reconnect when this page loads" class="mt-3 self-end" data-testid="bridge-auto" />
+          <p class="text-dimmed mt-3 dlg-span">
             On https, the browser asks to let this site reach devices on your local network. Allow it; it only reaches cubby-mcp on this computer.
           </p>
         </template>
         <template v-else>
-          <p class="text-toned">
+          <p class="text-toned dlg-span">
             Claude can use everything in the slicer, like you can. Uploads, prints, print host changes and deleting presets ask you here first
             <template v-if="bridge.isSessionAllowed('print') || bridge.isSessionAllowed('upload')">
               (you allowed them without asking for this session. <ULink as="button" class="text-info" @click="bridge.revokeSessionAllow('print'); bridge.revokeSessionAllow('upload')">Ask again</ULink>)

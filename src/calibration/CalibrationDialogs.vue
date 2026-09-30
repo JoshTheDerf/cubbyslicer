@@ -7,7 +7,7 @@
  */
 import { computed, reactive, ref, watch } from 'vue';
 import type { CalibParams } from '../engine/types';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { resolvedConfig } from '../app/state';
 import { currentPresets } from '../presets/store';
 import { asArray } from '../presets/values';
@@ -134,20 +134,20 @@ async function start(): Promise<void> {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="TITLES[id]" :fullscreen="phone" :dismissible="!calibUi.busy"
-          :ui="{ content: 'sm:max-w-lg', body: 'flex flex-col gap-4' }">
+  <UModal v-model:open="open" :title="TITLES[id]" :fullscreen="mobileDialog" :dismissible="!calibUi.busy"
+          :ui="{ content: 'sm:max-w-lg', body: 'flex flex-col gap-4 dlg-flow' }">
     <template #body>
       <!-- Temperature -->
       <template v-if="id === 'temp'">
         <UFormField label="Filament type">
-          <URadioGroup v-model="temp.filament" :items="tempItems" orientation="horizontal" variant="table" size="xs" class="cd__wrap" />
+          <URadioGroup v-model="temp.filament" :items="tempItems" orientation="horizontal" :variant="mobileDialog ? 'card' : 'table'" size="xs" class="cd__wrap" :ui="{ fieldset: 'phone:gap-1.5', item: 'phone:px-2.5 phone:py-0' }" />
         </UFormField>
         <div class="cd__grid">
           <UFormField label="Start temp" hint="°C"><UInputNumber :model-value="temp.start" :min="155" :max="500" :step="5" size="sm" @update:model-value="(v: number | null) => (temp.start = snapTemp(n(v, 230)))" /></UFormField>
           <UFormField label="End temp" hint="°C"><UInputNumber :model-value="temp.end" :min="155" :max="500" :step="5" size="sm" @update:model-value="(v: number | null) => (temp.end = snapTemp(n(v, 190)))" /></UFormField>
           <UFormField label="Temp step" hint="°C"><UInputNumber :model-value="5" disabled size="sm" /></UFormField>
         </div>
-        <p class="cd__note">Prints a tower of 10 mm blocks, one per temperature, from the start temperature at the bottom down to the end temperature at the top.</p>
+        <p class="cd__note dlg-span">Prints a tower of 10 mm blocks, one per temperature, from the start temperature at the bottom down to the end temperature at the top.</p>
       </template>
 
       <!-- Flow ratio -->
@@ -263,7 +263,7 @@ async function start(): Promise<void> {
         </p>
       </template>
 
-      <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
+      <UAlert v-if="error" class="dlg-span" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
     </template>
     <template #footer>
       <div class="flex w-full items-center gap-2">
@@ -283,7 +283,7 @@ async function start(): Promise<void> {
 .cd__pair { display: flex; gap: 6px; }
 .cd__pair > * { min-width: 0; flex: 1; }
 .cd__note { margin: 0; font-size: 12px; color: var(--ui-text-muted); }
-.cd__wrap :deep([role='radiogroup']) { flex-wrap: wrap; }
+.cd__wrap :deep([data-slot='fieldset']) { flex-wrap: wrap; }
 @media (max-width: 640px) {
   .cd__grid, .cd__grid2 { grid-template-columns: 1fr 1fr; }
 }

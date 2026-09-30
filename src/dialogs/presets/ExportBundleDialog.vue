@@ -6,7 +6,7 @@
  * preset import), preset types become one flat .zip.
  */
 import { computed, ref, watch } from 'vue';
-import { phone } from '../../app/shell/uiState';
+import { mobileDialog } from '../../ui/mobileDialog';
 import { activeEngine } from '../../app/state';
 import { downloadBytes } from '../../app/shell/download';
 import { currentPresets } from '../../presets/store';
@@ -92,10 +92,11 @@ async function exportNow(): Promise<void> {
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.exportBundle" title="Export preset bundle" :fullscreen="phone" :ui="{ content: 'sm:max-w-xl', body: 'flex flex-col gap-3' }">
+  <UModal v-model:open="dialogs.exportBundle" title="Export preset bundle" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-xl', body: 'flex flex-col gap-3 phone:overflow-hidden' }">
     <template #body>
       <UFormField label="Export type">
-        <URadioGroup v-model="kind" :items="kindItems" size="sm" />
+        <USelect v-if="mobileDialog" v-model="kind" :items="kindItems" value-key="value" size="sm" class="w-full" aria-label="Export type" />
+        <URadioGroup v-else v-model="kind" :items="kindItems" size="sm" />
       </UFormField>
       <UAlert v-if="activeEngine === 'preflight'" color="warning" variant="subtle" icon="i-lucide-info"
               description="These are preFlight presets: OrcaSlicer can import the files, but preFlight option names may not all be recognised." />
@@ -127,5 +128,9 @@ async function exportNow(): Promise<void> {
 .eb__row:hover { background: var(--ui-bg-elevated); }
 .eb__row--all { border-bottom: 1px solid var(--ui-border); border-radius: 0; margin-bottom: 2px; color: var(--ui-text-muted); }
 .eb__row small { max-width: 45%; }
+@media (max-width: 640px), (max-height: 500px) {
+  .eb__list { flex: 1 1 0; min-height: 88px; max-height: none; overscroll-behavior: contain; }
+  .eb__row { min-height: 40px; }
+}
 .eb__empty { margin: 0; padding: 12px; font-size: 12px; color: var(--ui-text-dimmed); }
 </style>

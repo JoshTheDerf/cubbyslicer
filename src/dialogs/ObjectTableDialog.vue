@@ -10,7 +10,7 @@ import { filamentColourOf, mixedEnabled, mixedFilaments } from '../mixed/store';
  */
 import { computed, ref, watch } from 'vue';
 import type { ConfigOptionDef, ConfigValue } from '../engine/types';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { currentPresets } from '../presets/store';
 import { asArray, normalizeValue, valuesEqual } from '../presets/values';
 import { objects, plateOf, renameObject, select, setPrintable } from '../project/store';
@@ -88,15 +88,50 @@ function locate(id: string): void { select([id]); }
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.objectTable" title="Object table" description="Per-object settings of every object. Tick rows to edit them together."
-          :fullscreen="phone" :ui="{ content: 'sm:max-w-[min(1200px,96vw)]', body: 'flex flex-col gap-2' }">
+  <UModal v-model:open="dialogs.objectTable" title="Object table" :description="mobileDialog ? undefined : 'Per-object settings of every object. Tick rows to edit them together.'"
+          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-[min(1200px,96vw)]', body: 'flex flex-col gap-2 phone:overflow-hidden' }">
     <template #body>
       <div class="flex items-center gap-2">
-        <UInput v-model="filter" icon="i-lucide-search" placeholder="Filter objects" size="sm" class="w-60" />
-        <span class="flex-1" />
-        <span class="text-xs text-dimmed">{{ ticked.size ? `${ticked.size} ticked · edits apply to all ticked rows` : `${rows.length} object${rows.length === 1 ? '' : 's'}` }}</span>
+        <UCheckbox v-if="mobileDialog" :model-value="allTicked" aria-label="Tick all" @update:model-value="(v: boolean | 'indeterminate') => tickAll(v === true)" />
+        <UInput v-model="filter" icon="i-lucide-search" placeholder="Filter objects" size="sm" class="w-60 phone:w-auto phone:min-w-0 phone:flex-1" />
+        <span class="flex-1 phone:hidden" />
+        <span class="text-xs text-dimmed phone:max-w-[40%] phone:text-right">{{ ticked.size ? `${ticked.size} ticked · edits apply to all ticked rows` : mobileDialog ? `${rows.length} object${rows.length === 1 ? '' : 's'} · tick to edit together` : `${rows.length} object${rows.length === 1 ? '' : 's'}` }}</span>
       </div>
-      <div class="ot__scroll">
+      <!-- Phones: one card per object (fields stacked), in the dialog's one scroll region. -->
+      <div v-if="mobileDialog" class="otc">
+        <div v-for="r in rows" :key="r.o.id" class="otc__card" :class="{ on: ticked.has(r.o.id) }">
+          <div class="otc__head">
+            <UCheckbox :model-value="ticked.has(r.o.id)" :aria-label="`Tick ${r.o.name}`" @update:model-value="(v: boolean | 'indeterminate') => tick(r.o.id, v === true)" />
+            <UInput :model-value="r.o.name" size="sm" class="min-w-0 flex-1" :aria-label="`Name of ${r.o.name}`"
+                    @change="(e: Event) => { const v = (e.target as HTMLInputElement).value.trim(); if (v && v !== r.o.name) renameObject(r.o.id, v); }" />
+            <UButton size="sm" variant="ghost" icon="i-lucide-crosshair" square :aria-label="`Select ${r.o.name}`" @click="locate(r.o.id)" />
+          </div>
+          <div class="otc__fields">
+            <span class="otc__lbl">Plate</span><span class="text-sm text-muted">{{ r.plate > 0 ? r.plate : '—' }}</span>
+            <span class="otc__lbl">Printable</span>
+            <UCheckbox :model-value="r.o.printable" :aria-label="`${r.o.name} printable`" @update:model-value="(v: boolean | 'indeterminate') => setRowPrintable(r.o.id, v === true)" />
+            <template v-if="filamentCol">
+              <span class="otc__lbl">Filament</span>
+              <USelect :model-value="filamentOf(r.ov)" :items="filamentItems" value-key="value" size="sm" class="w-24" :aria-label="`${r.o.name} filament`"
+                       @update:model-value="(v: unknown) => setFilament(r.o.id, String(v))">
+                <template #leading><span class="ot__swatch" :style="{ background: filamentColourOf(Number(filamentOf(r.ov))) }" /></template>
+              </USelect>
+            </template>
+            <template v-for="c in columns" :key="c.key">
+              <span class="otc__lbl" :title="c.def.tooltip">{{ c.label }}<small v-if="c.def.sidetext"> ({{ c.def.sidetext }})</small></span>
+              <div class="ot__cell" :class="{ 'ot__cell--mod': c.key in r.ov }">
+                <ScalarControl :def="c.def" :opt-key="`otc-${r.o.id}-${c.key}`" :model-value="cellValue(r.ov, c.key)" compact :aria-label="`${r.o.name} ${c.label}`"
+                               @update:model-value="(v: string) => setCell(r.o.id, c.key, v)" />
+                <UButton v-if="c.key in r.ov" size="xs" variant="ghost" color="warning" icon="i-lucide-undo-2" square :aria-label="`Revert ${c.label}`"
+                         @click="revert(r.o.id, c.key)" />
+                <span v-else class="otc__global" :title="`Global: ${globalValue(c.key)}`">{{ globalValue(c.key) }}</span>
+              </div>
+            </template>
+          </div>
+        </div>
+        <p v-if="!rows.length" class="ot__empty">No objects.</p>
+      </div>
+      <div v-else class="ot__scroll">
         <table class="ot">
           <thead>
             <tr>
@@ -165,5 +200,18 @@ function locate(id: string): void { select([id]); }
 .ot__cell { display: flex; align-items: center; gap: 2px; min-width: 110px; }
 .ot__cell--mod :deep(input), .ot__cell--mod :deep(button[role='combobox']) { color: var(--modified); }
 .ot__swatch { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(255, 255, 255, 0.3); display: inline-block; }
+.otc { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; }
+.otc__card { border: 1px solid var(--ui-border); border-radius: var(--ui-radius); padding: 4px 10px 8px; }
+.otc__card.on { background: color-mix(in srgb, var(--ui-primary) 8%, transparent); }
+.otc__head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.otc__fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); align-items: center; gap: 2px 10px; font-size: 13px; }
+.otc__lbl { color: var(--ui-text-muted); min-width: 0; overflow-wrap: anywhere; }
+.otc__lbl small { color: var(--ui-text-dimmed); }
+.otc .ot__cell { min-width: 0; }
+.otc .ot__cell > :first-child { min-width: 0; flex: 1; }
+.otc__global { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ui-text-dimmed); font-style: italic; }
+@media (min-width: 700px) {
+  .otc__fields { grid-template-columns: repeat(2, minmax(0, 0.8fr) minmax(0, 1.2fr)); }
+}
 .ot__empty { text-align: center; color: var(--ui-text-dimmed); padding: 16px; }
 </style>

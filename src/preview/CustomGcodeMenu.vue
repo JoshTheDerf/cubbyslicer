@@ -14,7 +14,7 @@ import { currentPresets } from '../presets/store';
 import { toast } from '../ui';
 import type { CustomGcodeItem } from '../engine/types';
 import { activePlate } from '../project/store';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import {
   addCustomGcode, clearCustomGcodes, nextChangeColor, plateCustomGcodes, removeCustomGcode, updateCustomGcode,
 } from '../plates/store';
@@ -167,7 +167,7 @@ defineExpose({ openAdd, openMenu });
 <template>
   <AnchoredMenu v-model:open="menu.open" :x="menu.x" :y="menu.y" :items="menuItems" />
 
-  <UModal v-model:open="text.open" :title="text.kind === 'pause' ? 'Pause message' : 'Custom G-code'" :fullscreen="phone"
+  <UModal v-model:open="text.open" :title="text.kind === 'pause' ? 'Pause message' : 'Custom G-code'" :fullscreen="mobileDialog"
           :description="text.kind === 'pause' ? 'Shown on printers that support it when the print pauses.' : 'Enter Custom G-code used on current layer:'">
     <template #body>
       <UTextarea v-model="text.value" :rows="text.kind === 'pause' ? 2 : 8" autoresize autofocus class="w-full font-mono" data-testid="custom-gcode-text"

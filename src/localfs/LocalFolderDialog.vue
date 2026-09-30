@@ -6,7 +6,7 @@
  * export G-code / 3MF into a folder.
  */
 import { computed, ref, shallowRef, watch } from 'vue';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { confirmAction } from '../app/shell/uiState';
 import { toast } from '../ui';
 import { isModelFileName } from '../project/import';
@@ -124,7 +124,7 @@ const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :fullscreen="phone" :ui="{ content: 'sm:max-w-3xl', body: 'flex flex-col gap-3' }">
+  <UModal v-model:open="open" :title="title" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-3xl', body: 'flex flex-col gap-3' }">
     <template #body>
       <p v-if="!folderAccessSupported" class="text-sm text-muted">This browser can't open local folders (the File System Access API is available in Chrome, Edge and other Chromium browsers). Use Open / Import instead.</p>
       <template v-else>
@@ -139,7 +139,16 @@ const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.
           </div>
         </div>
         <div v-else class="lf">
-          <aside class="lf__side" aria-label="Approved folders">
+          <!-- Phones: the approved folders are a picker row above the one scrolling file list. -->
+          <div v-if="mobileDialog" class="lf__pick">
+            <USelect v-if="local.folders.length" :model-value="root?.key" :items="local.folders.map((f) => ({ value: f.key, label: f.name, icon: 'i-lucide-folder-open' }))"
+                     value-key="value" size="sm" class="min-w-0 flex-1" aria-label="Folder" placeholder="Folder"
+                     @update:model-value="(k: string) => { const f = local.folders.find((x) => x.key === k); if (f) void choose(f); }" />
+            <UButton v-if="root" size="sm" color="neutral" variant="ghost" icon="i-lucide-folder-x" :aria-label="`Remove ${root.name}`" @click="removeFolder(root)" />
+            <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-folder-plus" :label="local.folders.length ? undefined : 'Add folder…'" aria-label="Add folder"
+                     :class="{ 'flex-1': !local.folders.length }" @click="add" />
+          </div>
+          <aside v-else class="lf__side" aria-label="Approved folders">
             <button v-for="f in local.folders" :key="f.key" type="button" class="lf__folder" :class="{ on: root?.key === f.key }" @click="choose(f)">
               <UIcon name="i-lucide-folder-open" class="size-4 shrink-0" /><span class="truncate">{{ f.name }}</span>
               <UIcon name="i-lucide-x" class="lf__fx" role="button" :aria-label="`Remove ${f.name}`" @click.stop="removeFolder(f)" />
@@ -155,7 +164,7 @@ const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.
               <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-refresh-cw" aria-label="Refresh" @click="refresh" />
             </nav>
             <div class="lf__list">
-              <p v-if="!root" class="lf__empty">Add a folder to browse its projects and models.</p>
+              <p v-if="!root" class="lf__empty">Add a folder to browse its projects and models.<span v-if="mobileDialog" class="text-xs text-dimmed">Folders you add stay available on this browser. The files never leave your computer.</span></p>
               <div v-else-if="needsGrant" class="lf__empty">
                 <p>Allow access to “{{ cwd?.name }}” for this session.</p>
                 <UButton size="sm" color="primary" icon="i-lucide-unlock" label="Allow access" @click="grant" />
@@ -186,7 +195,6 @@ const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.
 
 <style scoped>
 .lf { display: grid; grid-template-columns: 200px 1fr; gap: 12px; min-height: 300px; }
-@media (max-width: 640px) { .lf { grid-template-columns: 1fr; } }
 .lf__side { display: flex; flex-direction: column; gap: 4px; }
 .lf__folder { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--radius-sm); font-size: 13px; color: var(--fg-1); text-align: left; }
 .lf__folder:hover { background: var(--bg-3); }
@@ -206,5 +214,16 @@ const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.
 .lf__meta { font-size: 11px; color: var(--ui-text-dimmed); white-space: nowrap; }
 .lf__del { opacity: 0; }
 .lf__row:hover .lf__del { opacity: 1; }
+.lf__pick { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.lf__crumbs { min-width: 0; }
+.lf__crumbs > button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px), (max-height: 500px) {
+  .lf { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+  .lf__main { flex: 1; min-height: 0; }
+  .lf__list { flex: 1 1 0; min-height: 96px; max-height: none; overscroll-behavior: contain; }
+  .lf__row { min-height: 44px; }
+  .lf__del { opacity: 1; }
+  .lf__meta { display: none; }
+}
 .lf__empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; text-align: center; font-size: 13px; color: var(--ui-text-muted); }
 </style>

@@ -8,7 +8,7 @@
  * preFlight). Textures and models are stored in this browser (IndexedDB).
  */
 import { computed, reactive, ref, watch } from 'vue';
-import { phone } from '../../app/shell/uiState';
+import { mobileDialog, shortScreen } from '../../ui/mobileDialog';
 import { pickFiles } from '../../app/shell/download';
 import { parseModelFile } from '../../project/import';
 import { currentPresets } from '../../presets/store';
@@ -109,21 +109,21 @@ const fmt = formatNumber;
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.bedShape" title="Bed shape" :description="`Printer: ${p.infos.value.printer.name}`" :fullscreen="phone"
+  <UModal v-model:open="dialogs.bedShape" title="Bed shape" :description="shortScreen ? undefined : `Printer: ${p.infos.value.printer.name}`" :fullscreen="mobileDialog"
           :ui="{ content: 'sm:max-w-3xl', body: 'flex flex-col gap-4' }">
     <template #body>
       <div class="bs">
-        <div class="bs__form">
+        <div class="bs__form dlg-flow">
           <h4>Shape</h4>
-          <UTabs v-model="type" :items="typeItems" :content="false" size="xs" />
+          <UTabs v-model="type" :items="typeItems" :content="false" size="xs" class="dlg-span" />
           <template v-if="model.type === 'rect'">
-            <div class="bs__grid">
+            <div class="bs__grid dlg-span">
               <UFormField label="Size X" hint="mm"><UInputNumber :model-value="model.rect.width" :min="1" size="sm" @update:model-value="(v: number | null) => (model.rect.width = num(v, 220))" /></UFormField>
               <UFormField label="Size Y" hint="mm"><UInputNumber :model-value="model.rect.depth" :min="1" size="sm" @update:model-value="(v: number | null) => (model.rect.depth = num(v, 220))" /></UFormField>
               <UFormField label="Origin X" hint="mm"><UInputNumber :model-value="model.rect.originX" size="sm" @update:model-value="(v: number | null) => (model.rect.originX = num(v))" /></UFormField>
               <UFormField label="Origin Y" hint="mm"><UInputNumber :model-value="model.rect.originY" size="sm" @update:model-value="(v: number | null) => (model.rect.originY = num(v))" /></UFormField>
             </div>
-            <p class="bs__note">Distance of the coordinates origin (X0 Y0) from the front-left corner of the bed.</p>
+            <p class="bs__note dlg-span">Distance of the coordinates origin (X0 Y0) from the front-left corner of the bed.</p>
           </template>
           <template v-else-if="model.type === 'circle'">
             <UFormField label="Diameter" hint="mm" description="The origin (X0 Y0) is the centre of the bed.">
@@ -138,9 +138,24 @@ const fmt = formatNumber;
           </template>
 
           <h4>Height</h4>
-          <UFormField label="Max print height" hint="mm">
-            <UInputNumber :model-value="height" :min="0" size="sm" class="w-32" @update:model-value="(v: number | null) => (height = num(v))" />
-          </UFormField>
+          <div class="bs__hrow">
+            <UFormField label="Max print height" hint="mm">
+              <UInputNumber :model-value="height" :min="0" size="sm" class="w-32" @update:model-value="(v: number | null) => (height = num(v))" />
+            </UFormField>
+          </div>
+          <!-- Phones: a thumbnail preview beside the height and appearance rows instead of a column. -->
+          <figure v-if="mobileDialog && !shortScreen" class="bs__preview bs__preview--sm">
+            <svg :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Bed preview">
+              <defs><clipPath id="bs-clip-sm"><polygon :points="poly" /></clipPath></defs>
+              <image v-if="textureUrl && bounds" :href="textureUrl" :x="bounds.minX" :y="-bounds.maxY" :width="bounds.maxX - bounds.minX" :height="bounds.maxY - bounds.minY"
+                     preserveAspectRatio="none" clip-path="url(#bs-clip-sm)" opacity="0.9" />
+              <polygon v-if="pts.length >= 3" :points="poly" class="bs__poly" :class="{ 'bs__poly--tex': !!textureUrl }" />
+              <line :x1="0" :y1="0" :x2="view.w * 0.12" :y2="0" class="bs__ax bs__ax--x" />
+              <line :x1="0" :y1="0" :x2="0" :y2="-view.h * 0.12" class="bs__ax bs__ax--y" />
+              <circle cx="0" cy="0" :r="view.w * 0.008" class="bs__origin" />
+            </svg>
+            <figcaption v-if="bounds">{{ fmt(bounds.maxX - bounds.minX) }} × {{ fmt(bounds.maxY - bounds.minY) }} mm · origin ({{ fmt(-bounds.minX) }}, {{ fmt(-bounds.minY) }})</figcaption>
+          </figure>
 
           <template v-if="hasTexture || hasModel">
             <h4>Appearance</h4>
@@ -156,10 +171,10 @@ const fmt = formatNumber;
               <UButton size="xs" variant="outline" label="Load…" :loading="busy" @click="pick('model')" />
               <UButton v-if="bedModel" size="xs" variant="ghost" color="error" icon="i-lucide-x" square aria-label="Remove model" @click="bedModel = ''" />
             </div>
-            <p class="bs__note">SVG / PNG texture and STL model, stored in this browser. They replace the printer vendor’s bed visuals.</p>
+            <p class="bs__note bs__note--secondary dlg-span">SVG / PNG texture and STL model, stored in this browser. They replace the printer vendor’s bed visuals.</p>
           </template>
         </div>
-        <figure class="bs__preview">
+        <figure v-if="!mobileDialog || shortScreen" class="bs__preview">
           <svg :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Bed preview">
             <defs><clipPath id="bs-clip"><polygon :points="poly" /></clipPath></defs>
             <image v-if="textureUrl && bounds" :href="textureUrl" :x="bounds.minX" :y="-bounds.maxY" :width="bounds.maxX - bounds.minX" :height="bounds.maxY - bounds.minY"
@@ -201,5 +216,23 @@ const fmt = formatNumber;
 .bs__ax--x { stroke: #ef5b5b; }
 .bs__ax--y { stroke: #19c37d; }
 .bs__origin { fill: var(--ui-text-highlighted); }
-@media (max-width: 640px) { .bs { grid-template-columns: 1fr; } .bs__preview { max-width: 280px; margin: 0 auto; } }
+.bs__preview--sm figcaption { font-size: 10px; }
+/* Portrait phones: the thumbnail sits in a second column beside the height and appearance rows. */
+@media (max-width: 640px) and (min-height: 501px) {
+  .bs__form { display: grid; grid-template-columns: minmax(0, 1fr) 128px; grid-auto-flow: row dense; column-gap: 12px; }
+  .bs__form > * { grid-column: 1 / -1; }
+  .bs__form > .bs__hrow, .bs__form > .bs__file { grid-column: 1; }
+  .bs__form > .bs__preview--sm { grid-column: 2; grid-row: span 3; }
+}
+@media (max-width: 640px), (max-height: 500px) {
+  .bs { grid-template-columns: 1fr; }
+  .bs__form h4 { display: none; }
+}
+@media (max-height: 500px) and (min-width: 560px) {
+  .bs { grid-template-columns: minmax(0, 1fr) 150px; gap: 16px; }
+  .bs__note--secondary { display: none; }
+  .bs__hrow { grid-row: span 2; }
+  .bs__file { grid-column: 2; }
+  .bs__grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
 </style>

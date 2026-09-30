@@ -7,7 +7,7 @@
  * extruder per filament) as project values.
  */
 import { computed, ref, watch } from 'vue';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { resolvedConfig } from '../app/state';
 import { currentPresets } from '../presets/store';
 import { asArray } from '../presets/values';
@@ -77,7 +77,7 @@ const textOn = (hex: string) => {
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.filamentMap" title="Filament grouping" :fullscreen="phone" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-4' }">
+  <UModal v-model:open="dialogs.filamentMap" title="Filament grouping" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-4' }">
     <template #body>
       <UTabs v-model="page" :items="pageItems" :content="false" size="sm" class="w-60" />
       <template v-if="page === 'auto'">
@@ -97,7 +97,7 @@ const textOn = (hex: string) => {
       </template>
       <template v-else>
         <p class="text-sm text-muted">We will slice according to this grouping method:</p>
-        <div class="fm__cols" :style="{ gridTemplateColumns: `repeat(${Math.min(nozzles, phone ? 1 : 3)}, minmax(0, 1fr))` }">
+        <div class="fm__cols" :style="{ gridTemplateColumns: `repeat(${Math.min(nozzles, mobileDialog ? 1 : 3)}, minmax(0, 1fr))` }">
           <section v-for="c in columns" :key="c.ext" class="fm__col" :class="{ 'fm__col--target': picked !== null }"
                    @dragover.prevent @drop.prevent="onDrop(c.ext)" @click="onColumn(c.ext)">
             <h4>{{ c.label }}</h4>

@@ -12,7 +12,7 @@ import type { ConfigSchema, ConfigValue } from '../engine/types';
 import { plates, renamePlate } from '../project/store';
 import { plateLabel } from '../project/plates';
 import { hexCss, toolColorsFromConfig } from '../preview/render/colors';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { setPlateConfig } from './store';
 import { plateUi } from './ui';
 
@@ -121,9 +121,9 @@ function save(): void {
 
 <template>
   <UModal v-model:open="open" :title="`${plateLabel(plates[idx], idx)} settings`" description="Override printing options for this plate only."
-          :fullscreen="phone" :ui="{ content: 'sm:max-w-lg' }">
+          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-lg' }">
     <template #body>
-      <form class="ps" data-testid="plate-settings" @submit.prevent="save">
+      <form class="ps dlg-flow" data-testid="plate-settings" @submit.prevent="save">
         <label class="ps__row"><span>Plate name</span>
           <UInput v-model="name" :placeholder="`Plate ${idx + 1}`" maxlength="80" size="sm" class="ps__ctl" /></label>
         <label v-if="has('curr_bed_type')" class="ps__row"><span>Bed type</span>
@@ -136,7 +136,7 @@ function save(): void {
         <template v-if="filamentCount > 1 && has('first_layer_print_sequence')">
           <label class="ps__row"><span>First layer filament sequence</span>
             <USelect v-model="firstChoice" :items="choiceItems" size="sm" class="ps__ctl" /></label>
-          <ol v-if="firstChoice === 'custom'" class="ps__order" aria-label="First layer filament order">
+          <ol v-if="firstChoice === 'custom'" class="ps__order dlg-span" aria-label="First layer filament order">
             <li v-for="(f, i) in firstOrder" :key="f">
               <i class="ps__sw" :style="{ background: hexCss(colors[f - 1] ?? 0x999999) }" />{{ f }}
               <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-arrow-left" :disabled="i === 0" :aria-label="`Move filament ${f} earlier`" @click="move(firstOrder, i, -1)" />
@@ -148,7 +148,7 @@ function save(): void {
         <template v-if="filamentCount > 1 && has('other_layers_print_sequence')">
           <label class="ps__row"><span>Other layer filament sequence</span>
             <USelect v-model="otherChoice" :items="choiceItems" size="sm" class="ps__ctl" /></label>
-          <div v-if="otherChoice === 'custom'" class="ps__seqs">
+          <div v-if="otherChoice === 'custom'" class="ps__seqs dlg-span">
             <div v-for="(s, k) in otherSeqs" :key="k" class="ps__seq">
               <div class="ps__range">
                 <span>Layer</span>
@@ -170,8 +170,8 @@ function save(): void {
                      @click="otherSeqs.push({ begin: (otherSeqs.at(-1)?.end ?? otherSeqs.at(-1)?.begin ?? 1) + 1, end: null, order: defaultOrder() })" />
           </div>
         </template>
-        <p v-if="layerError" class="ps__err">{{ layerError }}</p>
-        <p v-if="schema && !has('curr_bed_type') && !seqKey && !spiralKey" class="ps__hint">This engine has no per-plate options.</p>
+        <p v-if="layerError" class="ps__err dlg-span">{{ layerError }}</p>
+        <p v-if="schema && !has('curr_bed_type') && !seqKey && !spiralKey" class="ps__hint dlg-span">This engine has no per-plate options.</p>
       </form>
     </template>
     <template #footer>

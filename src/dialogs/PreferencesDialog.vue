@@ -7,7 +7,7 @@
  * Everything is stored in this browser (localStorage) and applies at once.
  */
 import { ref, watch } from 'vue';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { ENGINE_LABELS } from '../engine/client';
 import { preferences, rememberedChoices, resetPreferences, resetRememberedChoices } from '../app/preferences';
 import { toast } from '../ui';
@@ -29,6 +29,14 @@ const flushItems = [
   { value: 'off', label: 'Disabled' },
 ];
 
+/** Phones: one section at a time (tabs), so nothing scrolls. */
+const sections = [
+  { value: 'general', label: 'General' }, { value: 'behaviour', label: 'Behaviour' },
+  { value: 'camera', label: 'Camera' }, { value: 'choices', label: 'Choices' },
+];
+const section = ref('general');
+const shown = (id: string) => !mobileDialog.value || section.value === id;
+
 function clearChoices(): void {
   const n = resetRememberedChoices();
   remembered.value = rememberedChoices();
@@ -38,17 +46,18 @@ function resetAll(): void { resetPreferences(); toast.info('Preferences reset to
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.preferences" title="Preferences" :fullscreen="phone" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-5' }">
+  <UModal v-model:open="dialogs.preferences" title="Preferences" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-5' }">
     <template #body>
-      <section class="pf">
+      <UTabs v-if="mobileDialog" v-model="section" :items="sections" :content="false" size="sm" class="w-full" />
+      <section v-show="shown('general')" class="pf">
         <h4>General</h4>
         <div class="pf__row">
           <div class="pf__lbl"><span>Units</span><small>Lengths in the object manipulation panel.</small></div>
-          <USelect v-model="preferences.units" :items="unitItems" value-key="value" size="sm" class="w-44" />
+          <USelect v-model="preferences.units" :items="unitItems" value-key="value" size="sm" class="w-44 phone:w-40 shrink-0" />
         </div>
         <div class="pf__row">
           <div class="pf__lbl"><span>Default engine</span><small>Slicing engine selected when the app starts.</small></div>
-          <USelect v-model="preferences.defaultEngine" :items="engineItems" value-key="value" size="sm" class="w-44" />
+          <USelect v-model="preferences.defaultEngine" :items="engineItems" value-key="value" size="sm" class="w-44 phone:w-40 shrink-0" />
         </div>
         <div class="pf__row">
           <div class="pf__lbl"><span>Show keyboard shortcuts</span><small>Shortcut hints in menus and tooltips.</small></div>
@@ -56,11 +65,11 @@ function resetAll(): void { resetPreferences(); toast.info('Preferences reset to
         </div>
       </section>
 
-      <section class="pf">
+      <section v-show="shown('behaviour')" class="pf">
         <h4>Behaviour</h4>
         <div class="pf__row">
           <div class="pf__lbl"><span>Auto flush after changing…</span><small>Re-calculate flushing volumes when these change.</small></div>
-          <USelect v-model="preferences.autoFlush" :items="flushItems" value-key="value" size="sm" class="w-44" />
+          <USelect v-model="preferences.autoFlush" :items="flushItems" value-key="value" size="sm" class="w-44 phone:w-40 shrink-0" />
         </div>
         <div class="pf__row">
           <div class="pf__lbl"><span>Auto arrange plate after import</span><small>Arrange the active plate whenever models are added.</small></div>
@@ -68,7 +77,7 @@ function resetAll(): void { resetPreferences(); toast.info('Preferences reset to
         </div>
       </section>
 
-      <section class="pf">
+      <section v-show="shown('camera')" class="pf">
         <h4>Camera</h4>
         <div class="pf__row">
           <div class="pf__lbl"><span>Zoom to mouse position</span><small>Zoom towards the pointer instead of the view centre.</small></div>
@@ -88,19 +97,19 @@ function resetAll(): void { resetPreferences(); toast.info('Preferences reset to
         </div>
         <div class="pf__row">
           <div class="pf__lbl"><span>Orbit speed multiplier</span><small>Finer or coarser camera rotation.</small></div>
-          <div class="flex w-56 items-center gap-3">
+          <div class="flex w-56 items-center gap-3 phone:w-40 phone:shrink-0">
             <USlider v-model="preferences.orbitSpeed" :min="0.1" :max="3" :step="0.1" class="flex-1" />
             <span class="w-9 text-right text-xs tabular-nums text-muted">{{ preferences.orbitSpeed.toFixed(1) }}×</span>
           </div>
         </div>
       </section>
 
-      <section class="pf">
+      <section v-show="shown('choices')" class="pf">
         <h4>Clear my choice on…</h4>
         <ul class="pf__list">
           <li v-for="r in remembered" :key="r.key" :class="{ off: !r.set }">{{ r.label }}<small v-if="!r.set"> (not set)</small></li>
         </ul>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <UButton size="sm" variant="outline" icon="i-lucide-eraser" label="Clear remembered choices" @click="clearChoices" />
           <UButton size="sm" variant="ghost" color="neutral" icon="i-lucide-rotate-ccw" label="Reset preferences" @click="resetAll" />
         </div>
@@ -123,4 +132,12 @@ function resetAll(): void { resetPreferences(); toast.info('Preferences reset to
 .pf__lbl small { color: var(--ui-text-dimmed); font-size: 11px; }
 .pf__list { margin: 0; padding-left: 18px; list-style: disc; font-size: 12px; color: var(--ui-text-toned); }
 .pf__list li.off { color: var(--ui-text-dimmed); }
+@media (max-width: 640px), (max-height: 500px) {
+  .pf h4 { display: none; }
+  .pf__row { gap: 12px; }
+}
+/* Landscape phones: rows side by side. */
+@media (max-height: 500px) and (min-width: 560px) {
+  .pf:not(:last-child) { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+}
 </style>

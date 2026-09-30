@@ -5,7 +5,7 @@
  * Driven by `cloudDialog` (store.ts); the plate work is in commands.ts.
  */
 import { computed, ref, watch } from 'vue';
-import { phone } from '../app/shell/uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 import { confirmAction } from '../app/shell/uiState';
 import { toast } from '../ui';
 import {
@@ -221,7 +221,7 @@ function iconFor(r: Row): string {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :fullscreen="phone" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-3' }">
+  <UModal v-model:open="open" :title="title" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-3' }">
     <template #body>
       <div v-if="loading" class="cd__center"><UIcon name="i-lucide-loader-circle" class="animate-spin size-5" /> Connecting to CubbyCAD…</div>
 
@@ -244,8 +244,8 @@ function iconFor(r: Row): string {
 
       <template v-else>
         <div class="cd__bar">
-          <USelect v-model="wsId" :items="wsItems" placeholder="Workspace" class="min-w-48 flex-1" aria-label="Workspace" />
-          <UInput v-model="filter" icon="i-lucide-search" placeholder="Filter" size="sm" class="w-36" aria-label="Filter files" />
+          <USelect v-model="wsId" :items="wsItems" placeholder="Workspace" class="min-w-48 flex-1 phone:min-w-0" aria-label="Workspace" />
+          <UInput v-model="filter" icon="i-lucide-search" placeholder="Filter" size="sm" class="w-36 phone:w-28" aria-label="Filter files" />
           <UDropdownMenu v-if="cloud.user" :items="[[{ label: cloud.user.email || cloud.user.name, type: 'label' }], [{ label: 'Sign out', icon: 'i-lucide-log-out', onSelect: signOut }]]">
             <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-user-round" :aria-label="`Signed in as ${cloud.user.name}`" />
           </UDropdownMenu>
@@ -316,5 +316,14 @@ function iconFor(r: Row): string {
 @media (hover: none) { .cd__del { opacity: 1; } .cd__meta { display: none; } }
 .cd__empty { padding: 24px; text-align: center; font-size: 13px; color: var(--ui-text-muted); }
 .cd__save { display: flex; gap: 8px; }
+.cd__crumbs { min-width: 0; }
+.cd__crumbs > button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Phones: the file list fills the space between the bar and the name field (the one scroll region). */
+@media (max-width: 640px), (max-height: 500px) {
+  .cd__bar { flex-wrap: nowrap; }
+  .cd__list { flex: 1 1 0; min-height: 96px; max-height: none; overscroll-behavior: contain; }
+  .cd__row { min-height: 44px; }
+  .cd__crumbs > span:not(.flex-1) { flex: none; }
+}
 .cd__err { font-size: 12px; color: var(--ui-error); }
 </style>
