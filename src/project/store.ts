@@ -273,7 +273,9 @@ function restore(s: Snapshot): void {
   plates.value = s.plates.length ? s.plates.map(clonePlate) : [newPlate()];
   clampActivePlate();
   pruneSelection();
-  collectMeshes();
+  // No collectMeshes() here: the history pops the operation before calling
+  // apply/unapply, so its other snapshot's meshes would look unreferenced.
+  // undo() / redo() collect once the operation is back on a stack.
   changed(true);
 }
 
@@ -283,6 +285,7 @@ export function endGesture(): void { history.finalizeActiveTransform(); }
 export function undo(): string | null {
   const label = history.getLastOperationDescription();
   if (!history.undo()) return null;
+  collectMeshes();
   refreshHistoryState();
   return label;
 }
@@ -290,6 +293,7 @@ export function undo(): string | null {
 export function redo(): string | null {
   const label = history.getRedoDescription();
   if (!history.redo()) return null;
+  collectMeshes();
   refreshHistoryState();
   return label;
 }
