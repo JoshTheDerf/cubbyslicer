@@ -170,6 +170,8 @@ export function objectDetail(id: string) {
     paint: Object.keys(paint).length ? Object.fromEntries(Object.entries(paint).map(([k, v]) => [k, `${v?.length ?? 0} triangles`])) : undefined,
     brimEars: o.brimPoints?.length || undefined,
     emboss: o.emboss ? (o.emboss.kind === 'text' ? { kind: 'text', text: o.emboss.text } : { kind: 'svg', name: o.emboss.name }) : undefined,
+    // CubbyCAD shape: get_cad_tree / get_node / set_node edit it.
+    cad: o.cad ? { rootNodeId: o.cad.node.id, kind: o.cad.node.type === 'group' ? 'group' : String((o.cad.node as { geometry?: { type?: string } }).geometry?.type ?? o.cad.node.type), hole: o.cad.node.contribution === 'subtract' || undefined } : undefined,
   };
 }
 

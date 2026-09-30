@@ -180,6 +180,49 @@ try {
   const ears = (await call('brim_ears', { objectId: A.id, op: 'auto', setPainted: true })).data;
   check(ears.ok && ears.brimType === 'painted', `brim ears: ${ears.ears}`);
 
+  // ---- CubbyCAD modelling (same tool names / arguments as CubbyCAD's) ---------------------------------------
+  const shapes = (await call('list_shapes', {}, { quiet: true })).data.shapes;
+  check(shapes.length >= 20 && shapes.find((x) => x.id === 'box')?.params?.width?.unit === 'mm', `list_shapes: ${shapes.length} CubbyCAD shapes with their schemas`);
+  const bx = (await call('add_primitive', { shape: 'box', params: { width: 30, depth: 20, height: 10 }, name: 'Drill plate' })).data;
+  check(bx.object.cad?.kind === 'box' && near(bx.object.size[0], 30) && near(bx.object.size[1], 20) && near(bx.object.size[2], 10), 'add_primitive: a 30 × 20 × 10 box (width → X, depth → Y, height → Z)');
+  const hl = (await call('add_primitive', { shape: 'cylinder', params: { radius: 3, height: 30 }, hole: true, position: bx.object.position.slice(0, 2) })).data;
+  check(hl.hole && hl.object.cad?.hole, 'add_primitive hole: true');
+  const gr = (await call('group', { ids: [bx.object.id, hl.object.id], name: 'Drilled' })).data;
+  check(gr.tree.children.length === 2 && gr.tree.children[1].hole && gr.object.name === 'Drilled', 'group: box + hole in one manifold group object');
+  const tree = (await call('get_cad_tree', { objectId: gr.object.id })).data.objects[0].tree;
+  const holeId = tree.children[1].id;
+  const nd = (await call('get_node', { id: holeId })).data;
+  check(nd.hole && nd.geometry.type === 'cylinder' && nd.geometry.schema?.radius?.unit === 'mm', 'get_node: the hole with its schema');
+  const sp = (await call('set_params', { id: holeId, params: { radius: 5 } })).data;
+  check(sp.params.radius === 5, 'set_params widens the hole');
+  const tn = (await call('transform_node', { id: holeId, mode: 'offset', position: [6, 0, 0] })).data;
+  check(near(tn.transform.position[0] - (nd.transform?.position?.[0] ?? 0), 6, 1e-6), 'transform_node moves the hole in its CAD frame');
+  check((await call('set_params', { id: holeId, params: { nope: 1 } }, { expectError: true })).data.includes('Unknown cylinder parameter'), 'unknown params are refused');
+  await call('set_node', { id: holeId, locked: true });
+  check((await call('set_params', { id: holeId, params: { radius: 2 } }, { expectError: true })).data.includes('locked'), 'a locked node refuses edits');
+  const sn = (await call('set_node', { id: holeId, locked: false, name: 'Bore', color: '#ff8800' })).data;
+  check(sn.changed && sn.node.name === 'Bore' && !sn.node.locked, 'set_node unlocks, renames and recolours in one step');
+  const ug = (await call('ungroup', { id: gr.object.id })).data;
+  const bore = ug.objects.find((o) => o.name === 'Bore'), plateObj = ug.objects.find((o) => o.name === 'Drill plate');
+  check(ug.objects.length === 2 && near(bore.position[0] - plateObj.position[0], 6, 0.01) && near(bore.size[0], 10, 0.01),
+    'ungroup gives the box and the hole back, with the hole moved 6 mm and widened to r = 5');
+  check((await call('undo')).data.undone[0].startsWith('Ungroup'), 'undo regroups');
+  const ic = (await call('import_cad', {
+    name: 'From CubbyCAD', unit: 'mm',
+    nodes: [{ id: 'e2e-root', type: 'group', name: 'Assembly', children: [
+      { id: 'e2e-a', type: 'primitive', name: 'Block', geometry: { type: 'box', params: { width: 16, height: 8, depth: 16 } }, material: { color: '#3366cc' } },
+      { id: 'e2e-h', type: 'primitive', name: 'Slot', contribution: 'subtract', geometry: { type: 'box', params: { width: 4, height: 20, depth: 20 } } },
+      { id: 'e2e-sdf', type: 'group', csgMode: 'sdf', name: 'Blob', children: [{ id: 'e2e-s', type: 'primitive', geometry: { type: 'sphere', params: { radius: 4 } } }] },
+    ] }],
+  })).data;
+  const icObj = ic.objects[0];
+  check(icObj?.name === 'From CubbyCAD' && icObj.cad?.rootNodeId === 'e2e-root', 'import_cad: one editable object per top-level node');
+  const icTree = (await call('get_cad_tree', { objectId: icObj.id })).data.objects[0].tree;
+  const blob = icTree.children.find((c) => c.id === 'e2e-sdf');
+  check(blob?.editable === false && /CubbyCAD/.test(blob.reason ?? ''), 'CubbyCAD-only content is listed read-only with the reason');
+  check((await call('set_node', { id: 'e2e-sdf', hidden: true }, { expectError: true })).data.includes('can’t be edited'), 'and refuses edits');
+  check((await call('delete_nodes', { ids: ['e2e-h'] })).data.deleted === 1, 'delete_nodes removes the slot');
+
   // ---- slice + results --------------------------------------------------------------------------------------------------------
   const sl = (await call('slice', { all: true })).data;
   check(sl.ok && sl.plates.length === 2 && sl.plates.every((p) => p.sliced && p.stats.layers > 0), `sliced both plates (${sl.plates?.map((p) => `${p.stats?.printTime}, ${p.stats?.layers} layers`).join(' / ')})`);
