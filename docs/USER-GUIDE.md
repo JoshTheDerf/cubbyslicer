@@ -12,9 +12,29 @@ Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full S
 
 The transform gizmo is CubbyCAD's: move, rotate and scale handles on one gizmo (G). M, R and S limit it to one of them, and pressing the same key again brings back the full gizmo. View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches between perspective and orthographic.
 
+## Modelling with CubbyCAD shapes
+
+The slicer has CubbyCAD's basic modelling: built-in shapes, holes and groups. It edits CubbyCAD's own node tree, so a `.cubby` file (or a model sent from CubbyCAD with `cad_to_slicer`) opens here as editable shapes, and goes back to CubbyCAD the same way.
+
+- Add a shape: the shapes button on the plate toolbar (or Object ▸ Add shape) opens CubbyCAD's palette: box, sphere, cylinder, cone, torus, tube, star and the rest. Each one lands on the plate as a new object.
+- The Shape panel (top right, when a shape object is selected) shows its node tree and the picked node's settings: its parameters (drag a slider or type a value; a drag is one undo step), Hole, and Colour. Double-click a row to rename it. The row buttons toggle hole, hide, lock and delete.
+- Holes: Object ▸ Make hole (or the Hole switch) makes a shape cut instead of add. A hole on its own shows as a grey ghost and isn't printed.
+- Group: select two or more objects and use Object ▸ Group. The objects become one manifold group, where solids join and holes cut, like a Sharp group in CubbyCAD. Plain meshes (STL, 3MF, …) can join a group too, so you can drill a hole through an imported model. Object ▸ Ungroup splits a group back into objects, in place.
+- Pick a node in the tree and the transform gizmo moves, rotates or scales just that node inside its object. Pick the top row to move the whole object again.
+- Delete with a node picked deletes that node only.
+- Parameter changes rebuild the object's mesh, which clears its painting (supports, seams, colours, fuzzy skin), as other tools that change a mesh do.
+
+Group and ungroup have no keys here: CubbyCAD's Ctrl+G and Ctrl+Shift+G are Orca's Export G-code and Print plate, and its H (hide) and L (lock) are fuzzy-skin and support painting. They are in the Object menu, the right-click menu and the command palette.
+
+Not supported: CubbyCAD's blended (SDF), loft and skin groups, sculpting, script parts, text, sketches and modifier stacks. A tree that has them still opens. Those nodes are listed with a badge and kept untouched in saved projects and `.cubby` exports. When CubbyCAD sends them (cad_to_slicer) it bakes each one into a mesh, which you can move, hide, recolour, group and cut with like any part; its shape stays editable only in CubbyCAD. Without a baked mesh, a node that can't be shown is left out of the object, and a top-level node that is nothing but such content is skipped with a warning.
+
 ## Files
 
 Projects are 3MF files in OrcaSlicer's project format, so desktop OrcaSlicer and Bambu Studio open them with their plates, parts, painting and settings. Opening an Orca or Bambu project 3MF works the other way round. Sliced 3MFs show each plate's G-code in the preview until you re-slice.
+
+Project files keep CubbyCAD shapes editable: the node trees are stored in the 3MF next to the meshes (in `Metadata/cubby_cad.json`), so reopening the project restores them. Desktop Orca just sees the meshes.
+
+File ▸ Import opens `.cubby` files (CubbyCAD scenes): one object per top-level node, laid out as in CubbyCAD around the plate centre. File ▸ Export as .cubby (CubbyCAD) writes the selected shape objects (or all of them) as a scene CubbyCAD opens. Plain mesh objects are left out of it.
 
 Ctrl+O, Ctrl+I and Ctrl+S use the browser's native file dialogs where the File System Access API exists (Chrome, Edge and other Chromium browsers).
 
@@ -71,6 +91,7 @@ Claude can do what you can do in the app:
 - switch engines, pick and compare presets, set filament slots and colours, save, rename and delete your own presets, and run the setup steps;
 - change any setting, for the whole print or for one object, part, height range or plate;
 - import models (from CubbyCAD with `cad_to_slicer`, a file on your computer or a URL), move, rotate, scale, mirror, orient, split, copy and rename them, and add parts, modifiers, negative parts and support blockers or enforcers;
+- model with CubbyCAD shapes: add primitives, change their parameters, make holes, group and ungroup, and move, hide, lock or delete nodes in a shape's tree. The tools have the same names and arguments as the CubbyCAD ones (`slicer_add_primitive` / `cad_add_primitive`, `set_node`, `transform_node`, `group`, …), so Claude drives both apps the same way;
 - add, rename, lock and set up plates, and move objects between them;
 - paint supports, seams, colours and fuzzy skin (whole objects, height bands, around a point, fill regions, or faces pointing one way);
 - set variable layer heights, height range modifiers, and filament changes, pauses or custom G-code at a layer;

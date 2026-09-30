@@ -22,17 +22,30 @@ src/
   localfs/      File System Access API files and folders
   printhost/    print host drivers
   dialogs/      flushing volumes, bed shape, preset wizard, preferences, …
+  cad/          CubbyCAD modelling: node trees on objects, frames, .cubby, shape panel
   bridge/       Claude Code bridge tools (see the cubby-mcp README)
 docs/           ENGINE-CONTRACT.md, this file, user guide
 scripts/        engine staging; dev/ has e2e and screenshot scripts
 ```
 
-The gizmo, grid snap, keyboard nudge, camera projection, view cube, undo history, action registry and bridge client come from [@cubby/shared](https://github.com/JoshTheDerf/cubby-shared), which CubbyCAD uses too. To change them alongside the slicer, clone it next to this repo and link it (run the link again after `npm install`):
+The CubbyCAD modelling core (shapes, evaluator, tree ops, shape palette and params form), gizmo, grid snap, keyboard nudge, camera projection, view cube, undo history, action registry and bridge client come from [@cubby/shared](https://github.com/JoshTheDerf/cubby-shared), which CubbyCAD uses too. To change them alongside the slicer, clone it next to this repo and link it (run the link again after `npm install`):
 
 ```bash
 git clone git@github.com:JoshTheDerf/cubby-shared.git ../cubby-shared
 npm link ../cubby-shared
 ```
+
+### CubbyCAD modelling (`src/cad/`)
+
+The modelling core is `@cubby/shared/cad` (shapes, evaluator, tree ops, set_node rules, the baked-mesh codec and the cad_to_slicer transfer helpers) and `@cubby/shared/cad/ui` (shape palette, params form). CubbyCAD runs on the same code. `src/cad/api.ts` is the slicer's only import point for it.
+
+- A `ProjectObject` with `cad: { node }` is a CubbyCAD object: the root is a primitive or a manifold group, verbatim CubbyCAD JSON. Trees are immutable and `markRaw`; edits build a new root (shared `updateNode` / `applyCadNodeSettings`) and call `setCadNode`, which re-evaluates the mesh (cached by `hashCadNode`) and swaps the object's `meshId`. That's one `SnapshotOperation`: the tree is part of the snapshot, and paint (keyed by mesh id) resets like any mesh-replacing tool. Tools that replace a mesh some other way (cut, split, simplify, mesh boolean) drop the tree.
+- Frames: CubbyCAD node transforms are in the Three render frame (Y-up). An object's mesh is `evaluateCadNode(wasm, root, { frame: 'zup' })` without the root's own transform. The object's TRS M (bed, Z-up) places it: world = M · R · E, with R = `RENDER_TO_ZUP` and E the subtree in the render frame. The stored root has no transform; `.cubby` import turns a root transform T into M = R · T · R⁻¹ (around the plate centre), and export does the reverse. Grouping turns each object's TRS into its child transform the same way, relative to the selection's bottom centre (`src/cad/frames.ts`). A picked child is moved with the gizmo on a proxy in object TRS · R · ancestors · node transform (`PrepareScene.setActiveCadNode`).
+- A root hole (`contribution: 'subtract'`) is evaluated as a solid for display, drawn as a ghost and left out of `getSliceObjects`.
+- Evaluation: CubbyCAD's manifold-group semantics cost tens of ms for a small group and seconds for trees of dozens of parts, so commands evaluate in a worker first (`warmCadMesh`, `src/cad/eval.worker.ts`) and then commit synchronously from the cache. The store's own `evaluateCadMesh` falls back to the main thread (tests, no Worker). A commit rebuilds from the current tree when it changed while the worker ran (undo, another edit). Slider edits are debounced, skip values while a slow tree is rebuilding, and close as one undo step (`queueParam`).
+- Persistence: project 3MFs write the trees to `Metadata/cubby_cad.json` (keyed by object id) and leave them out of `cubby_slicer.json`; the autosave keeps them inline. `.cubby` import / export is in `src/cad/cubby.ts`. CubbyCAD geometry is always mm (a scene's `unit` is display-only).
+- Bridge: `src/bridge/groups/cad.ts` mirrors CubbyCAD's tool names and arguments.
+- `node scripts/dev/e2e-cad.mjs <url>` checks the palette, a slider drag, holes, group / ungroup, the child gizmo, `.cubby` and the project round-trip in a real browser.
 
 Commands are declared once in `src/app/actions/families/` and laid out in `src/app/actions/layouts/`. `npm test` includes a lint that catches unregistered ids and conflicting key bindings.
 
@@ -72,7 +85,7 @@ node scripts/dev/screenshots.mjs http://localhost:5399/slicer/    # docs/screens
 node scripts/dev/e2e-bridge.mjs http://localhost:5393/slicer/     # Claude Code bridge tools through a real MCP client (needs ../cubby-mcp built)
 ```
 
-The e2e scripts use `?cubby-debug`, which exposes `window.__cubbyProject`, `__cubbyActions`, `__cubbyPresets` and `__cubbyTools`.
+The e2e scripts use `?cubby-debug`, which exposes `window.__cubbyProject`, `__cubbyActions`, `__cubbyPresets`, `__cubbyTools` and `__cubbyCad`.
 
 ## Deploying
 
