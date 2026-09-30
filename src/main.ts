@@ -20,4 +20,7 @@ registerPreviewActions();
 void registerSettingsActions();
 
 // Debug handle for browser automation (dev, or ?cubby-debug in a build).
-if (import.meta.env.DEV || new URLSearchParams(location.search).has('cubby-debug')) Object.assign(window, { __cubbyProject: projectStore, __cubbyActions: actions, __cubbyPresets: presetStore, __cubbyCad: cadCommands });
+if (import.meta.env.DEV || new URLSearchParams(location.search).has('cubby-debug')) {
+  Object.assign(window, { __cubbyProject: projectStore, __cubbyActions: actions, __cubbyPresets: presetStore, __cubbyCad: cadCommands });
+  void import('./app/debugUi').then((m) => Object.assign(window, { __cubbyUi: m }));
+}

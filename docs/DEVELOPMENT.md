@@ -49,6 +49,15 @@ The modelling core is `@cubby/shared/cad` (shapes, evaluator, tree ops, set_node
 
 Commands are declared once in `src/app/actions/families/` and laid out in `src/app/actions/layouts/`. `npm test` includes a lint that catches unregistered ids and conflicting key bindings.
 
+### Dialogs on phones
+
+One convention covers every UModal / USlideover / UPopover (`src/ui/mobileDialog.ts`). "Phone" means ≤ 640 px wide or ≤ 500 px tall (landscape): the `phone:` Tailwind variant, `short:` for ≤ 500 px tall, and the `mobileDialog` / `shortScreen` refs.
+
+- The `modal` / `slideover` / `popover` theme in `vite.config.ts` turns a modal into a bottom sheet sized to the visual viewport (`--vvh` / `--vvt` / `--vvb`, so it rides above the on-screen keyboard), or full screen with `:fullscreen="mobileDialog"`. Header and footer stay pinned and the body is the only scroll region. Desktop classes are untouched.
+- `src/style.css` makes controls inside dialogs at least 40 px, text inputs 16 px (no iOS focus zoom), and lets long text wrap. Landscape form dialogs opt into a two-column flow with `dlg-flow` / `dlg-span`.
+- Re-lay out rather than scroll: stack columns, use tabs or a select for secondary sections, and give inherently long content (settings lists, file lists, the G-code editor) one scroll region.
+- `node scripts/dev/e2e-mobile-dialogs.mjs <url>` opens every dialog at 360×640, 390×844, 375×667 and 844×390 (`DESKTOP=1` adds 1440×900, `ONLY=` / `SIZES=` narrow it down). It checks overflow, fit, touch targets, input font size, nested scrolling and the on-screen keyboard, lists what scrolls, and saves screenshots to `e2e-out/mobile-dialogs/`.
+
 ## Engines
 
 Build the ports next to this repo, then stage them into `public/wasm/<engine>/`:
