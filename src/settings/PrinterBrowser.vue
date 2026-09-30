@@ -137,8 +137,9 @@ const hideImg = (ev: Event) => { (ev.target as HTMLElement).style.visibility = '
 </template>
 
 <style scoped>
-.pb { min-height: 0; }
-.pb__cols { display: grid; grid-template-columns: 180px 1fr 250px; gap: 12px; height: 58vh; min-height: 320px; }
+/* Fills a flex-column dialog body (setup wizard, add printer) and shrinks with it: the columns are the only scroll regions. */
+.pb { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.pb__cols { display: grid; grid-template-columns: 180px 1fr 250px; gap: 12px; flex: 1 1 58vh; min-height: 0; }
 .pb__col { display: flex; flex-direction: column; min-height: 0; }
 .pb__scroll { overflow: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1px; }
 .pb__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; align-content: start; }
@@ -153,7 +154,7 @@ const hideImg = (ev: Event) => { (ev.target as HTMLElement).style.visibility = '
 .variant { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--ui-border); }
 .variant__name { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 12px; }
 .variant__name small { color: var(--ui-text-dimmed); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pb--phone { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.pb--phone { gap: 8px; }
 .pb__bar { flex: none; display: flex; gap: 6px; min-width: 0; }
 .pb--phone .pb__scroll { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .pb--phone .pb__grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }

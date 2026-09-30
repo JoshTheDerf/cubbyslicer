@@ -105,7 +105,8 @@ function onName(e: Event) {
 .brand__mark { width: 20px; height: 20px; flex: none; }
 .brand__name { font: 600 var(--fs-lg) / 1 var(--font); letter-spacing: -0.01em; white-space: nowrap; }
 .top__name {
-  width: 160px; min-width: 60px; height: 26px; padding: 0 8px;
+  /* The one flexible item on the right: it gives way first, so the slice / print controls never spill off the page. */
+  flex: 0 1 160px; width: 160px; min-width: 60px; height: 26px; padding: 0 8px;
   font: var(--fs-md) var(--font); color: var(--fg-1); text-align: right;
   background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); text-overflow: ellipsis;
 }

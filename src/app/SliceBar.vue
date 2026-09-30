@@ -1,6 +1,6 @@
 <template>
   <!-- Orca's top-right slice controls: status/progress, "Slice plate" (primary), "Export G-code". -->
-  <div class="slicebar flex items-center gap-2 min-w-0" :class="status" role="group" aria-label="Slicing">
+  <div class="slicebar flex shrink-0 items-center gap-2" :class="status" role="group" aria-label="Slicing">
     <div v-if="status === 'slicing'" class="flex items-center gap-2 min-w-0" role="status" aria-live="polite">
       <div class="flex flex-col min-w-0 gap-1" :class="phone ? 'w-20' : 'w-44'">
         <div class="flex justify-between gap-2 text-xs leading-none">

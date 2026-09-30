@@ -1,17 +1,21 @@
-// Mobile dialog audit: opens every modal / slide-over / popover-style dialog at
-// phone sizes and checks that it fits the viewport with nothing overflowing.
+// Dialog audit: opens every modal / slide-over / popover-style dialog at phone
+// sizes and at desktop sizes and checks that it fits the viewport with nothing
+// overflowing.
 //
 //   node scripts/dev/e2e-mobile-dialogs.mjs [baseUrl] [out-dir]
-//   ONLY=prefs,about  SIZES=360x640,844x390  DESKTOP=1 (also 1440x900, report only)
+//   ONLY=prefs,about  SIZES=360x640,844x390  DESKTOP_SIZES=1440x900,1024x768  DESKTOP=0 (phones only)
 //
 // Per dialog and size it asserts:
 //   - document scrollWidth / scrollHeight ≤ viewport (the page behind never scrolls);
 //   - no element inside the dialog overflows horizontally (scrollWidth > clientWidth
 //     on a non-scrolling box without an ellipsis, a sideways scroll container, or a
-//     bounding rect outside the viewport);
+//     bounding rect outside the viewport; a data grid that scrolls sideways by design
+//     carries `data-audit-scroll-x`);
 //   - the dialog rect fits the viewport and its header / footer buttons are in view;
-//   - touch targets ≥ 40 px and text inputs ≥ 16 px font (no iOS zoom);
-//   - no nested vertical scroll areas, and the dialog itself never scrolls.
+//   - header controls (close, search, …) and the title text don't overlap each other;
+//   - no nested vertical scroll areas, and the dialog itself never scrolls;
+//   - phones only: touch targets ≥ 40 px, text inputs ≥ 16 px font (no iOS zoom) and
+//     header / footer buttons stay above the on-screen keyboard.
 // Every vertically scrolling element is reported (scrollHeight / clientHeight), and a
 // screenshot is saved per dialog per size. Exit code 1 when anything failed.
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -21,8 +25,9 @@ const { chromium } = await import(process.env.PLAYWRIGHT ?? 'playwright');
 const base = process.argv[2] ?? 'http://localhost:5393/slicer/';
 const out = resolve(process.argv[3] ?? 'e2e-out/mobile-dialogs'); mkdirSync(out, { recursive: true });
 const only = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
-const PHONES = (process.env.SIZES ?? '360x640,390x844,375x667,844x390').split(',').map((s) => { const [w, h] = s.split('x').map(Number); return { w, h }; });
-const SIZES = [...PHONES.map((s) => ({ ...s, phone: true })), ...(process.env.DESKTOP ? [{ w: 1440, h: 900, phone: false }] : [])];
+const PHONES = (process.env.SIZES ?? '360x640,390x844,375x667,844x390').split(',').filter(Boolean).map((s) => { const [w, h] = s.split('x').map(Number); return { w, h }; });
+const DESKTOPS = process.env.DESKTOP === '0' ? [] : (process.env.DESKTOP_SIZES ?? '1440x900,1024x768').split(',').filter(Boolean).map((s) => { const [w, h] = s.split('x').map(Number); return { w, h }; });
+const SIZES = [...PHONES.map((s) => ({ ...s, phone: true })), ...DESKTOPS.map((s) => ({ ...s, phone: false }))];
 
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const pageErrors = [];
@@ -122,7 +127,8 @@ function measure({ selector, phone }) {
     // Horizontal overflow.
     if (el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0 && !['input', 'textarea', 'select'].includes(el.tagName.toLowerCase())) {
       const ellipsis = cs.textOverflow === 'ellipsis' || el.querySelector?.(':scope > .truncate');
-      if (scrollX(cs)) out.fails.push(`sideways scroll ${desc(el)} (${el.scrollWidth}/${el.clientWidth})`);
+      if (el.hasAttribute('data-audit-scroll-x')) { /* scrolls sideways by design */ }
+      else if (scrollX(cs)) out.fails.push(`sideways scroll ${desc(el)} (${el.scrollWidth}/${el.clientWidth})`);
       else if (cs.overflowX === 'visible' && !(el instanceof SVGElement)) { /* the overflowing child is caught by its rect below */ }
       else if (!ellipsis && el.scrollWidth - el.clientWidth > 2) out.warns.push(`clipped horizontally ${desc(el)} (${el.scrollWidth}/${el.clientWidth})`);
     }
@@ -168,6 +174,22 @@ function measure({ selector, phone }) {
   for (const s of scrollers) {
     if (s === dlg || s.contains(dlg)) out.fails.push(`the dialog itself scrolls (${s.scrollHeight}/${s.clientHeight})`);
     for (const t of scrollers) if (t !== s && t.contains(s)) out.fails.push(`nested scroll: ${desc(s)} inside ${desc(t)}`);
+  }
+  // Header controls overlapping each other or the title text (e.g. an absolutely
+  // positioned close button on top of a header search button).
+  {
+    const head = dlg.querySelector('[data-slot=header]');
+    const ctrls = [...new Set([...(head?.querySelectorAll('button, a[href], input, select, textarea, [role=button], [role=combobox], [role=switch], [role=tab]') ?? []), ...dlg.querySelectorAll('[data-slot=close]')])]
+      .filter((b) => visible(b) && !clipped(b).empty && b.closest('[role=dialog],[role=alertdialog]') === dlg.closest('[role=dialog],[role=alertdialog]'));
+    const boxes = ctrls.filter((b) => !ctrls.some((o) => o !== b && b.contains(o) && o.tagName === b.tagName)).map((b) => ({ el: b, r: b.getBoundingClientRect() }));
+    const title = dlg.querySelector('[data-slot=title]');
+    if (title && visible(title)) { const rg = document.createRange(); rg.selectNodeContents(title); for (const r of rg.getClientRects()) if (r.width > 1) boxes.push({ el: title, r, text: true }); }
+    const hit = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      if (a.el === b.el || a.el.contains(b.el) || b.el.contains(a.el)) continue;
+      if (hit(a.r, b.r)) out.fails.push(`header overlap: ${desc(a.el)}${a.text ? ' (title text)' : ''} × ${desc(b.el)}${b.text ? ' (title text)' : ''}`);
+    }
   }
   // Header / footer / close in view.
   for (const slot of ['header', 'footer']) {
@@ -379,7 +401,7 @@ for (const size of SIZES) {
       if (d.preview) { await act(page, 'view.prepare'); await page.waitForTimeout(300); }
     } catch (e) { console.log(`       (close failed: ${e.message.split('\n')[0]})`); }
     report.push(row);
-    const flag = !size.phone ? 'info' : row.fails.length ? 'FAIL' : 'ok  ';
+    const flag = row.fails.length ? 'FAIL' : 'ok  ';
     console.log(`${flag} ${tag.padEnd(8)} ${d.id.padEnd(17)} ${row.dialog && row.dialog.w ? `${row.dialog.w}x${row.dialog.h}` : ''}`
       + `${row.scrolls?.length ? `  scrolls: ${row.scrolls.map((s) => `${s.el.slice(0, 50)} ${s.scrollHeight}/${s.clientHeight}`).join('; ')}` : ''}`);
     for (const f of row.fails ?? []) console.log(`       ✗ ${f}`);
@@ -389,8 +411,8 @@ for (const size of SIZES) {
 }
 await browser.close();
 writeFileSync(`${out}/report.json`, JSON.stringify({ report, pageErrors }, null, 1));
-const failed = report.filter((r) => r.fails?.length && !r.size.startsWith('1440'));
+const failed = report.filter((r) => r.fails?.length);
 console.log(`\n${report.length} checks, ${failed.length} failing (${new Set(failed.map((r) => r.dialog)).size} dialogs)${pageErrors.length ? `, ${pageErrors.length} page errors` : ''}`);
 for (const e of pageErrors.slice(0, 10)) console.log(`  [pageerror] ${e}`);
-console.log(failed.length ? 'MOBILE DIALOGS FAIL' : 'MOBILE DIALOGS PASS');
+console.log(failed.length ? 'DIALOGS FAIL' : 'DIALOGS PASS');
 process.exit(failed.length ? 1 : 0);

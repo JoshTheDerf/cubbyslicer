@@ -91,7 +91,7 @@ function onStep(v: unknown): void {
 
 <template>
   <UModal v-model:open="open" :title="dialogTitle" :description="mobileDialog ? undefined : 'Pick your printer and filament — you can change them any time in the sidebar.'"
-          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-5xl', body: 'flex flex-col gap-3 phone:gap-2 phone:overflow-hidden' }" @after:leave="emit('close', completed)">
+          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-5xl', body: 'flex flex-col gap-3 phone:gap-2 overflow-hidden' }" @after:leave="emit('close', completed)">
     <template #body>
       <!-- Landscape phones: the step shows in the title instead of the stepper. -->
       <UStepper v-if="!shortScreen" :model-value="step" :items="stepItems" size="sm" class="setup-steps" :ui="mobileDialog ? { description: 'hidden', title: 'text-xs' } : undefined" @update:model-value="onStep" />
@@ -143,7 +143,7 @@ function onStep(v: unknown): void {
         </div>
       </section>
 
-      <section v-else class="pane">
+      <section v-else class="pane pane--done">
         <h4 class="text-base font-semibold text-highlighted">You're set.</h4>
         <dl class="summary">
           <dt>Engine</dt><dd>{{ ENGINE_LABELS[engine] }}</dd>
@@ -173,13 +173,19 @@ function onStep(v: unknown): void {
 </template>
 
 <style scoped>
-.pane { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+/*
+ * One scroll region at every size: the body never scrolls (header, stepper and footer stay put);
+ * the pane fills it and its list (printer columns, filament list) shrinks to fit and scrolls.
+ * The done pane has no list and scrolls itself if it ever runs out of room.
+ */
+.pane { flex: 1 1 auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.pane--done { overflow-y: auto; }
+.flist { flex: 1 1 50vh; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; }
 @media (max-width: 640px), (max-height: 500px) {
-  .pane { flex: 1; gap: 8px; }
-  .flist { flex: 1; height: auto; min-height: 0; overflow-x: hidden; overscroll-behavior: contain; }
+  .pane { gap: 8px; }
+  .flist { flex-basis: 0; }
   .summary dd { overflow-wrap: anywhere; min-width: 0; }
 }
-.flist { height: 50vh; min-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
 .fgroup { display: flex; flex-wrap: wrap; gap: 6px; }
 .fgroup h5 { flex-basis: 100%; margin: 0 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ui-text-dimmed); }
 .fil {

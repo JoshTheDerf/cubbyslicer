@@ -43,7 +43,7 @@ function setExtruders(n: number | null | undefined): void {
 
 <template>
   <UModal v-model:open="open" :title="title" :fullscreen="mobileDialog"
-          :ui="{ content: 'sm:max-w-5xl h-[min(88vh,920px)] flex flex-col', body: 'p-0 sm:p-0 phone:p-0 flex-1 min-h-0 flex phone:flex-col', header: 'py-3 gap-3', wrapper: 'flex-none' }">
+          :ui="{ content: 'sm:max-w-5xl h-[min(88vh,920px)] flex flex-col', body: 'p-0 sm:p-0 phone:p-0 flex-1 min-h-0 flex phone:flex-col', header: 'py-3 gap-3', close: 'top-3', wrapper: 'flex-none' }">
     <template #title>
       <span class="flex items-center gap-2"><UIcon :name="kind === 'printer' ? 'i-lucide-printer' : 'i-lucide-disc'" class="size-5 text-primary" />{{ title }}</span>
     </template>

@@ -131,7 +131,8 @@ function locate(id: string): void { select([id]); }
         </div>
         <p v-if="!rows.length" class="ot__empty">No objects.</p>
       </div>
-      <div v-else class="ot__scroll">
+      <!-- A spreadsheet: it scrolls both ways by design (sticky tick column and header). -->
+      <div v-else class="ot__scroll" data-audit-scroll-x>
         <table class="ot">
           <thead>
             <tr>

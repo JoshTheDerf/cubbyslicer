@@ -12,7 +12,7 @@ const open = ref(true);
 
 <template>
   <UModal v-model:open="open" title="Add / remove printers" description="Add printers to your list, or pick one to use now." :fullscreen="mobileDialog"
-          :ui="{ content: 'sm:max-w-5xl', body: 'phone:flex phone:flex-col phone:overflow-hidden' }" @after:leave="emit('close')">
+          :ui="{ content: 'sm:max-w-5xl', body: 'flex flex-col overflow-hidden' }" @after:leave="emit('close')">
     <template #body>
       <PrinterBrowser :presets="presets" @use="open = false" />
     </template>

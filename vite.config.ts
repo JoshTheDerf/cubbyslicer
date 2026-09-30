@@ -43,12 +43,14 @@ export default defineConfig({
         // The mobile dialog convention (src/ui/mobileDialog.ts, `phone:` = ≤ 640 px wide or
         // ≤ 500 px tall): a modal is a bottom sheet in the visual viewport (it follows the
         // on-screen keyboard), or full screen with `:fullscreen="mobileDialog"`. Header and
-        // footer stay pinned, the body is the one scroll region. Desktop is untouched.
+        // footer stay pinned, the body is the one scroll region. Desktop only gets the header's close-button room.
         modal: {
           slots: {
             content: 'phone:ps-[env(safe-area-inset-left)] phone:pe-[env(safe-area-inset-right)]',
-            // Compact header: the 40 px close button sits in the corner, titles wrap before it.
-            header: 'phone:py-3 phone:ps-4 phone:pe-14 phone:min-h-14 short:py-1.5 short:min-h-12',
+            // The close button is absolute in the header's end corner: every header with one keeps
+            // its title and actions clear of it (desktop too). Phones: a compact header, the 40 px
+            // close button sits in the corner and titles wrap before it.
+            header: 'has-[>[data-slot=close]]:pe-14 phone:py-3 phone:ps-4 phone:pe-14 phone:min-h-14 short:py-1.5 short:min-h-12',
             close: 'phone:top-2 phone:end-2 short:top-1 short:end-2',
             footer: 'phone:px-4 phone:py-3 phone:pb-[max(0.75rem,env(safe-area-inset-bottom))] short:py-2 short:pb-[max(0.5rem,env(safe-area-inset-bottom))]',
             body: 'phone:min-h-0 phone:p-4 phone:last:pb-[max(1rem,env(safe-area-inset-bottom))]',
