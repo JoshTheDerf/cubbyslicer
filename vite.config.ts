@@ -40,6 +40,31 @@ export default defineConfig({
         select: { slots: { content: 'min-w-(--reka-select-trigger-width) w-max max-w-[min(90vw,28rem)]' } },
         selectMenu: { slots: { content: 'min-w-(--reka-combobox-trigger-width) w-max max-w-[min(90vw,28rem)]' } },
         inputMenu: { slots: { content: 'min-w-(--reka-combobox-trigger-width) w-max max-w-[min(90vw,28rem)]' } },
+        // The mobile dialog convention (src/ui/mobileDialog.ts, `phone:` = ≤ 640 px wide or
+        // ≤ 500 px tall): a modal is a bottom sheet in the visual viewport (it follows the
+        // on-screen keyboard), or full screen with `:fullscreen="mobileDialog"`. Header and
+        // footer stay pinned, the body is the one scroll region. Desktop is untouched.
+        modal: {
+          slots: {
+            content: 'phone:ps-[env(safe-area-inset-left)] phone:pe-[env(safe-area-inset-right)]',
+            // Compact header: the 40 px close button sits in the corner, titles wrap before it.
+            header: 'phone:py-3 phone:ps-4 phone:pe-14 phone:min-h-14 short:py-1.5 short:min-h-12',
+            close: 'phone:top-2 phone:end-2 short:top-1 short:end-2',
+            footer: 'phone:px-4 phone:py-3 phone:pb-[max(0.75rem,env(safe-area-inset-bottom))] short:py-2 short:pb-[max(0.5rem,env(safe-area-inset-bottom))]',
+            body: 'phone:min-h-0 phone:p-4 phone:last:pb-[max(1rem,env(safe-area-inset-bottom))]',
+          },
+          compoundVariants: [
+            { scrollable: false, fullscreen: false, class: { content: 'phone:top-auto! phone:bottom-[var(--vvb,0px)]! phone:left-0! phone:translate-x-0! phone:translate-y-0! phone:w-full! phone:max-w-none! phone:rounded-b-none phone:max-h-[calc(var(--vvh,100dvh)-0.75rem)]! phone:data-[state=open]:animate-[slide-in-from-bottom_200ms_var(--ease-out)] phone:data-[state=closed]:animate-[slide-out-to-bottom_200ms_var(--ease-out)]' } },
+            { fullscreen: true, class: { content: 'phone:top-[var(--vvt,0px)]! phone:bottom-auto! phone:left-0! phone:h-[var(--vvh,100dvh)]! phone:w-full! phone:max-w-none! phone:max-h-none! phone:rounded-none!', header: 'phone:pt-[max(1rem,env(safe-area-inset-top))]' } },
+          ],
+        },
+        popover: { slots: { content: 'phone:max-w-[calc(100vw-1rem)] phone:max-h-[min(var(--reka-popover-content-available-height,100dvh),calc(var(--vvh,100dvh)-1rem))] phone:overflow-y-auto' } },
+        slideover: {
+          compoundVariants: [
+            { side: 'left', inset: false, class: { content: 'phone:top-[var(--vvt,0px)] phone:bottom-auto phone:h-[var(--vvh,100dvh)]' } },
+            { side: 'right', inset: false, class: { content: 'phone:top-[var(--vvt,0px)] phone:bottom-auto phone:h-[var(--vvh,100dvh)]' } },
+          ],
+        },
       },
     }),
   ],

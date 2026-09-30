@@ -7,9 +7,11 @@ import * as presetStore from './presets/store';
 import * as cadCommands from './cad/commands';
 import { registerPreviewActions } from './preview/actions';
 import { registerSettingsActions } from './settings/actions';
+import { installViewportVars } from './ui/mobileDialog';
 import './ui/theme.css';
 import './style.css';
 
+installViewportVars();
 createApp(App).use(ui).mount('#app');
 
 // Register every area's commands up front so the palette / shortcuts dialog

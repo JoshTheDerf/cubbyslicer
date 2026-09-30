@@ -9,6 +9,15 @@
 @source not "../public/wasm";
 @source not "../e2e-out";
 
+/* Phone dialogs (src/ui/mobileDialog.ts): ≤ 640 px wide, or ≤ 500 px tall (landscape). */
+@custom-variant phone {
+  @media (max-width: 640px), (max-height: 500px) { @slot; }
+}
+/* Landscape phones: short screens, where every pixel of dialog chrome counts. */
+@custom-variant short {
+  @media (max-height: 500px) { @slot; }
+}
+
 /* Global base styles. Colours come from src/ui/theme.css tokens only. */
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -47,4 +56,46 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; }
+}
+
+/*
+ * Phone dialogs (src/ui/mobileDialog.ts): finger-sized controls and no iOS
+ * focus zoom inside every modal / slide-over. Unlayered, so it wins over the
+ * size utilities of Nuxt UI's xs / sm buttons and inputs.
+ */
+@media (max-width: 640px), (max-height: 500px) {
+  /* Long names, paths and G-code wrap instead of widening the dialog. */
+  :is([role='dialog'], [role='alertdialog']) { overflow-wrap: break-word; }
+  :is([role='dialog'], [role='alertdialog']) :is(button, [role='button'], [role='tab'], [role='menuitem'], [role='combobox'], select, a:not(:where(p, li, span, dd) a)):not(:is([role='checkbox'], [role='switch'], [role='radio'], [role='slider'])) {
+    min-height: 40px; min-width: 40px;
+  }
+  :is([role='dialog'], [role='alertdialog']) :is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='hidden']), textarea, select) {
+    font-size: 16px;
+  }
+  :is([role='dialog'], [role='alertdialog']) :is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='hidden']), select) {
+    min-height: 40px;
+  }
+  /* Checkbox / switch / radio: a 40 px hit area around the small control, and the label row is 40 px tall. */
+  :is([role='dialog'], [role='alertdialog']) :is([role='checkbox'], [role='switch'], [role='radio']) { position: relative; overflow: visible; }
+  :is([role='dialog'], [role='alertdialog']) :is([role='checkbox'], [role='switch'], [role='radio'])::after {
+    content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%;
+  }
+  :is([role='dialog'], [role='alertdialog']) [data-slot='root']:has(> [data-slot='container'] :is([role='checkbox'], [role='switch'])),
+  :is([role='dialog'], [role='alertdialog']) [role='radiogroup'] [data-slot='item'] {
+    min-height: 40px; align-items: center;
+  }
+  :is([role='dialog'], [role='alertdialog']) [data-slot='root']:has(> [data-slot='container'] :is([role='checkbox'], [role='switch'])) > [data-slot='wrapper']:not(:has([data-slot='description'])) > label,
+  :is([role='dialog'], [role='alertdialog']) [role='radiogroup'] [data-slot='item'] [data-slot='wrapper']:not(:has([data-slot='description'])) > label {
+    display: flex; align-items: center; min-height: 40px;
+  }
+}
+
+/*
+ * Landscape phones (short and wide): form dialogs opt into a two-column flow
+ * with `dlg-flow` on their field container; `dlg-span` children take a full row.
+ */
+@media (max-height: 500px) and (min-width: 560px) {
+  .dlg-flow { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px !important; align-items: start; }
+  .dlg-flow > * { margin: 0 !important; min-width: 0; }
+  .dlg-flow > .dlg-span { grid-column: 1 / -1; }
 }

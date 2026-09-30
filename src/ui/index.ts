@@ -4,3 +4,4 @@
  * --ui-* variables) and the global toast adapter.
  */
 export { toast, pushToast, dismissToast, bindToaster, type ToastKind, type ToastOptions, type Toaster } from './toast';
+export { mobileDialog, shortScreen, mediaQuery, installViewportVars, MOBILE_DIALOG_QUERY } from './mobileDialog';
