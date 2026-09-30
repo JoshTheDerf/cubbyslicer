@@ -58,6 +58,25 @@ export interface SceneCallbacks {
   onPlateClick?(index: number): void;
   /** Gizmo drag of a single part ended: its new transform in the object's frame. */
   onPartTransformEnd?(objectId: string, partId: string, t: { position: Vec3; rotation: Quat; scale: Vec3 }, kind: TransformKind): void;
+  /** Gizmo drag of a CubbyCAD child node ended: its new transform in its parent node's (render) frame. */
+  onCadNodeTransformEnd?(objectId: string, nodeId: string, t: { position: Vec3; rotation: Quat; scale: Vec3 }, kind: TransformKind): void;
+}
+
+/**
+ * A child node of a CAD object picked in the shape tree. The gizmo moves a
+ * proxy of the node's own geometry inside the object, in the node's frame:
+ * object TRS · `frame` (RENDER_TO_ZUP · ancestors) · node transform.
+ */
+export interface CadNodeTarget {
+  objectId: string;
+  nodeId: string;
+  /** Column-major, object-local: RENDER_TO_ZUP · the ancestors' transforms (render frame). */
+  frame: number[];
+  position: Vec3; rotation: Quat; scale: Vec3;
+  /** The node's own geometry in its local render frame (null: nothing to show). */
+  mesh: { positions: Float32Array; indices: Uint32Array } | null;
+  /** Locked / unsupported: highlighted, no gizmo. */
+  readOnly: boolean;
 }
 
 /** A surface hit handed to an interactive tool (src/tools: measure, text placement, brim ears, …). */
@@ -148,7 +167,13 @@ export class PrepareScene {
     items: Entry[];
     /** Dragging one part of an object. */
     part?: { objectId: string; partId: string; mesh: Mesh };
+    /** Dragging a CubbyCAD child node's proxy. */
+    cad?: { objectId: string; nodeId: string; mesh: Mesh };
   } | null = null;
+  /** CubbyCAD child node picked in the shape tree (see CadNodeTarget). */
+  private cadTarget: CadNodeTarget | null = null;
+  private cadFrame: Object3D | null = null;
+  private cadProxy: Mesh<BufferGeometry, MeshBasicMaterial> | null = null;
   /** Part picked in the object list: the gizmo manipulates it instead of the whole object. */
   private activePart: { objectId: string; partId: string } | null = null;
   private layOnFace = false;
@@ -538,6 +563,7 @@ export class PrepareScene {
     }
     for (const e of [...this.entries.values()]) if (!seen.has(e.id)) this.removeEntry(e);
     if (this.hovered && !this.entries.has(this.hovered)) this.hovered = null;
+    this.parentCadFrame();
     if (!this.dragStart) this.updateGizmo();
     this.updateSelectionBox();
     this.requestRender();
@@ -593,7 +619,10 @@ export class PrepareScene {
     if (sel) mat.emissive.copy(this.theme.selected).multiplyScalar(0.3);
     else if (hov) mat.emissive.copy(this.theme.hover).multiplyScalar(0.2);
     else mat.emissive.setRGB(0, 0, 0);
-    const ghost = !item.obj.printable;
+    // Not printed: excluded objects, and CubbyCAD holes on their own (CubbyCAD shows those as ghosts too).
+    const hole = item.obj.cad?.node.contribution === 'subtract';
+    if (hole && !item.warn) mat.color.setHex(PART_COLORS.negative);
+    const ghost = !item.obj.printable || hole;
     if (mat.transparent !== ghost) { mat.transparent = ghost; mat.needsUpdate = true; }
     mat.opacity = ghost ? 0.4 : 1;
     mat.depthWrite = !ghost;
@@ -601,6 +630,7 @@ export class PrepareScene {
 
   private removeEntry(e: Entry): void {
     if (this.dragStart?.items.includes(e)) { this.dragStart = null; this.gizmo.detach(); }
+    if (this.cadFrame && this.cadFrame.parent === e.mesh) e.mesh.remove(this.cadFrame);
     for (const pe of e.parts) this.disposePart(e, pe);
     this.objectsGroup.remove(e.mesh);
     e.mesh.material.dispose();
@@ -682,26 +712,90 @@ export class PrepareScene {
     this.requestRender();
   }
 
+  // ---- CubbyCAD child nodes -----------------------------------------------------------
+
+  /** Pick (or clear) the CAD child node the gizmo edits. */
+  setActiveCadNode(t: CadNodeTarget | null): void {
+    if (this.dragStart?.cad) return; // mid-drag: the tree updates after the drop
+    this.cadTarget = t;
+    if (!t) {
+      if (this.cadFrame) { this.cadFrame.removeFromParent(); }
+      if (this.cadProxy) { this.cadProxy.geometry.dispose(); this.cadProxy.material.dispose(); }
+      this.cadFrame = null; this.cadProxy = null;
+    } else {
+      if (!this.cadFrame) {
+        this.cadFrame = new Object3D();
+        this.cadFrame.matrixAutoUpdate = false;
+        this.cadProxy = new Mesh(new BufferGeometry(), new MeshBasicMaterial({ color: this.theme.selected, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
+        this.cadProxy.renderOrder = 9;
+        this.cadProxy.raycast = () => {}; // never picked: clicks go to the object
+        this.cadFrame.add(this.cadProxy);
+      }
+      this.cadFrame.matrix.fromArray(t.frame);
+      this.cadFrame.matrixWorldNeedsUpdate = true;
+      const p = this.cadProxy!;
+      p.geometry.dispose();
+      const g = new BufferGeometry();
+      if (t.mesh) { g.setAttribute('position', new BufferAttribute(t.mesh.positions, 3)); g.setIndex(new BufferAttribute(t.mesh.indices, 1)); }
+      g.computeBoundingBox(); g.computeBoundingSphere();
+      p.geometry = g;
+      p.position.set(...t.position);
+      p.quaternion.set(...t.rotation);
+      p.scale.set(...t.scale);
+      this.parentCadFrame();
+    }
+    if (!this.dragStart) this.updateGizmo();
+    this.requestRender();
+  }
+
+  /** Keep the proxy frame under its object's mesh (entries are rebuilt when the mesh changes). */
+  private parentCadFrame(): void {
+    const t = this.cadTarget, f = this.cadFrame;
+    if (!t || !f) return;
+    const e = this.entries.get(t.objectId);
+    if (e && f.parent !== e.mesh) { f.removeFromParent(); e.mesh.add(f); }
+    else if (!e) f.removeFromParent();
+  }
+
+  /** The CAD proxy when it belongs to the single selected object and can be moved. */
+  private activeCadMesh(): Mesh | null {
+    const t = this.cadTarget, p = this.cadProxy;
+    if (!t || !p || t.readOnly || !t.mesh || this.selected.size !== 1 || !this.selected.has(t.objectId) || !p.parent?.parent) return null;
+    return p;
+  }
+
   /** (Re)attach the gizmo to the active part, the one selected object or the selection as a group. */
   private updateGizmo(): void {
     const sel = this.selectedEntries();
-    if (!sel.length || this.layOnFace || this.tool?.hideGizmo) { if (this.gizmo.attached) this.gizmo.detach(); }
-    else this.gizmo.attach(this.activePartMesh() ?? (sel.length === 1 ? sel[0].mesh : sel.map((e) => e.mesh)));
+    const cadLocked = !!this.cadTarget && this.selected.size === 1 && this.selected.has(this.cadTarget.objectId) && !this.activeCadMesh();
+    if (!sel.length || this.layOnFace || this.tool?.hideGizmo || cadLocked) { if (this.gizmo.attached) this.gizmo.detach(); }
+    else this.gizmo.attach(this.activePartMesh() ?? this.activeCadMesh() ?? (sel.length === 1 ? sel[0].mesh : sel.map((e) => e.mesh)));
     this.updateSelectionBox();
   }
 
   /** Same targets as updateGizmo attached; the gizmo applies each drag step to them. */
   private beginDrag(): void {
     const pm = this.activePartMesh();
+    const cm = pm ? null : this.activeCadMesh();
     this.dragStart = pm && this.activePart
       ? { items: [], part: { ...this.activePart, mesh: pm } }
-      : { items: this.selectedEntries() };
+      : cm && this.cadTarget ? { items: [], cad: { objectId: this.cadTarget.objectId, nodeId: this.cadTarget.nodeId, mesh: cm } }
+        : { items: this.selectedEntries() };
   }
 
   private endDrag(kind: TransformKind): void {
     const ds = this.dragStart;
     if (!ds) return;
     this.dragStart = null;
+    if (ds.cad) {
+      const m = ds.cad.mesh;
+      this.cb.onCadNodeTransformEnd?.(ds.cad.objectId, ds.cad.nodeId, {
+        position: [m.position.x, m.position.y, m.position.z],
+        rotation: [m.quaternion.x, m.quaternion.y, m.quaternion.z, m.quaternion.w],
+        scale: [m.scale.x, m.scale.y, m.scale.z],
+      }, kind);
+      return;
+    }
     if (ds.part) {
       const m = ds.part.mesh;
       this.cb.onPartTransformEnd?.(ds.part.objectId, ds.part.partId, {
@@ -1110,7 +1204,7 @@ export class PrepareScene {
     const r = this.renderer;
     const prevSize = r.getSize(new Vector2());
     const prevRatio = r.getPixelRatio();
-    const hidden = [this.gizmo.object, this.selectionBox, this.faceMarker].map((o) => [o, o.visible] as const);
+    const hidden = [this.gizmo.object, this.selectionBox, this.faceMarker, ...(this.cadFrame ? [this.cadFrame] : [])].map((o) => [o, o.visible] as const);
     const out = document.createElement('canvas');
     out.width = w; out.height = h;
     const ctx = out.getContext('2d')!;

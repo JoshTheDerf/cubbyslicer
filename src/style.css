@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
+/* CubbyCAD's shared shape components (@cubby/shared/cad/ui) use Tailwind classes. */
+@source "../node_modules/@cubby/shared/src/cad/ui";
 /* Keep Tailwind's class scan to the app source (build outputs + staged engine profiles are huge). */
 @source not "../dist";
 @source not "../dist-staging";

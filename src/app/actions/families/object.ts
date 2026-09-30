@@ -79,6 +79,7 @@ export function objectActions(): Action[] {
     { id: 'object.toggle-hidden', title: 'Hide', icon: 'i-lucide-eye-off', category: 'Object', aliases: ['show', 'visibility'],
       dynamicTitle: (c) => (c.selection.allHidden ? 'Show' : 'Hide'),
       dynamicIcon: (c) => (c.selection.allHidden ? 'i-lucide-eye' : 'i-lucide-eye-off'),
+      // Hides the picked shape of a CAD object, else the objects. (CubbyCAD's H is Orca's fuzzy-skin paint here.)
       when: sel, run: (c) => c.dispatch.toggleHidden() },
     { id: 'object.toggle-printable', title: 'Don’t print', icon: 'i-lucide-printer', category: 'Object', aliases: ['printable', 'skip', 'exclude'],
       dynamicTitle: (c) => (c.selection.allNotPrintable ? 'Print' : 'Don’t print'),

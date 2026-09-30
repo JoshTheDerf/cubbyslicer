@@ -6,6 +6,12 @@ import type { MenuLayout } from '../project/menu';
 import { SUB_SOURCES, SUB_TYPES } from '../families/object';
 import { HANDY_MODEL_IDS } from '../families/calibration';
 import { SNAP_OPTIONS } from '@cubby/shared/snap';
+import { paletteShapes } from '../../../cad/shapes';
+
+/** CubbyCAD's built-in shapes, added as new objects. */
+const ADD_SHAPE_MENU = { label: 'Add shape', icon: 'i-lucide-shapes', children: paletteShapes().map((s) => `cad.add.${s.id}`) };
+/** CubbyCAD modelling: group / ungroup / hole. */
+const CAD_GROUP = ['object.group', 'object.ungroup', 'object.make-hole', 'object.make-solid'];
 
 /** "Add part ▸ Load… / Box / …" submenus for each volume type. */
 const ADD_SUBMENUS = SUB_TYPES.map(([type, label, icon]) => ({ label, icon, children: SUB_SOURCES.map(([src]) => `object.add.${type}.${src}`) }));
@@ -16,7 +22,7 @@ export const FILE_MENU: MenuLayout = {
     [{ label: 'Local folders', icon: 'i-lucide-folder-tree', children: ['local.folders', 'local.save-folder', 'local.export-gcode', 'local.export-3mf'] },
       { label: 'CubbyCAD', icon: 'i-lucide-cloud', children: ['cloud.open', 'cloud.save', 'cloud.save-as', 'cloud.export-gcode', 'cloud.export-3mf', 'cloud.copy-link'] }],
     ['file.import'],
-    ['export.plate-3mf', 'export.plate-stl', 'export.selection-stl', 'slice.export-gcode', 'slice.export-all-gcode'],
+    ['export.plate-3mf', 'export.plate-stl', 'export.selection-stl', 'export.cubby', 'slice.export-gcode', 'slice.export-all-gcode'],
     ['presets.export-bundle'],
     ['app.preferences'],
   ],
@@ -53,6 +59,7 @@ export const OBJECT_MENU: MenuLayout = {
       { label: 'Rotate 90°', icon: 'i-lucide-rotate-cw', children: ['object.rotate90.x', 'object.rotate90.y', 'object.rotate90.z'] },
     ],
     ['tool.cut', 'object.split-objects', 'object.split-parts'],
+    [ADD_SHAPE_MENU, 'cad.palette', ...CAD_GROUP, 'cad.edit-tree'],
     ADD_SUBMENUS,
     ['arrange.all', 'arrange.plate', 'arrange.selection', 'plate.auto-orient-all'],
     ['object.toggle-hidden', 'object.toggle-printable', 'object.settings', 'object.table'],
@@ -122,6 +129,7 @@ export const OBJECT_CONTEXT_MENU: MenuLayout = {
     [{ label: 'Mirror', icon: 'i-lucide-flip-horizontal-2', children: ['object.mirror.x', 'object.mirror.y', 'object.mirror.z'] },
       { label: 'Rotate 90°', icon: 'i-lucide-rotate-cw', children: ['object.rotate90.x', 'object.rotate90.y', 'object.rotate90.z'] }],
     ['arrange.all', 'arrange.plate', 'arrange.selection'],
+    CAD_GROUP,
     ['object.toggle-hidden', 'object.toggle-printable', 'export.selection-stl'],
     ['tool.text', 'tool.svg', 'tool.simplify', 'tool.boolean', 'tool.brim-ears'],
     ['edit.delete'],
@@ -132,7 +140,7 @@ export const OBJECT_CONTEXT_MENU: MenuLayout = {
 export const PLATE_CONTEXT_MENU: MenuLayout = {
   groups: [
     ['file.import', 'edit.paste'],
-    ['tool.text.object', 'tool.svg', { label: 'Add handy model', icon: 'i-lucide-box', children: HANDY_MODEL_IDS.map(([id]) => `handy.${id}`) }],
+    [ADD_SHAPE_MENU, 'tool.text.object', 'tool.svg', { label: 'Add handy model', icon: 'i-lucide-box', children: HANDY_MODEL_IDS.map(([id]) => `handy.${id}`) }],
     ['arrange.all', 'arrange.plate', 'plate.auto-orient-all', 'edit.select-all'],
     ['plate.add', 'plate.lock', 'plate.clear', 'plate.delete'],
     ['plate.settings'],

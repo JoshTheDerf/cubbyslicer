@@ -21,9 +21,12 @@ import { revealObjectSettings, selectPlate } from './actions';
 import { ui } from './uiState';
 import { clickLayerRow, isLayerRowSelected, LAYER_ROW_ICONS, layerRowLabel, layerRowMenu, layerRowsOf, type LayerRow, type LayerRowKind } from '../../layers/objectList';
 import { selectedRange } from '../../layers/store';
+import { nodeIcon } from '../../cad/tree';
 import type { LayerRange } from '../../project/types';
 
 const collapsed = reactive(new Set<string>());
+/** CubbyCAD shapes show their shape's icon (a hole: dashed); meshes a box. */
+const objectIcon = (o: ProjectObject) => (o.cad ? (o.cad.node.contribution === 'subtract' ? 'i-lucide-circle-dashed' : nodeIcon(o.cad.node)) : 'i-lucide-box');
 const anchor = ref<string | null>(null);
 const listEl = ref<HTMLElement | null>(null);
 const menuOpen = ref(false);
@@ -270,7 +273,7 @@ watch(selectedIds, async (ids) => {
                   @click.stop="toggleGroup(foldKey(r))">
             <UIcon :name="collapsed.has(foldKey(r)) ? 'i-lucide-chevron-right' : 'i-lucide-chevron-down'" class="size-3" />
           </button>
-          <UIcon :name="r.kind in LAYER_ROW_ICONS ? LAYER_ROW_ICONS[r.kind as LayerRowKind] : r.kind === 'plate' ? (r.plate! < 0 ? 'i-lucide-square-dashed' : 'i-lucide-square') : r.kind === 'group' ? 'i-lucide-boxes' : r.kind === 'part' ? PART_ICONS[r.part!.type] : 'i-lucide-box'"
+          <UIcon :name="r.kind in LAYER_ROW_ICONS ? LAYER_ROW_ICONS[r.kind as LayerRowKind] : r.kind === 'plate' ? (r.plate! < 0 ? 'i-lucide-square-dashed' : 'i-lucide-square') : r.kind === 'group' ? 'i-lucide-boxes' : r.kind === 'part' ? PART_ICONS[r.part!.type] : objectIcon(r.obj)"
                  class="ol__icon size-3.5" :class="r.kind === 'part' ? `ol__icon--${r.part!.type}` : ''" />
           <template v-if="r.kind === 'part'">
             <UInput v-if="renamingPart === r.part!.id" v-model="partDraft" class="ol__rename flex-1 min-w-0" size="xs" :maxlength="200"

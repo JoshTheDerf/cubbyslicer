@@ -26,11 +26,14 @@ export default defineConfig({
     ui({
       colorMode: false,
       router: false, // single-page app, no vue-router
+      // CubbyCAD's shared shape components (@cubby/shared/cad/ui) use Nuxt UI components by name.
+      scanPackages: ['@cubby/shared'],
       // Bundle the icons we use (scanned from source, resolved from the
       // installed @iconify-json/lucide) instead of fetching them from the
       // Iconify API at runtime: works offline, no icon pop-in.
       // Action icons live in .ts families, so scan .ts as well as .vue.
-      icon: { clientBundle: { scan: { globInclude: ['src/**/*.{vue,ts}'] } } },
+      // Shape icons come from CubbyCAD's shared shape registry (@cubby/shared/cad).
+      icon: { clientBundle: { scan: { globInclude: ['src/**/*.{vue,ts}', 'node_modules/@cubby/shared/src/cad/**/*.{vue,ts}'] } } },
       ui: {
         colors: { primary: 'green', neutral: 'zinc' },
         button: { defaultVariants: { color: 'neutral' } },
@@ -41,8 +44,8 @@ export default defineConfig({
     }),
   ],
   // @cubby/shared is a linked source package (file:../cubby-shared): resolve
-  // its three / vue / view-cube imports from this app, so there is one copy of each.
-  resolve: { dedupe: ['three', 'vue', 'three-viewport-gizmo'] },
+  // its three / vue / view-cube / Nuxt UI imports from this app, so there is one copy of each.
+  resolve: { dedupe: ['three', 'vue', 'three-viewport-gizmo', '@nuxt/ui', 'manifold-3d'] },
   worker: { format: 'es' },
   assetsInclude: ['**/*.wasm'],
   build: {

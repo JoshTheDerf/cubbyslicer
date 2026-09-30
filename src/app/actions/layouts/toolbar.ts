@@ -7,7 +7,7 @@ import type { ToolbarLayout } from '../project/toolbar';
 
 export const PLATE_TOOLBAR: ToolbarLayout = {
   groups: [
-    ['file.import', 'object.auto-orient', 'arrange.all'],
+    ['file.import', 'cad.palette', 'object.auto-orient', 'arrange.all'],
     ['edit.duplicate', 'edit.delete'],
     ['layers.edit'],
     ['object.gizmo.all', 'object.gizmo.move', 'object.gizmo.rotate', 'object.gizmo.scale', 'object.lay-on-face'],

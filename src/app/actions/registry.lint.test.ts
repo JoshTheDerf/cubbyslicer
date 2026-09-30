@@ -114,6 +114,15 @@ describe('action registry lint', () => {
     expect(b('view.camera.right')).toBe('6');
   });
 
+  it('keeps Orca\'s keys over CubbyCAD\'s modelling ones where they clash', () => {
+    const b = (id: string) => formatBinding(ACTIONS.find((a) => a.id === id)?.binding, 'other');
+    // CubbyCAD: Ctrl+G group, Ctrl+Shift+G ungroup, H hide, L lock. Here those are
+    // Export G-code, Print plate, fuzzy-skin and support painting.
+    for (const id of ['object.group', 'object.ungroup', 'object.toggle-locked', 'object.toggle-hidden', 'object.make-hole']) expect(b(id), id).toBe('');
+    expect(b('paint.fuzzy')).toBe('H');
+    expect(b('paint.support')).toBe('L');
+  });
+
   it('every visible action is reachable from some surface', () => {
     const onSurface = new Set([
       ...MENU_BAR.flatMap((m) => menuLayoutIds(m.layout)),

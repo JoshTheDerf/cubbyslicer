@@ -21,6 +21,13 @@ import { activeEngine } from '../app/state';
 import { currentPresets } from '../presets/store';
 import { asArray } from '../presets/values';
 import { filamentColourOf, mixedFilaments } from '../mixed/store';
+import { cadChild, cadObject, cadSupportOf, setNodeTransform } from '../cad/commands';
+import { RENDER_TO_ZUP } from '../cad/api';
+import { cadLocalMeshes, cadWasmLoaded, evaluateNodeLocal } from '../cad/build';
+import { findIn, parentFrameMatrix } from '../cad/tree';
+import { cleanTransform } from '../cad/frames';
+import { mat4Multiply } from '../project/math';
+import type { CadNodeTarget } from './scene';
 
 const emit = defineEmits<{ contextmenu: [id: string | null, x: number, y: number]; hover: [id: string | null] }>();
 
@@ -67,6 +74,10 @@ onMounted(() => {
       },
       onHover: (id) => emit('hover', id),
       onPlateClick: (i) => setActivePlate(i),
+      onCadNodeTransformEnd: (objectId, nodeId, t, kind) => {
+        void setNodeTransform(objectId, nodeId, cleanTransform(t), kind === 'translate' ? 'Move shape' : kind === 'rotate' ? 'Rotate shape' : 'Scale shape');
+        endGesture();
+      },
       onPartTransformEnd: (objectId, partId, t, kind) => {
         setPartTransform(objectId, partId, t, kind === 'translate' ? 'Move part' : kind === 'rotate' ? 'Rotate part' : 'Scale part');
         endGesture();
@@ -106,6 +117,23 @@ watch(() => viewportState.gizmo, (m) => scene.value?.setGizmoMode(m));
 watch([() => viewportState.camera, scene], ([t]) => scene.value?.setCameraType(t), { immediate: true });
 watch([() => viewportState.snap, scene], ([v]) => scene.value?.setSnapIncrement(v), { immediate: true });
 watch([selectedPart, scene], ([p]) => scene.value?.setActivePart(p), { immediate: true });
+// A CubbyCAD child node picked in the shape tree: the gizmo edits it in its own frame.
+function cadTarget(): CadNodeTarget | null {
+  const c = cadChild.value, o = cadObject.value;
+  if (!c || !o?.cad) return null;
+  const root = o.cad.node;
+  const node = findIn(root, c.nodeId)?.node;
+  if (!node) return null;
+  const t = node.transform ?? {};
+  return {
+    objectId: o.id, nodeId: node.id,
+    frame: mat4Multiply(RENDER_TO_ZUP, parentFrameMatrix(root, node.id)),
+    position: t.position ?? [0, 0, 0], rotation: t.rotation ?? [0, 0, 0, 1], scale: t.scale ?? [1, 1, 1],
+    mesh: evaluateNodeLocal(node),
+    readOnly: !!node.locked || cadSupportOf(o).get(node.id)?.editable === false,
+  };
+}
+watch([cadChild, () => cadObject.value?.cad?.node, cadWasmLoaded, cadLocalMeshes, scene], () => scene.value?.setActiveCadNode(cadTarget()), { immediate: true });
 // The accent follows the engine (App.vue sets <html data-engine>); post-flush so the CSS is applied.
 watch(activeEngine, () => scene.value?.refreshAccent(), { flush: 'post' });
 watch(() => viewportState.layOnFace, (on) => scene.value?.setLayOnFace(on));

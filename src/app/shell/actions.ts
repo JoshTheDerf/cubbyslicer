@@ -21,6 +21,7 @@ import {
   type ObjectClipboard,
 } from '../../project/store';
 import { NudgeBurst } from '@cubby/shared/nudge';
+import { cadChild, cadNode, deleteNode, editNode } from '../../cad/commands';
 import { plateLabel } from '../../project/plates';
 import { PRIMITIVE_LABELS, primitiveFor, primitiveOfSize, type PrimitiveKind } from '../../project/primitives';
 import { PART_TYPE_LABELS, type PartType } from '../../project/types';
@@ -59,6 +60,18 @@ export async function importBuffer(name: string, buffer: ArrayBuffer): Promise<s
     if (sniffOrcaProject(buffer)) {
       const r = await openOrca3mf(name, buffer);
       if (r !== 'models') return r;
+    }
+  }
+  // CubbyCAD scene: editable CAD objects (one per top-level node).
+  if (/\.cubby$/i.test(name)) {
+    try {
+      const { importCubbyBuffer } = await import('../../cad/commands');
+      const ids = await withBusy(`Importing ${name}…`, () => importCubbyBuffer(name, buffer));
+      if (ids.length) activeView.value = 'prepare';
+      return ids;
+    } catch (e) {
+      toast.error(`Couldn't import ${name}.`, { detail: e instanceof ImportError ? e.message : `${(e as Error)?.message ?? e}` });
+      return [];
     }
   }
   try {
@@ -127,7 +140,7 @@ export async function importFiles(files: Iterable<File>): Promise<void> {
   for (const f of mtls) { try { addCompanionMtl(await f.text()); } catch { /* unreadable */ } }
   if (svgs.length) { try { openTool('svg', { svgFile: { name: svgs[0].name, text: await svgs[0].text() } }); } catch { /* unreadable */ } }
   const other = list.filter((f) => !models.includes(f) && !mtls.includes(f) && !svgs.includes(f));
-  if (other.length) toast.warn(`Skipped ${other.map((f) => f.name).join(', ')}.`, { detail: 'Supported files: STL, OBJ (+MTL), 3MF (including OrcaSlicer projects), STEP and SVG.' });
+  if (other.length) toast.warn(`Skipped ${other.map((f) => f.name).join(', ')}.`, { detail: 'Supported files: STL, OBJ (+MTL), 3MF (including OrcaSlicer projects), STEP, CubbyCAD (.cubby) and SVG.' });
   let added = 0;
   for (const f of models) {
     if (f.size > LIMITS.maxFileBytes) {
@@ -375,7 +388,12 @@ export function splitSelectionToObjects(): void {
 export function doUndo(): void { const l = undo(); if (l) toast.info(`Undid ${l.toLowerCase()}.`, { timeout: 1600 }); }
 export function doRedo(): void { const l = redo(); if (l) toast.info(`Redid ${l.toLowerCase()}.`, { timeout: 1600 }); }
 
-export function deleteSelection(): void { if (selectedIds.value.length) removeObjects(); }
+export function deleteSelection(): void {
+  // A shape picked in a CAD object's tree: delete just that node (CubbyCAD's Delete).
+  const child = cadChild.value;
+  if (child) { void deleteNode(child.objectId, child.nodeId); return; }
+  if (selectedIds.value.length) removeObjects();
+}
 
 export function reportUnplaced(n: number): void {
   toast.warn(`${n === 1 ? '1 object doesn’t' : `${n} objects don’t`} fit on the plate.`, { detail: 'They were placed beside the plate. Scale them down or remove some objects.' });
@@ -400,6 +418,8 @@ export function escape(): void {
 // ---- object helpers used by the action dispatch ----
 
 export function toggleHiddenSelection(): void {
+  const child = cadChild.value;
+  if (child) { void editNode(child.objectId, { id: child.nodeId, hidden: !cadNode.value?.hidden }, cadNode.value?.hidden ? 'Show shape' : 'Hide shape'); return; }
   const objs = objects.value.filter((o) => selectedIds.value.includes(o.id));
   if (!objs.length) return;
   setVisible(objs.map((o) => o.id), objs.every((o) => !o.visible));

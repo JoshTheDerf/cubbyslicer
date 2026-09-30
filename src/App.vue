@@ -48,6 +48,8 @@ import { useSliceController } from './app/slice';
 import { activeView } from './app/state';
 import PrepareViewport from './viewport/PrepareViewport.vue';
 import TransformPanel from './viewport/TransformPanel.vue';
+import CadPanel from './cad/CadPanel.vue';
+import ShapePalettePopover from './cad/ShapePalettePopover.vue';
 import { objects, plates } from './project/store';
 import { enableAutosave, restoreAutosave } from './project/persistence/autosave';
 import { bindToaster, toast, type Toaster } from './ui';
@@ -163,7 +165,8 @@ onBeforeUnmount(() => stopHandoff?.());
         <!-- Canvas -->
         <main class="center">
           <PrepareViewport v-show="activeView === 'prepare'" class="center__vp" @contextmenu="onViewportMenu">
-            <div class="ov ov--top"><PlateToolbar /></div>
+            <div class="ov ov--top"><PlateToolbar /><ShapePalettePopover class="ov__palette" /></div>
+            <div v-if="!layersUi.editing" class="ov ov--cad"><CadPanel /></div>
             <div class="ov ov--bl">
               <TransformPanel />
               <PlateStatus v-if="!phone" />
@@ -223,6 +226,9 @@ onBeforeUnmount(() => stopHandoff?.());
 .ov--bl { left: 10px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .ov--bl > :last-child { pointer-events: none; }
 .ov--tl { top: 64px; left: 10px; }
+.ov--top { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ov--cad { top: 118px; right: 10px; }
+@media (max-width: 1100px) { .ov--cad { top: 104px; } }
 .ov--bc { bottom: 10px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 560px); min-width: 0; }
 .ov--pv { top: 10px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 520px); }
 .ov--lh { top: 118px; right: 10px; bottom: 56px; display: flex; flex-direction: column; justify-content: flex-start; }
@@ -235,6 +241,8 @@ onBeforeUnmount(() => stopHandoff?.());
 .app--phone .ov--bl { left: 8px; bottom: calc(112px + env(safe-area-inset-bottom)); max-width: calc(100% - 16px); }
 .app--phone .ov--tl { top: 8px; left: 8px; right: 8px; }
 .app--phone .ov--pv { top: 8px; left: 8px; transform: none; max-width: calc(100% - 96px); }
+.app--phone .ov--top { flex-direction: column-reverse; }
+.app--phone .ov--cad { top: 8px; right: 8px; left: auto; max-width: calc(100% - 16px); }
 .app--phone .ov--lh { top: auto; left: 8px; right: 8px; bottom: calc(60px + env(safe-area-inset-bottom)); height: min(62vh, 520px); z-index: calc(var(--z-toolbar) + 1); }
 
 .busy {

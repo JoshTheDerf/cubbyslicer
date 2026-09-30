@@ -16,6 +16,7 @@ import { layerActions } from './families/layers';
 import { toolActions } from '../../tools/actions';
 import { calibrationActions } from './families/calibration';
 import { paintActions } from './families/paint';
+import { cadActions } from '../../cad/actions';
 
 export function buildActions(): Action[] {
   return [
@@ -32,6 +33,7 @@ export function buildActions(): Action[] {
     ...helpActions(),
     ...layerActions(),
     ...toolActions(),
+    ...cadActions(),
     ...calibrationActions(),
   ];
 }
