@@ -11,6 +11,7 @@ import type { EngineId } from '../engine/types';
 import { ENGINES, presetsFor, setActiveEngine } from '../presets/store';
 import type { PresetInfo } from '../presets/types';
 import { activeEngine } from '../app/state';
+import { mobileDialog, shortScreen } from '../ui/mobileDialog';
 import PrinterBrowser from './PrinterBrowser.vue';
 
 const emit = defineEmits<{ (e: 'close', completed: boolean): void }>();
@@ -26,6 +27,12 @@ const stepItems: StepperItem[] = [
   { value: 'done', title: 'Ready', description: 'Start slicing', icon: 'i-lucide-check' },
 ];
 const step = ref<Step>('printer');
+/** Landscape phones hide the stepper: the title carries the step instead. */
+const dialogTitle = computed(() => {
+  if (!shortScreen.value) return 'Set up your printer';
+  const i = stepItems.findIndex((s) => s.value === step.value);
+  return `Set up your printer · ${i + 1}/${stepItems.length} ${stepItems[i]?.title ?? ''}`;
+});
 const engine = computed<EngineId>(() => activeEngine.value);
 const p = computed(() => presetsFor(engine.value));
 const busy = ref(false);
@@ -83,20 +90,24 @@ function onStep(v: unknown): void {
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Set up your printer" description="Pick your printer and filament — you can change them any time in the sidebar."
-          :ui="{ content: 'sm:max-w-5xl', body: 'flex flex-col gap-3' }" @after:leave="emit('close', completed)">
+  <UModal v-model:open="open" :title="dialogTitle" :description="mobileDialog ? undefined : 'Pick your printer and filament — you can change them any time in the sidebar.'"
+          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-5xl', body: 'flex flex-col gap-3 phone:gap-2 phone:overflow-hidden' }" @after:leave="emit('close', completed)">
     <template #body>
-      <UStepper :model-value="step" :items="stepItems" size="sm" class="setup-steps" @update:model-value="onStep" />
+      <!-- Landscape phones: the step shows in the title instead of the stepper. -->
+      <UStepper v-if="!shortScreen" :model-value="step" :items="stepItems" size="sm" class="setup-steps" :ui="mobileDialog ? { description: 'hidden', title: 'text-xs' } : undefined" @update:model-value="onStep" />
 
       <section v-if="step === 'printer'" class="pane">
         <div class="flex flex-wrap items-center gap-3 text-sm text-muted">
           <span>Slicing engine</span>
           <UTabs :model-value="engine" :items="engineItems" :content="false" size="xs" @update:model-value="chooseEngine" />
-          <small v-if="engine === 'orca'" class="text-dimmed">Large printer library (Bambu, Prusa, Creality, Voron, …).</small>
-          <small v-else-if="engine === 'fullspectrum'" class="text-dimmed">Snapmaker Orca fork: mixed filaments blend colours by alternating thin layers (Snapmaker U1 and other multi-tool printers).</small>
-          <small v-else class="text-dimmed">PrusaSlicer-based. Uses OrcaSlicer's printer library, converted to preFlight settings.</small>
+          <span v-if="shortScreen" class="ms-auto min-w-0 truncate">Current: <strong class="text-highlighted">{{ printerName }}</strong></span>
+          <template v-if="!mobileDialog">
+            <small v-if="engine === 'orca'" class="text-dimmed">Large printer library (Bambu, Prusa, Creality, Voron, …).</small>
+            <small v-else-if="engine === 'fullspectrum'" class="text-dimmed">Snapmaker Orca fork: mixed filaments blend colours by alternating thin layers (Snapmaker U1 and other multi-tool printers).</small>
+            <small v-else class="text-dimmed">PrusaSlicer-based. Uses OrcaSlicer's printer library, converted to preFlight settings.</small>
+          </template>
         </div>
-        <p class="text-sm text-muted">Current printer: <strong class="text-highlighted">{{ printerName }}</strong></p>
+        <p v-if="!shortScreen" class="text-sm text-muted">Current printer: <strong class="text-highlighted">{{ printerName }}</strong></p>
         <PrinterBrowser v-if="hasCatalogPrinters" :key="engine" :presets="p" @use="onPrinterPicked" />
         <UAlert v-else color="neutral" variant="subtle" icon="i-lucide-info"
                 :title="`${ENGINE_LABELS[engine]} has no bundled printer profiles.`"
@@ -110,7 +121,12 @@ function onStep(v: unknown): void {
           <UButton v-for="i in slots" :key="i" size="xs" :variant="slot === i - 1 ? 'soft' : 'outline'" :color="slot === i - 1 ? 'primary' : 'neutral'"
                    :label="`Extruder ${i}: ${p.infos.value.filaments[i - 1]?.name ?? '—'}`" @click="slot = i - 1" />
         </div>
-        <div class="flex flex-wrap items-center gap-1.5">
+        <div v-if="mobileDialog" class="flex min-w-0 items-center gap-1.5">
+          <UInput v-model="q" size="sm" icon="i-lucide-search" placeholder="Search filaments…" spellcheck="false" class="min-w-0 flex-1" />
+          <USelect :model-value="type ?? 'all'" :items="[{ value: 'all', label: 'All types' }, ...types.map((t) => ({ value: t, label: t }))]" value-key="value" size="sm"
+                   class="w-32" aria-label="Filament type" @update:model-value="(v: string) => { type = v === 'all' ? null : v; }" />
+        </div>
+        <div v-else class="flex flex-wrap items-center gap-1.5">
           <UInput v-model="q" size="sm" icon="i-lucide-search" placeholder="Search filaments…" spellcheck="false" class="w-60" />
           <UButton size="xs" :variant="type === null ? 'soft' : 'ghost'" :color="type === null ? 'primary' : 'neutral'" label="All" @click="type = null" />
           <UButton v-for="t in types" :key="t" size="xs" :variant="type === t ? 'soft' : 'ghost'" :color="type === t ? 'primary' : 'neutral'" :label="t"
@@ -145,10 +161,10 @@ function onStep(v: unknown): void {
 
     <template #footer>
       <div class="flex w-full items-center gap-2">
-        <UButton variant="ghost" :label="step === 'done' ? 'Close' : 'Skip setup'" @click="close(step === 'done')" />
+        <UButton variant="ghost" class="shrink-0" :label="step === 'done' ? 'Close' : mobileDialog ? 'Skip' : 'Skip setup'" @click="close(step === 'done')" />
         <span class="flex-1" />
-        <UButton v-if="step !== 'printer'" variant="outline" label="Back" icon="i-lucide-arrow-left" @click="step = step === 'done' ? 'filament' : 'printer'" />
-        <UButton v-if="step === 'printer'" color="primary" :label="`Keep ${printerName} →`" @click="step = 'filament'" />
+        <UButton v-if="step !== 'printer'" variant="outline" class="shrink-0" :label="mobileDialog ? undefined : 'Back'" aria-label="Back" icon="i-lucide-arrow-left" @click="step = step === 'done' ? 'filament' : 'printer'" />
+        <UButton v-if="step === 'printer'" color="primary" class="min-w-0" :label="`Keep ${printerName} →`" :title="`Keep ${printerName}`" @click="step = 'filament'" />
         <UButton v-else-if="step === 'filament'" color="primary" label="Next →" @click="step = 'done'" />
         <UButton v-else color="primary" label="Start slicing" icon="i-lucide-play" @click="close(true)" />
       </div>
@@ -158,6 +174,11 @@ function onStep(v: unknown): void {
 
 <style scoped>
 .pane { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+@media (max-width: 640px), (max-height: 500px) {
+  .pane { flex: 1; gap: 8px; }
+  .flist { flex: 1; height: auto; min-height: 0; overflow-x: hidden; overscroll-behavior: contain; }
+  .summary dd { overflow-wrap: anywhere; min-width: 0; }
+}
 .flist { height: 50vh; min-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
 .fgroup { display: flex; flex-wrap: wrap; gap: 6px; }
 .fgroup h5 { flex-basis: 100%; margin: 0 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ui-text-dimmed); }

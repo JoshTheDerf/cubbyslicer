@@ -187,4 +187,10 @@ const hasRange = computed(() => (props.def.min !== null && props.def.min !== und
 .row__pts { display: flex; gap: 4px; }
 .row__err { margin: 0; color: var(--ui-error); font-size: 11px; flex-basis: 100%; }
 .row__x { align-self: start; }
+/* Phone dialogs (settings drawer / printer & filament settings): labels wrap next to the 40 px controls. */
+@media (max-width: 640px), (max-height: 500px) {
+  .row__lbl { min-height: 40px; }
+  .row__text { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; padding-block: 2px; }
+  .row__rev { height: 40px; }
+}
 </style>

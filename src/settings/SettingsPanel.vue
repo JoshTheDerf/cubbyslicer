@@ -11,6 +11,7 @@
  *
  * Printer and filament settings are edited in large dialogs (PresetSettingsModal).
  */
+import { mobileDialog } from '../ui/mobileDialog';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { DropdownMenuItem } from '@nuxt/ui';
 import { useToast } from '@nuxt/ui/composables';
@@ -166,7 +167,7 @@ const schemaNote = computed(() => {
 </script>
 
 <template>
-  <div class="sp" data-settings-sidebar>
+  <div class="sp" :class="{ 'sp--flow': mobileDialog }" data-settings-sidebar>
     <UAlert v-if="p.error.value" class="m-2" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="p.error.value" />
 
     <!-- ============ Printer ============ -->
@@ -342,6 +343,12 @@ const schemaNote = computed(() => {
 .sp__note { margin: 0; font-size: 11px; color: var(--ui-warning); }
 .sp__problems { justify-content: flex-start; }
 .sp__scroll { flex: 1; min-height: 0; overflow: auto; margin: 0 -8px; padding: 2px 4px 24px; overscroll-behavior: contain; }
+/* Phones (settings drawer): the whole panel is the one scroll region; the Process bar sticks to the top. */
+.sp--flow { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.sp--flow .sp__sec--grow, .sp--flow .sp__body--grow { flex: none; }
+.sp--flow .sp__scroll, .sp--flow .sp__fils { flex: none; max-height: none; overflow: visible; }
+.sp--flow .sp__sec--grow > .sp__bar { position: sticky; top: 0; z-index: 3; }
+.sp--flow .sp__bar { height: 44px; }
 .sp__objects { display: flex; flex-direction: column; gap: 6px; }
 .sp__hint { display: flex; align-items: center; gap: 6px; margin: 0; padding: 12px 8px; color: var(--ui-text-dimmed); font-size: 12px; }
 </style>

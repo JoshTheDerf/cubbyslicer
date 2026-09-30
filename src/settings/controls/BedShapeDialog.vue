@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** Bed shape editor (UModal) for point-list options (printable_area, bed_shape, bed_exclude_area). */
 import { computed, ref } from 'vue';
+import { mobileDialog, shortScreen } from '../../ui/mobileDialog';
 import { formatNumber, parsePoint, serializePoint } from '../../presets/values';
 
 const props = defineProps<{ title: string; points: string[]; allowEmpty?: boolean }>();
@@ -76,10 +77,10 @@ const num = (v: number | null | undefined) => (typeof v === 'number' && Number.i
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" description="Shape of the printable area, in millimetres." :ui="{ content: 'sm:max-w-xl' }" @after:leave="emit('close')">
+  <UModal v-model:open="open" :title="title" :description="shortScreen ? undefined : 'Shape of the printable area, in millimetres.'" :ui="{ content: 'sm:max-w-xl' }" @after:leave="emit('close')">
     <template #body>
       <UTabs v-model="mode" :items="modeItems" :content="false" size="xs" class="mb-3" />
-      <div class="grid grid-cols-[1fr_180px] items-start gap-4">
+      <div class="grid items-start gap-4" :class="mobileDialog ? 'grid-cols-[minmax(0,1fr)_132px]' : 'grid-cols-[1fr_180px]'">
         <div class="flex flex-col gap-2">
           <template v-if="mode === 'rect'">
             <UFormField label="Width (X)" orientation="horizontal" size="xs"><UInputNumber :model-value="rect.w" :min="0" size="xs" class="w-28" @update:model-value="(v: number | null) => (rect.w = num(v))" /></UFormField>
@@ -93,11 +94,11 @@ const num = (v: number | null | undefined) => (typeof v === 'number' && Number.i
             <UFormField label="Center Y" orientation="horizontal" size="xs"><UInputNumber :model-value="circ.cy" size="xs" class="w-28" @update:model-value="(v: number | null) => (circ.cy = num(v))" /></UFormField>
           </template>
           <UFormField v-else label="Points (one &quot;XxY&quot; per line)" size="xs" :error="invalid ? 'Some lines are not valid points.' : undefined">
-            <UTextarea v-model="custom" :rows="10" spellcheck="false" class="w-full" :ui="{ base: 'font-mono text-xs' }" />
+            <UTextarea v-model="custom" :rows="shortScreen ? 4 : mobileDialog ? 7 : 10" spellcheck="false" class="w-full" :ui="{ base: 'font-mono text-xs' }" />
           </UFormField>
           <p v-if="tooFew" class="text-xs text-error">A shape needs at least 3 points.</p>
         </div>
-        <svg class="preview" :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Shape preview">
+        <svg class="preview" :class="{ 'preview--sm': mobileDialog }" :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Shape preview">
           <polygon v-if="pts.length >= 3" :points="poly" />
           <text :x="view.x + view.w * 0.02" :y="view.y + view.h * 0.08" :font-size="view.w * 0.05">{{ pts.length }} pts</text>
           <text v-if="pts.length" :x="view.x + view.w * 0.02" :y="view.y + view.h * 0.97" :font-size="view.w * 0.045">
@@ -118,6 +119,7 @@ const num = (v: number | null | undefined) => (typeof v === 'number' && Number.i
 
 <style scoped>
 .preview { width: 180px; height: 180px; background: var(--ui-bg-muted); border: 1px solid var(--ui-border); border-radius: var(--ui-radius); }
+.preview--sm { width: 132px; height: 132px; }
 .preview polygon { fill: color-mix(in srgb, var(--ui-primary) 25%, transparent); stroke: var(--ui-primary); stroke-width: 0.6%; vector-effect: non-scaling-stroke; }
 .preview text { fill: var(--ui-text-dimmed); }
 </style>

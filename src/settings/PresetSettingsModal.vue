@@ -13,6 +13,7 @@ import PresetRow from './PresetRow.vue';
 import SettingsGroups from './SettingsGroups.vue';
 import { currentPageOf, extruderCount, pageDirty, pageIcon, perExtruderKeys, selectPage, settingsLayout } from './useLayout';
 import { panelRequest, settingsUi } from './uiState';
+import { mobileDialog } from '../ui/mobileDialog';
 
 const props = defineProps<{ kind: 'printer' | 'filament' }>();
 const emit = defineEmits<{ (e: 'add-printer'): void }>();
@@ -29,6 +30,11 @@ const slotIdx = computed(() => (props.kind === 'filament' ? Math.min(settingsUi.
 const items = computed(() => (props.kind === 'printer' ? p.value.printerInfos.value : p.value.compatible.value.filament));
 
 const extruderDraft = shallowRef<number | null>(null);
+/** Phones: the page list becomes a select above the settings. */
+const pageItems = computed(() => (tab.value?.pages ?? []).map((pg) => ({
+  value: pg.id, label: pageDirty(pg, props.kind, slotIdx.value) ? `${pg.title} •` : pg.title, icon: pageIcon(pg.title),
+})));
+
 function setExtruders(n: number | null | undefined): void {
   if (typeof n === 'number' && Number.isFinite(n) && n >= 1 && n !== extruderCount.value) p.value.setExtruderCount(n, perExtruderKeys.value);
   extruderDraft.value = null;
@@ -36,12 +42,12 @@ function setExtruders(n: number | null | undefined): void {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title"
-          :ui="{ content: 'sm:max-w-5xl h-[min(88vh,920px)] flex flex-col', body: 'p-0 sm:p-0 flex-1 min-h-0 flex', header: 'py-3 gap-3', wrapper: 'flex-none' }">
+  <UModal v-model:open="open" :title="title" :fullscreen="mobileDialog"
+          :ui="{ content: 'sm:max-w-5xl h-[min(88vh,920px)] flex flex-col', body: 'p-0 sm:p-0 phone:p-0 flex-1 min-h-0 flex phone:flex-col', header: 'py-3 gap-3', wrapper: 'flex-none' }">
     <template #title>
       <span class="flex items-center gap-2"><UIcon :name="kind === 'printer' ? 'i-lucide-printer' : 'i-lucide-disc'" class="size-5 text-primary" />{{ title }}</span>
     </template>
-    <template #actions>
+    <template v-if="!mobileDialog" #actions>
       <div class="me-1 flex min-w-0 flex-1 items-center gap-3" :data-editor="kind">
         <div v-if="kind === 'filament' && p.selection.filaments.length > 1" class="flex items-center gap-1" role="tablist" aria-label="Filament slot">
           <UButton v-for="(_f, i) in p.selection.filaments" :key="i" size="xs" :variant="slotIdx === i ? 'soft' : 'ghost'" :color="slotIdx === i ? 'primary' : 'neutral'"
@@ -57,7 +63,36 @@ function setExtruders(n: number | null | undefined): void {
       </div>
     </template>
     <template #body>
-      <nav class="psm__nav" aria-label="Pages">
+      <!-- Phones: preset, page and slot pickers stacked above the one scrolling settings region. -->
+      <div v-if="mobileDialog" class="psm__bar" :data-editor="kind">
+        <div class="psm__barrow">
+          <PresetRow :key="`${kind}-${slotIdx}`" class="min-w-0 flex-1" :presets="p" :kind="kind" :index="slotIdx" :items="items"
+                     :group-by="kind === 'printer' ? 'vendor' : 'filament'" @add-printer="emit('add-printer')" />
+        </div>
+        <div class="psm__barrow">
+          <USelect :model-value="page?.id" :items="pageItems" value-key="value" size="sm" class="min-w-0 flex-1" aria-label="Settings page"
+                   :icon="page ? pageIcon(page.title) : undefined" @update:model-value="(v: string) => selectPage(kind, v)" />
+          <ModeSelect />
+          <UButton size="sm" variant="ghost" icon="i-lucide-search" aria-label="Search settings" @click="panelRequest.focusSearch++" />
+        </div>
+        <div v-if="kind === 'filament'" class="psm__barrow">
+          <div v-if="p.selection.filaments.length > 1" class="flex min-w-0 flex-1 flex-wrap items-center gap-1" role="tablist" aria-label="Filament slot">
+            <UButton v-for="(_f, i) in p.selection.filaments" :key="i" size="xs" :variant="slotIdx === i ? 'soft' : 'ghost'" :color="slotIdx === i ? 'primary' : 'neutral'"
+                     role="tab" :aria-selected="slotIdx === i" @click="settingsUi.filamentSlot = i">
+              <span class="inline-block size-3 rounded-sm" :style="{ background: p.filamentColour(i) }" />{{ i + 1 }}
+            </UButton>
+          </div>
+          <span v-else class="flex-1 truncate text-xs text-muted">Filament {{ slotIdx + 1 }}</span>
+          <ColorField :model-value="p.filamentColour(slotIdx)" size="sm" aria-label="Filament colour" resettable
+                      @update:model-value="(c: string) => p.setFilamentColour(slotIdx, c)" />
+        </div>
+        <div v-else-if="tab" class="psm__barrow psm__barrow--end">
+          <span class="text-xs text-muted">Extruders</span>
+          <UInputNumber :model-value="extruderDraft ?? extruderCount" :min="1" :max="16" size="xs" class="w-32" aria-label="Extruder count"
+                        @update:model-value="setExtruders" />
+        </div>
+      </div>
+      <nav v-else class="psm__nav" aria-label="Pages">
         <div v-if="kind === 'filament'" class="psm__slot">
           <ColorField :model-value="p.filamentColour(slotIdx)" size="sm" aria-label="Filament colour" resettable
                       @update:model-value="(c: string) => p.setFilamentColour(slotIdx, c)" />
@@ -94,4 +129,15 @@ function setExtruders(n: number | null | undefined): void {
 .psm__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--modified); }
 .psm__extr { margin-top: auto; padding: 10px 4px 2px; border-top: 1px solid var(--ui-border); display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--ui-text-muted); }
 .psm__content { flex: 1; min-width: 0; overflow: auto; padding: 8px 14px 32px; overscroll-behavior: contain; }
+.psm__bar { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--ui-border); }
+.psm__barrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.psm__barrow--end { justify-content: space-between; }
+@media (max-width: 640px), (max-height: 500px) {
+  .psm__content { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 4px 12px calc(24px + env(safe-area-inset-bottom)); }
+}
+@media (max-height: 500px) and (min-width: 560px) {
+  .psm__bar { flex-direction: row; flex-wrap: wrap; }
+  .psm__barrow { flex: 1 1 300px; }
+  .psm__barrow--end { flex: 0 1 auto; }
+}
 </style>

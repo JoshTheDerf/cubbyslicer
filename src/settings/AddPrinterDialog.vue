@@ -3,6 +3,7 @@
 import { ref } from 'vue';
 import type { EnginePresets } from '../presets/store';
 import PrinterBrowser from './PrinterBrowser.vue';
+import { mobileDialog } from '../ui/mobileDialog';
 
 defineProps<{ presets: EnginePresets }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
@@ -10,8 +11,8 @@ const open = ref(true);
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Add / remove printers" description="Add printers to your list, or pick one to use now."
-          :ui="{ content: 'sm:max-w-5xl' }" @after:leave="emit('close')">
+  <UModal v-model:open="open" title="Add / remove printers" description="Add printers to your list, or pick one to use now." :fullscreen="mobileDialog"
+          :ui="{ content: 'sm:max-w-5xl', body: 'phone:flex phone:flex-col phone:overflow-hidden' }" @after:leave="emit('close')">
     <template #body>
       <PrinterBrowser :presets="presets" @use="open = false" />
     </template>

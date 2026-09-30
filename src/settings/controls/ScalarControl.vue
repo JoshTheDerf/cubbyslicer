@@ -6,6 +6,7 @@
  * UInputMenu autocomplete (open enum), ColorField (colour), GcodeEditor
  * (multiline). Text-ish inputs commit on blur / Enter; Esc reverts.
  */
+import { mobileDialog } from '../../ui/mobileDialog';
 import { computed, ref, watch } from 'vue';
 import type { ConfigOptionDef } from '../../engine/types';
 import { elementType, normalizeInput, parseBool, parseNumber, serializeBool } from '../../presets/values';
@@ -113,7 +114,7 @@ const side = computed(() => props.def.sidetext);
 
     <UInputNumber v-else-if="isNumber" :model-value="numberValue" size="xs" class="sc__num" :class="{ 'sc__num--int': kind === 'int' }"
                   :min="bound(def.nullable ? null : def.min)" :max="bound(def.nullable ? null : def.max)" :step="step" :step-snapping="false"
-                  :format-options="numberFormat" :increment="kind === 'int' && !compact" :decrement="kind === 'int' && !compact"
+                  :format-options="numberFormat" :increment="kind === 'int' && !compact && !mobileDialog" :decrement="kind === 'int' && !compact && !mobileDialog"
                   orientation="vertical" disable-wheel-change :disabled="disabled || readonly" :aria-label="ariaLabel"
                   @update:model-value="onNumber" />
 
