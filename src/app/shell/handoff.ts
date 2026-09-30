@@ -12,16 +12,20 @@
  * Same-origin fallback that survives COOP: open `/slicer/?handoff=<id>` and
  * talk over `BroadcastChannel(HANDOFF_CHANNEL)`:
  *   slicer → `{ type: 'cubby-slicer:ready', handoff: id }`
- *   editor → `{ type: 'cubby-slicer:model', handoff: id, stl, name }`
+ *   editor → `{ type: 'cubby-slicer:model', handoff: id, stl, name, cad? }`
+ * `cad` (newer editors) is a CubbyCAD node-tree payload (`@cubby/shared/cad`
+ * CadTransferPayload): it opens as editable CubbyCAD objects, with the STL
+ * as the fallback when it's missing or imports nothing.
  * The id pairs one editor tab with the slicer tab it opened (other open slicer
  * tabs ignore the message). The channel is same-origin only by construction.
  */
+import { parseCadTransfer } from '@cubby/shared/cad';
 import { toast } from '../../ui';
 import { importBuffer } from './actions';
 
 export const HANDOFF_CHANNEL = 'cubby-slicer-handoff';
 
-type HandoffMessage = { type?: unknown; stl?: unknown; name?: unknown; handoff?: unknown } | null;
+type HandoffMessage = { type?: unknown; stl?: unknown; name?: unknown; handoff?: unknown; cad?: unknown } | null;
 
 /** Import a `cubby-slicer:model` payload; returns false if it isn't one. */
 function acceptModel(d: HandoffMessage): boolean {
@@ -33,8 +37,28 @@ function acceptModel(d: HandoffMessage): boolean {
     buf = v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength) as ArrayBuffer;
   }
   if (!buf) return false;
-  void importBuffer(typeof d.name === 'string' && d.name ? d.name : 'model.stl', buf);
+  const name = typeof d.name === 'string' && d.name ? d.name : 'model.stl';
+  void importHandoff(name, buf, d.cad);
   return true;
+}
+
+/** The node tree when the editor sent one and it imports, else the STL. */
+async function importHandoff(name: string, stl: ArrayBuffer, cad: unknown): Promise<void> {
+  if (cad) {
+    try {
+      const payload = parseCadTransfer(cad);
+      const { importCadNodes } = await import('../../cad/commands');
+      const label = payload.name?.trim() || name.replace(/\.stl$/i, '');
+      const r = await importCadNodes(payload.nodes, { unit: payload.unit ?? 'mm', label: `Import ${label}` });
+      if (r.ids.length) {
+        if (r.warnings.length) toast.warn(`Opened ${label} from CubbyCAD with ${r.warnings.length === 1 ? 'a warning' : `${r.warnings.length} warnings`}.`, { detail: r.warnings.slice(0, 6).join('\n') });
+        return;
+      }
+    } catch (e) {
+      console.warn('[handoff] CubbyCAD nodes failed to import; using the STL', e);
+    }
+  }
+  await importBuffer(name, stl);
 }
 
 export function startHandoff(): () => void {
