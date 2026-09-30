@@ -18,11 +18,12 @@ import { computeBBox } from './mesh';
 import { MAX_PLATES, newPlate, plateOffset, type PlateMeta } from './plates';
 import { bed, loadProjectData, objects as liveObjects, projectName, uid } from './store';
 import type { MeshData, ObjectPart, ProjectObject } from './types';
+import type { CadNode } from '../cad/api';
 import { parseOrca3mf, type OrcaProject } from './import/orca3mf';
 import { parseModelPart } from './import/threemf';
 import { unzipSync, strFromU8 } from 'fflate';
 import { CUBBY_META } from './persistence/orca3mfWriter';
-import { PROJECT_FORMAT, PROJECT_VERSION, meshFromArrays, sanitizeObjects, sanitizePaint, sanitizePlates, type ProjectJson } from './persistence/format';
+import { CUBBY_CAD_META, PROJECT_FORMAT, PROJECT_VERSION, meshFromArrays, sanitizeObjects, sanitizePaint, sanitizePlates, type CadTreesJson, type ProjectJson } from './persistence/format';
 import { loadSections } from './persistence/sections';
 import type { BedShape } from '../app/state';
 
@@ -60,7 +61,7 @@ function meshData(id: string, positions: Float32Array, indices: Uint32Array): Me
  */
 function openCubby3mf(buffer: ArrayBuffer): OrcaOpenResult | null {
   let files: Record<string, Uint8Array>;
-  try { files = unzipSync(new Uint8Array(buffer), { filter: (f) => f.name === CUBBY_META || /\.model$/i.test(f.name) }); } catch { return null; }
+  try { files = unzipSync(new Uint8Array(buffer), { filter: (f) => f.name === CUBBY_META || f.name === CUBBY_CAD_META || /\.model$/i.test(f.name) }); } catch { return null; }
   if (!files[CUBBY_META]) return null;
   let json: (ProjectJson & { meshSource?: Record<string, string> }) | null = null;
   try { json = JSON.parse(strFromU8(files[CUBBY_META])); } catch { return null; }
@@ -79,6 +80,18 @@ function openCubby3mf(buffer: ArrayBuffer): OrcaOpenResult | null {
     meshList.push(meshFromArrays(id, def.positions, def.indices));
   }
   const ids = new Set(meshList.map((m) => m.id));
+  // CubbyCAD trees (Metadata/cubby_cad.json) rejoin their objects.
+  if (files[CUBBY_CAD_META] && Array.isArray(json.objects)) {
+    try {
+      const trees = JSON.parse(strFromU8(files[CUBBY_CAD_META])) as CadTreesJson;
+      if (trees?.format === 'cubbycad-trees' && trees.objects && typeof trees.objects === 'object') {
+        for (const o of json.objects as Array<ProjectObject & { cad?: unknown }>) {
+          const node = trees.objects[o?.id];
+          if (node) o.cad = { node: node as CadNode };
+        }
+      }
+    } catch { warnings.push('The CubbyCAD shapes couldn’t be read; they open as plain meshes.'); }
+  }
   const objs = sanitizeObjects(json.objects, ids);
   loadProjectData({ name: typeof json.name === 'string' ? json.name : 'Project', objects: objs, meshes: meshList,
     plates: sanitizePlates(json.plates), paint: sanitizePaint(json.paint, ids) });

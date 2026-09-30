@@ -6,8 +6,8 @@ import type { ParseResult } from '../types';
 import { ImportError } from '../mesh';
 import { ImportCancelled, askStepOptions, isStepName, parseStep } from './step';
 
-export const MODEL_EXTENSIONS = ['.stl', '.obj', '.3mf', '.step', '.stp'];
-export const MODEL_ACCEPT = '.stl,.obj,.3mf,.step,.stp,model/stl,model/3mf,model/step';
+export const MODEL_EXTENSIONS = ['.stl', '.obj', '.3mf', '.step', '.stp', '.cubby'];
+export const MODEL_ACCEPT = '.stl,.obj,.3mf,.step,.stp,.cubby,model/stl,model/3mf,model/step';
 
 let worker: Worker | null = null;
 let seq = 0;
@@ -42,6 +42,8 @@ function getWorker(): Worker | null {
 
 /** Parse a model file. `buffer` is transferred (detached) when a worker is used. */
 export async function parseModelFile(name: string, buffer: ArrayBuffer): Promise<ParseResult> {
+  // CubbyCAD scene as plain meshes (e.g. "Add part → Load…"; File → Import keeps it editable, see app/shell/actions).
+  if (/\.cubby$/i.test(name)) return (await import('../../cad/cubbyMeshes')).parseCubbyAsMeshes(buffer);
   // STEP: ask for the tessellation (Orca StepMeshDialog), then OpenCascade in its own lazy worker.
   if (isStepName(name)) {
     const opts = await askStepOptions(name);

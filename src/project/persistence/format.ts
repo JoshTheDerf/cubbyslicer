@@ -10,10 +10,25 @@ import type { CustomGcodeItem } from '../../engine/types';
 import { sanitizeProfile } from '../../layers/profile';
 import { computeBBox } from '../mesh';
 import { sanitizeBrimPoints, sanitizeEmboss } from './toolsFormat';
+import { sanitizeCadNodes } from '../../cad/cubby';
+import type { CadObjectData } from '../types';
 
 // tools metadata (text / SVG emboss source, brim ears)
 const optEmboss = (raw: unknown) => { const e = sanitizeEmboss(raw); return e ? { emboss: e } : {}; };
 const optBrim = (raw: unknown) => { const b = sanitizeBrimPoints(raw); return b.length ? { brimPoints: b } : {}; };
+
+/** A CubbyCAD tree (`{ node }`), validated; a broken one is dropped (the object stays a mesh). */
+function optCad(raw: unknown): { cad?: CadObjectData } {
+  if (!raw || typeof raw !== 'object') return {};
+  try {
+    const [node] = sanitizeCadNodes([(raw as { node?: unknown }).node], 'A CubbyCAD tree');
+    return node ? { cad: { node } } : {};
+  } catch { return {}; }
+}
+
+/** Project 3MFs keep the trees apart from project.json (they can hold large baked meshes). */
+export const CUBBY_CAD_META = 'Metadata/cubby_cad.json';
+export interface CadTreesJson { format: 'cubbycad-trees'; version: 1; objects: Record<string, unknown> }
 
 export const PROJECT_FORMAT = 'cubbyslice';
 export const PROJECT_VERSION = 1;
@@ -142,6 +157,7 @@ export function sanitizeObjects(raw: unknown, meshIds: Set<string>): ProjectObje
       ...(ranges.length ? { layerRanges: ranges } : {}),
       ...optEmboss(r.emboss),
       ...optBrim(r.brimPoints),
+      ...optCad(r.cad),
       ...(r.assembly && typeof r.assembly === 'object' ? { assembly: {
         position: vec((r.assembly as Record<string, unknown>).position, [0, 0, 0]) as Vec3,
         rotation: vec((r.assembly as Record<string, unknown>).rotation, [0, 0, 0, 1]) as Quat,

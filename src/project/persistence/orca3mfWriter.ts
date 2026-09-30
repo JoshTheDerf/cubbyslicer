@@ -19,7 +19,7 @@ import {
   liveMeshes, plateOf, projectName, serializeObjects, serializePaint, serializePlates,
 } from '../store';
 import type { MeshData, ObjectPart, ProjectObject } from '../types';
-import { PROJECT_FORMAT, PROJECT_VERSION, type ProjectJson } from './format';
+import { CUBBY_CAD_META, PROJECT_FORMAT, PROJECT_VERSION, type CadTreesJson, type ProjectJson } from './format';
 import { saveSections } from './sections';
 import { renderPlateImages, type PlateImages } from '../thumbnails';
 
@@ -265,9 +265,18 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   if (gcodes) files['Metadata/custom_gcode_per_layer.xml'] = strToU8(gcodes);
 
   // Exact round-trip for Cubby Slicer: the project JSON, with meshes pointing into the model file.
+  // CubbyCAD trees go to their own file (stock Orca ignores both; it just sees the meshes).
+  const trees: CadTreesJson = { format: 'cubbycad-trees', version: 1, objects: {} };
+  const plain = objects.map((o) => {
+    if (!o.cad) return o;
+    trees.objects[o.id] = o.cad.node;
+    const { cad: _cad, ...rest } = o;
+    return rest;
+  });
+  if (Object.keys(trees.objects).length) files[CUBBY_CAD_META] = [strToU8(JSON.stringify(trees)), { level: 6 }];
   const json: ProjectJson & { meshSource: Record<string, string> } = {
     format: PROJECT_FORMAT, version: PROJECT_VERSION, name: projectName.value, savedAt: new Date().toISOString(),
-    objects, meshes: [...subOf.keys()].map((id) => ({ id, vertexCount: meshes.get(id)!.vertexCount, triangleCount: meshes.get(id)!.triangleCount })),
+    objects: plain, meshes: [...subOf.keys()].map((id) => ({ id, vertexCount: meshes.get(id)!.vertexCount, triangleCount: meshes.get(id)!.triangleCount })),
     plates, paint, sections: saveSections(),
     meshSource: Object.fromEntries([...subOf].map(([mesh, sid]) => [mesh, `${OBJECTS_FILE}#${sid}`])),
   };

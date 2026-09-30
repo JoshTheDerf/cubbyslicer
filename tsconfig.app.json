@@ -13,7 +13,9 @@
       "three/addons/*": ["./node_modules/@types/three/examples/jsm/*"],
       "three/examples/jsm/*": ["./node_modules/@types/three/examples/jsm/*"],
       "vue": ["./node_modules/vue"],
-      "three-viewport-gizmo": ["./node_modules/three-viewport-gizmo"]
+      "three-viewport-gizmo": ["./node_modules/three-viewport-gizmo"],
+      "@nuxt/ui/*": ["./node_modules/@nuxt/ui/*"],
+      "manifold-3d": ["./node_modules/manifold-3d"]
     },
 
     "strict": true,

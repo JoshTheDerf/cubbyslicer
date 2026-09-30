@@ -1,5 +1,6 @@
 import type { ConfigValue } from '../engine/types';
 import type { Quat, Vec3 } from './math';
+import type { CadNode } from '../cad/api';
 
 export interface BBox3 { min: Vec3; max: Vec3 }
 
@@ -116,6 +117,17 @@ export interface ProjectObject {
    * cut piece sat before "place on cut" / arrange. Assembly View shows it.
    */
   assembly?: { position: Vec3; rotation: Quat; scale: Vec3 };
+  /**
+   * CubbyCAD modelling: the object IS this node tree (a primitive or a
+   * manifold group, verbatim CubbyCAD JSON). `meshId` is derived from it
+   * (evaluated Z-up without the root's own transform; this object's TRS places
+   * it). The tree is immutable and `markRaw` — edits replace it (src/cad).
+   */
+  cad?: CadObjectData;
+}
+
+export interface CadObjectData {
+  node: CadNode;
 }
 
 /** One height range modifier: Z range + the settings it applies (Orca "Height range Modifier"). */
