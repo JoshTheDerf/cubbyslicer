@@ -1,6 +1,6 @@
 /**
  * Model hand-off from the CubbyCAD editor (kept from the legacy app):
- *  - `?model=<url>` fetches a model on startup;
+ *  - `?model=<url>` fetches models on startup (params: modelLink.ts);
  *  - an opener can `postMessage({ type: 'cubby-slicer:model', stl: ArrayBuffer, name })`;
  *  - we post `{ type: 'cubby-slicer:ready' }` to the opener once listening.
  *
@@ -21,7 +21,8 @@
  */
 import { parseCadTransfer } from '@cubby/shared/cad';
 import { toast } from '../../ui';
-import { importBuffer } from './actions';
+import { arrangeObjects, importBuffer, reportUnplaced } from './actions';
+import { MODEL_LINK_PARAMS, parseModelLinkParams, resolveLinkName } from './modelLink';
 
 export const HANDOFF_CHANNEL = 'cubby-slicer-handoff';
 
@@ -61,6 +62,35 @@ async function importHandoff(name: string, stl: ArrayBuffer, cad: unknown): Prom
   await importBuffer(name, stl);
 }
 
+/** `?model=` links: fetch and import in order, then arrange as `?arrange=` asks. */
+async function openModelLinks(): Promise<void> {
+  const { models, arrange, invalid } = parseModelLinkParams(new URLSearchParams(location.search), location.href);
+  if (!models.length && !invalid.length) return;
+  // One-off: a reload must not import the files again.
+  const u = new URL(location.href);
+  for (const p of MODEL_LINK_PARAMS) u.searchParams.delete(p);
+  history.replaceState(history.state, '', u);
+  for (const raw of invalid) toast.error("Couldn't load the linked model.", { detail: `${raw}\nOnly http(s) links are supported.` });
+  // Arrange once after the last file, not per file.
+  const perFile = arrange === 'default' ? undefined : false;
+  let added = 0;
+  for (const link of models) {
+    try {
+      const rsp = await fetch(link.url);
+      if (!rsp.ok) throw new Error(`HTTP ${rsp.status}`);
+      const buf = await rsp.arrayBuffer();
+      const name = resolveLinkName(link, { disposition: rsp.headers.get('content-disposition'), contentType: rsp.headers.get('content-type') }, new Uint8Array(buf, 0, Math.min(4, buf.byteLength)));
+      added += (await importBuffer(name, buf, { autoArrange: perFile })).length;
+    } catch (e) {
+      toast.error("Couldn't load the linked model.", { detail: `${link.url}\n${(e as Error)?.message ?? ''}` });
+    }
+  }
+  if (added && (arrange === 'all' || arrange === 'plate')) {
+    const n = arrangeObjects(undefined, 6, arrange);
+    if (n) reportUnplaced(n);
+  }
+}
+
 export function startHandoff(): () => void {
   const onMessage = (ev: MessageEvent) => {
     const d = ev.data as HandoffMessage;
@@ -94,20 +124,7 @@ export function startHandoff(): () => void {
     channel.postMessage({ type: 'cubby-slicer:ready', handoff: handoffId });
   }
 
-  const url = new URLSearchParams(location.search).get('model');
-  if (url) {
-    void (async () => {
-      try {
-        const rsp = await fetch(url);
-        if (!rsp.ok) throw new Error(`HTTP ${rsp.status}`);
-        const buf = await rsp.arrayBuffer();
-        const name = decodeURIComponent(url.split('/').pop()?.split('?')[0] || 'model.stl');
-        await importBuffer(name, buf);
-      } catch (e) {
-        toast.error("Couldn't load the linked model.", { detail: `${url}\n${(e as Error)?.message ?? ''}` });
-      }
-    })();
-  }
+  void openModelLinks();
   return () => {
     window.removeEventListener('message', onMessage);
     channel?.close();

@@ -49,8 +49,11 @@ async function withBusy<T>(label: string, fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } finally { ui.busy = null; }
 }
 
-/** Import model buffers (from the file picker, drop, ?model= or postMessage). */
-export async function importBuffer(name: string, buffer: ArrayBuffer): Promise<string[]> {
+/**
+ * Import model buffers (from the file picker, drop, ?model= or postMessage).
+ * `autoArrange` overrides Preferences → Auto arrange plate after import.
+ */
+export async function importBuffer(name: string, buffer: ArrayBuffer, opts: { autoArrange?: boolean } = {}): Promise<string[]> {
   if (buffer.byteLength > LIMITS.maxFileBytes) {
     toast.error(`${name} is too large to import.`, { detail: `The limit is ${LIMITS.maxFileBytes / 1048576} MB.` });
     return [];
@@ -79,7 +82,7 @@ export async function importBuffer(name: string, buffer: ArrayBuffer): Promise<s
     const ids = addParsedObjects(res.objects, { label: `Import ${name}` });
     activeView.value = 'prepare';
     // Preferences → Auto arrange plate after import.
-    if (preferences.autoArrangeImport && ids.length) { const n = arrangeObjects(undefined, 6, 'plate'); if (n) reportUnplaced(n); }
+    if ((opts.autoArrange ?? preferences.autoArrangeImport) && ids.length) { const n = arrangeObjects(undefined, 6, 'plate'); if (n) reportUnplaced(n); }
     // OBJ face colours → filaments (Orca ObjColorDialog).
     if (res.objects.some((o) => o.faceGroups)) void offerObjColors(res.objects, ids);
     if (res.warnings.length) {

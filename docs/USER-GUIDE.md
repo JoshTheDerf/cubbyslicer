@@ -73,7 +73,11 @@ Colour mixing settings (under the list) hold the global options: Local-Z minimum
 
 The [CubbyCAD editor](https://cubbycad.com/editor) sends the current model with File ▸ Open Slicer. Other apps can do the same:
 
-- `?model=<url>` loads a model on startup (the URL must allow CORS).
+- `?model=<url>` loads a model or 3MF project on startup. The link must be an absolute http(s) URL, URL-encoded, and its server must allow CORS. Repeat `model` to load several files in order. Optional params:
+  - `name=<file>` names the file when the link's path doesn't (for example `/download?id=42` or a signed URL). The Nth `name` goes with the Nth `model`. Without it, the name comes from `Content-Disposition` (if the server exposes it), then the URL path, then `Content-Type` or a zip signature (3MF).
+  - `arrange=all` (or `1`) arranges every unlocked plate once everything has loaded, `arrange=plate` arranges only the active plate, and `arrange=0` skips Preferences ▸ Auto arrange plate after import. Arranging replaces the plate layout saved in a 3MF project.
+
+  For example: `/slicer/?model=https%3A%2F%2Fapi.example.com%2Fdownload%3Fid%3D42&name=bracket.3mf&arrange=all`. These params are removed from the address bar once the files have loaded.
 - Open `/slicer/?handoff=<id>`, wait for `{ type: 'cubby-slicer:ready', handoff: id }` on `BroadcastChannel('cubby-slicer-handoff')`, then post `{ type: 'cubby-slicer:model', handoff: id, stl, name }` (same origin only). This works across the slicer's cross-origin isolation, which the older `window.opener` `postMessage` path doesn't.
 
 ## AI agents (MCP)
