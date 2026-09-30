@@ -24,8 +24,8 @@ export const cadUi = reactive({
   nodeId: null as string | null,
   /** The shape palette popover is open. */
   paletteOpen: false,
-  /** The shape panel (tree + params) is expanded. */
-  panelOpen: true,
+  /** The shape panel (tree + params) is expanded (phones start collapsed: it would cover the view). */
+  panelOpen: !(typeof matchMedia !== 'undefined' && matchMedia('(max-width: 640px)').matches),
 });
 
 /** The one selected object, when it is a CAD object. */

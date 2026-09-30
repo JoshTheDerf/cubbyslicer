@@ -226,7 +226,7 @@ onBeforeUnmount(() => stopHandoff?.());
 .ov--bl { left: 10px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .ov--bl > :last-child { pointer-events: none; }
 .ov--tl { top: 64px; left: 10px; }
-.ov--top { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ov--top { display: flex; flex-direction: column; align-items: center; gap: 6px; z-index: calc(var(--z-toolbar) + 2); } /* the shape palette opens over the other cards */
 .ov--cad { top: 118px; right: 10px; }
 @media (max-width: 1100px) { .ov--cad { top: 104px; } }
 .ov--bc { bottom: 10px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 560px); min-width: 0; }
