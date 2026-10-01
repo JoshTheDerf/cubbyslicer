@@ -28,7 +28,7 @@
  *  - Output is copied out of the heap before the instance is dropped/reused.
  */
 import type {
-  ConfigSchema, EngineId, FlatConfig, SliceJob, SliceReport, ToolMesh, WorkerRequest, WorkerResponse,
+  ArrangeArgs, ConfigSchema, EngineId, FlatConfig, SliceJob, SliceReport, ToolMesh, WorkerRequest, WorkerResponse,
 } from './types';
 
 interface EngineModule {
@@ -293,6 +293,11 @@ function waitForSlice(mod: EngineModule, state: number): Promise<number> {
 
 /** Pack meshes into one blob; returns job JSON with byte offsets. */
 function packJob(job: SliceJob): { json: Uint8Array; blob: Uint8Array } {
+  const { payload, blob } = packPayload(job);
+  return { json: enc.encode(JSON.stringify(payload)), blob };
+}
+
+function packPayload(job: SliceJob): { payload: Record<string, unknown>; blob: Uint8Array } {
   // Instances share their mesh arrays: pack each distinct array once.
   let size = 0;
   const offsets = new Map<ArrayBufferView, number>();
@@ -329,7 +334,7 @@ function packJob(job: SliceJob): { json: Uint8Array; blob: Uint8Array } {
   const blob = new Uint8Array(size);
   for (const a of chunks) blob.set(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), offsets.get(a)!);
   const payload = { config: job.config, options: { validate: true, dropToBed: true, ...job.options }, objects };
-  return { json: enc.encode(JSON.stringify(payload)), blob };
+  return { payload, blob };
 }
 
 function isTrap(e: unknown): boolean {
@@ -522,6 +527,31 @@ async function doTool(id: number, op: string, args: unknown, meshes: ToolMesh[])
   }
 }
 
+// Orca auto arrange: a cs_tool call whose request also carries the slice-job
+// `config` + `objects` (packed like a slice job).
+async function doArrange(id: number, config: FlatConfig, objects: SliceJob['objects'], args: ArrangeArgs): Promise<void> {
+  const { mod, shared } = await moduleFor();
+  if (typeof mod._cs_tool !== 'function') throw new Error(`${engine} engine does not support arrange`);
+  const { payload, blob } = packPayload({ engine, config, objects });
+  const json = enc.encode(JSON.stringify({ ...payload, op: 'arrange', args }));
+  const jp = writeIn(mod, json), bp = writeIn(mod, blob);
+  const outs = allocWords(mod, 4);
+  let pj = 0, pb = 0;
+  try {
+    mod._cs_tool(jp, json.byteLength, bp, blob.byteLength, outs, outs + 4, outs + 8, outs + 12);
+    pj = u32(mod, outs); pb = u32(mod, outs + 8);
+    const r = JSON.parse(dec.decode(copyOut(mod, pj, u32(mod, outs + 4)))) as { ok: boolean; error: string | null; result: unknown };
+    if (!r.ok) throw new Error(r.error ?? 'arrange failed');
+    post({ type: 'tool', id, result: r.result, meshes: [] });
+  } finally {
+    if (shared) {
+      if (pj) mod._cs_free(pj);
+      if (pb) mod._cs_free(pb);
+      mod._free(jp); mod._free(bp); mod._free(outs);
+    }
+  }
+}
+
 async function handle(msg: WorkerRequest): Promise<void> {
   try {
     if (msg.type === 'slice') await doSlice(msg.id, msg.job);
@@ -529,6 +559,7 @@ async function handle(msg: WorkerRequest): Promise<void> {
     else if (msg.type === 'evalCondition') await doCondition(msg.id, msg.expr, msg.config);
     else if (msg.type === 'orient') await doOrient(msg.id, msg.object);
     else if (msg.type === 'tool') await doTool(msg.id, msg.op, msg.args, msg.meshes);
+    else if (msg.type === 'arrange') await doArrange(msg.id, msg.config, msg.objects, msg.args);
   } catch (e) {
     if (e instanceof EngineStall) {
       mtDisabled = true;

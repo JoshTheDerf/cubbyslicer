@@ -18,20 +18,22 @@ const SLICER_URL = process.argv[2] ?? process.env.SLICER_URL ?? 'http://localhos
 const PORT = Number(process.env.E2E_LINK_PORT ?? 18794);
 const PROJECT = readFileSync(join(ROOT, 'public/calib/handy/OrcaSliced.3mf'));
 
-/** Binary STL of an axis-aligned `s` mm cube. */
-function cubeStl(s) {
-  const v = [[0,0,0],[s,0,0],[s,s,0],[0,s,0],[0,0,s],[s,0,s],[s,s,s],[0,s,s]];
+/** Binary STL of an axis-aligned w × d × h box (corner at the origin). */
+function boxStl(w, d = w, h = w) {
+  const v = [[0,0,0],[w,0,0],[w,d,0],[0,d,0],[0,0,h],[w,0,h],[w,d,h],[0,d,h]];
   const f = [[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]];
   const b = Buffer.alloc(84 + f.length * 50);
   b.writeUInt32LE(f.length, 80);
   f.forEach((t, i) => t.forEach((vi, k) => v[vi].forEach((c, j) => b.writeFloatLE(c, 84 + i * 50 + 12 + k * 12 + j * 4))));
   return b;
 }
-const CUBE = cubeStl(20);
+const CUBE = boxStl(20);
+let BAR = null; // sized to the printer's bed once the page tells us
 
 const server = createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Content-Disposition' };
+  if (u.pathname === '/files/bar.stl' && BAR) return res.writeHead(200, { ...cors, 'Content-Type': 'model/stl' }).end(BAR);
   if (u.pathname === '/files/cube.stl') return res.writeHead(200, { ...cors, 'Content-Type': 'model/stl' }).end(CUBE);
   // Extension-less: the slicer has to sniff it (zip → 3MF).
   if (u.pathname === '/dl' && u.searchParams.get('id') === 'project') return res.writeHead(200, { ...cors, 'Content-Type': 'application/octet-stream' }).end(PROJECT);
@@ -51,24 +53,42 @@ const browser = await chromium.launch({ headless: !process.env.HEADED });
 const enc = encodeURIComponent;
 
 /** Open the slicer with `query`, wait for `n` objects, return the page state. */
-async function open(query, n, prefs) {
-  const page = await browser.newPage();
+async function open(query, n, prefs, { arrangeSettings, then, arranged = /arrange=(all|plate|1)/.test(query) } = {}) {
+  const ctx = await browser.newContext(); // fresh per case: each loads the engine (MT: a large shared heap)
+  const page = await ctx.newPage();
   if (prefs) await page.addInitScript((p) => localStorage.setItem('cubby-slicer:preferences', JSON.stringify(p)), prefs);
-  const errors = [];
+  if (arrangeSettings) await page.addInitScript((a) => localStorage.setItem('cubby-slicer:arrange', JSON.stringify(a)), arrangeSettings);
+  const errors = [], logs = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(`${SLICER_URL}?${query}`);
-  await page.waitForFunction((n) => (window.__cubbyProject?.objects.value.length ?? 0) >= n, n, { timeout: 120000 });
+  page.on('console', (m) => { if (m.type() === 'error' || /arrange|engine|model/i.test(m.text())) logs.push(`${m.type()}: ${m.text().slice(0, 200)}`); });
+  await page.goto(`${SLICER_URL}${SLICER_URL.includes("?") ? "&" : "?"}${query}`);
+  try {
+    await page.waitForFunction((n) => (window.__cubbyProject?.objects.value.length ?? 0) >= n, n, { timeout: 120000 });
+  } catch (e) {
+    const info = await page.evaluate(() => ({ n: window.__cubbyProject?.objects.value.length, url: location.href, toasts: [...document.querySelectorAll('[data-slot="title"], [data-slot="description"]')].map((x) => x.textContent) })).catch(() => null);
+    console.log('LOAD TIMEOUT', JSON.stringify(info), errors, logs.slice(-15));
+    throw e;
+  }
   await page.waitForTimeout(500);
+  if (then) await page.evaluate(then);
+  // Orca's arrange runs on the engine after loading: wait for its undo step.
+  if (arranged || then) await page.waitForFunction(() => window.__cubbyProject.historyState.value.undo === 'Arrange', null, { timeout: 120000 });
+  await page.waitForTimeout(300);
   const state = await page.evaluate(() => {
     const p = window.__cubbyProject;
     return {
-      search: location.search,
-      objects: p.objects.value.map((o) => ({ name: o.name, x: o.position[0], y: o.position[1], plate: p.plateOf(o.id) })),
+      search: location.search.replace(/[?&]cubby-debug=?(?=&|$)/, ''), // the debug flag stays by design
+      objects: p.objects.value.map((o) => {
+        const i = p.objectInfo.value.get(o.id);
+        return { name: o.name, x: o.position[0], y: o.position[1], plate: p.plateOf(o.id), issues: p.objectIssues.value.get(o.id) ?? [],
+          min: i ? [i.min[0], i.min[1]] : null, max: i ? [i.max[0], i.max[1]] : null, rot: [...o.rotation] };
+      }),
+      bed: { min: p.bed.value.min, max: p.bed.value.max },
       plates: p.plates.value.length,
       project: p.projectName.value,
     };
   });
-  await page.close();
+  await ctx.close();
   return { ...state, errors };
 }
 
@@ -99,6 +119,33 @@ s = await open(`${twoCubes}&arrange=0`, 2, { autoArrangeImport: true });
 check(s.objects.length === 2, 'two objects');
 check(s.search === '', 'params cleared');
 check(layout(s) !== layout(withPref), `layout differs from the preference's arrange (${layout(s)} vs ${layout(withPref)})`);
+
+/** Smallest axis-aligned gap between two objects' footprints (for unrotated boxes). */
+const gapOf = (a, b) => Math.max(b.min[0] - a.max[0], a.min[0] - b.max[0], b.min[1] - a.max[1], a.min[1] - b.max[1]);
+
+log('Orca arrange spacing from links');
+s = await open(`${twoCubes}&arrange=plate`, 2);
+check(Math.abs(gapOf(s.objects[0], s.objects[1]) - 2) < 0.1, `auto spacing → ${gapOf(s.objects[0], s.objects[1]).toFixed(2)} mm (Orca: brim 1 mm each)`);
+s = await open(`${twoCubes}&arrange=plate&spacing=20`, 2);
+check(Math.abs(gapOf(s.objects[0], s.objects[1]) - 20) < 0.1, `spacing=20 → ${gapOf(s.objects[0], s.objects[1]).toFixed(2)} mm`);
+
+log('auto rotate: on by default for links');
+const probe = await open(`model=${enc(`${FILES}/files/cube.stl`)}&arrange=0`, 1);
+const bw = probe.bed.max[0] - probe.bed.min[0], bd = probe.bed.max[1] - probe.bed.min[1];
+BAR = boxStl(Math.min(bw, bd) + 30, 15, 5); // only fits diagonally
+const bar = `model=${enc(`${FILES}/files/bar.stl`)}`;
+s = await open(`${bar}&arrange=plate`, 1);
+check(s.objects[0].plate === 0 && !s.objects[0].issues.length && Math.abs(s.objects[0].rot[2]) > 0.01,
+  `bar ${(Math.min(bw, bd) + 30).toFixed(0)} mm on a ${bw}×${bd} bed fits rotated (issues ${JSON.stringify(s.objects[0].issues)}, q=${s.objects[0].rot.map((v) => v.toFixed(3))})`);
+s = await open(`${bar}&arrange=plate&rotate=0`, 1);
+check(s.objects[0].plate !== 0 || s.objects[0].issues.length > 0, `rotate=0 → bar not placed on the plate (plate ${s.objects[0].plate}, issues ${JSON.stringify(s.objects[0].issues)})`);
+
+log('saved Arrange options drive Shift+A');
+s = await open(`${twoCubes}&arrange=0`, 2, null, {
+  arrangeSettings: { fff: { distance: 15, enableRotation: false }, seqPrint: { distance: 0, enableRotation: false }, allowMultiMaterials: true, avoidCaliRegion: true, alignToYAxis: false },
+  then: () => { const A = window.__cubbyActions; return A.runAction(A.getAction('arrange.plate'), A.getActionContext()); },
+});
+check(Math.abs(gapOf(s.objects[0], s.objects[1]) - 15) < 0.1, `saved spacing 15 → ${gapOf(s.objects[0], s.objects[1]).toFixed(2)} mm`);
 
 await browser.close();
 server.close();

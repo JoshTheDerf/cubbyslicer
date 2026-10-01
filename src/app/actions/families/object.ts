@@ -2,6 +2,7 @@ import { nudgeDelta, nudgeStep } from '@cubby/shared/nudge';
 import type { Action } from '../types';
 import type { AppContext } from '../context';
 import type { GizmoMode } from '../../../viewport/controller';
+import { openDialog } from '../../../dialogs/state';
 
 // Orca plater keys: M move, R rotate, S scale, F lay on face, A arrange all, Shift+A arrange the active plate,
 // Q auto-orient (selection, or everything when nothing is selected), Shift+Q orient the active plate,
@@ -94,6 +95,8 @@ export function objectActions(): Action[] {
       binding: { key: 'a', shift: true, scope: 'prepare' }, when: (c) => c.plates.activeObjects > 0, run: (c) => c.dispatch.arrangePlate() },
     { id: 'arrange.selection', title: 'Arrange selection', icon: 'i-lucide-layout-grid', category: 'Arrange', aliases: ['pack'],
       when: (c) => c.selection.count > 0, run: (c) => c.dispatch.arrangeSelection() },
+    { id: 'arrange.options', title: 'Arrange options…', icon: 'i-lucide-settings-2', category: 'Arrange', aliases: ['arrange settings', 'spacing', 'auto rotate', 'arrange spacing'],
+      run: () => openDialog('arrange') },
     { id: 'object.split-objects', title: 'Split to objects', icon: 'i-lucide-split', category: 'Object', aliases: ['separate', 'break apart', 'explode'],
       when: sel, run: (c) => c.dispatch.splitToObjects() },
     { id: 'object.split-parts', title: 'Split to parts', icon: 'i-lucide-component', category: 'Object', aliases: ['separate parts', 'volumes'],

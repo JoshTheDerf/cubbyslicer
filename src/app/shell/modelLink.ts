@@ -1,7 +1,7 @@
 /**
  * `?model=` link parsing (pure; the fetch/import lives in handoff.ts).
  *
- *   /slicer/?model=<url>[&model=<url>…][&name=<file>…][&arrange=all|plate|0]
+ *   /slicer/?model=<url>[&model=<url>…][&name=<file>…][&arrange=all|plate|0][&spacing=<mm>|auto][&rotate=1|0]
  *
  * - `model`: absolute http(s) URL, repeatable; files load in order.
  * - `name`: the Nth `name` names the Nth `model`, for links whose path has no
@@ -10,6 +10,9 @@
  *   everything has loaded; `plate` only the active plate; `0`/`false` skips
  *   the "auto arrange after import" preference for this load. Absent: the
  *   preference applies as for any import.
+ * - `spacing` / `rotate`: Orca's arrange options for that arrange (not the
+ *   viewer's saved ones, so a link lays out the same everywhere): spacing in
+ *   mm, `auto`/`0` = auto (default); auto rotate, on unless `rotate=0`.
  */
 import { MODEL_EXTENSIONS } from '../../project/import';
 
@@ -17,10 +20,12 @@ export type LinkArrange = 'all' | 'plate' | 'off' | 'default';
 
 export interface ModelLink { url: string; name: string | null }
 
-export interface ModelLinkParams { models: ModelLink[]; arrange: LinkArrange; invalid: string[] }
+export interface LinkArrangeOptions { distance: number; enableRotation: boolean }
+
+export interface ModelLinkParams { models: ModelLink[]; arrange: LinkArrange; options: LinkArrangeOptions; invalid: string[]; warnings: string[] }
 
 /** Query params this feature owns (cleared from the address bar after loading). */
-export const MODEL_LINK_PARAMS = ['model', 'name', 'arrange'] as const;
+export const MODEL_LINK_PARAMS = ['model', 'name', 'arrange', 'spacing', 'rotate'] as const;
 
 export function parseArrange(v: string | null): LinkArrange {
   if (v === null) return 'default';
@@ -31,7 +36,30 @@ export function parseArrange(v: string | null): LinkArrange {
   return 'default';
 }
 
+/** `spacing`: mm ≥ 0, `auto` = 0 (Orca's auto spacing). Null when unusable. */
+export function parseSpacing(v: string | null): number | null {
+  if (v === null) return 0;
+  const l = v.trim().toLowerCase();
+  if (l === '' || l === 'auto') return 0;
+  const n = Number(l.replace(/mm$/, ''));
+  return Number.isFinite(n) && n >= 0 && n <= 1000 ? n : null;
+}
+
+/** `rotate`: on unless 0 / false / no / off. Null when unusable. */
+export function parseRotate(v: string | null): boolean | null {
+  if (v === null) return true;
+  const l = v.trim().toLowerCase();
+  if (l === '' || l === '1' || l === 'true' || l === 'yes' || l === 'on') return true;
+  if (l === '0' || l === 'false' || l === 'no' || l === 'off') return false;
+  return null;
+}
+
 export function parseModelLinkParams(q: URLSearchParams, base: string): ModelLinkParams {
+  const warnings: string[] = [];
+  const spacing = parseSpacing(q.get('spacing'));
+  if (spacing === null) warnings.push(`Ignored spacing=${q.get('spacing')}: use a distance in mm (0-1000) or "auto".`);
+  const rotate = parseRotate(q.get('rotate'));
+  if (rotate === null) warnings.push(`Ignored rotate=${q.get('rotate')}: use 1 or 0.`);
   const names = q.getAll('name');
   const models: ModelLink[] = [];
   const invalid: string[] = [];
@@ -42,7 +70,7 @@ export function parseModelLinkParams(q: URLSearchParams, base: string): ModelLin
     const name = names[i]?.trim();
     models.push({ url: u.href, name: name ? baseName(name) : null });
   });
-  return { models, arrange: parseArrange(q.get('arrange')), invalid };
+  return { models, arrange: parseArrange(q.get('arrange')), options: { distance: spacing ?? 0, enableRotation: rotate ?? true }, invalid, warnings };
 }
 
 function baseName(p: string): string {

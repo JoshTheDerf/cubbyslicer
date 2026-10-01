@@ -21,7 +21,8 @@
  */
 import { parseCadTransfer } from '@cubby/shared/cad';
 import { toast } from '../../ui';
-import { arrangeObjects, importBuffer, reportUnplaced } from './actions';
+import { importBuffer } from './actions';
+import { runArrange } from './arrange';
 import { MODEL_LINK_PARAMS, parseModelLinkParams, resolveLinkName } from './modelLink';
 
 export const HANDOFF_CHANNEL = 'cubby-slicer-handoff';
@@ -64,31 +65,29 @@ async function importHandoff(name: string, stl: ArrayBuffer, cad: unknown): Prom
 
 /** `?model=` links: fetch and import in order, then arrange as `?arrange=` asks. */
 async function openModelLinks(): Promise<void> {
-  const { models, arrange, invalid } = parseModelLinkParams(new URLSearchParams(location.search), location.href);
+  const { models, arrange, options, invalid, warnings } = parseModelLinkParams(new URLSearchParams(location.search), location.href);
   if (!models.length && !invalid.length) return;
   // One-off: a reload must not import the files again.
   const u = new URL(location.href);
   for (const p of MODEL_LINK_PARAMS) u.searchParams.delete(p);
   history.replaceState(history.state, '', u);
   for (const raw of invalid) toast.error("Couldn't load the linked model.", { detail: `${raw}\nOnly http(s) links are supported.` });
+  for (const w of warnings) toast.warn(w);
   // Arrange once after the last file, not per file.
   const perFile = arrange === 'default' ? undefined : false;
-  let added = 0;
+  const added: string[] = [];
   for (const link of models) {
     try {
       const rsp = await fetch(link.url);
       if (!rsp.ok) throw new Error(`HTTP ${rsp.status}`);
       const buf = await rsp.arrayBuffer();
       const name = resolveLinkName(link, { disposition: rsp.headers.get('content-disposition'), contentType: rsp.headers.get('content-type') }, new Uint8Array(buf, 0, Math.min(4, buf.byteLength)));
-      added += (await importBuffer(name, buf, { autoArrange: perFile })).length;
+      added.push(...await importBuffer(name, buf, { autoArrange: perFile }));
     } catch (e) {
       toast.error("Couldn't load the linked model.", { detail: `${link.url}\n${(e as Error)?.message ?? ''}` });
     }
   }
-  if (added && (arrange === 'all' || arrange === 'plate')) {
-    const n = arrangeObjects(undefined, 6, arrange);
-    if (n) reportUnplaced(n);
-  }
+  if (added.length && (arrange === 'all' || arrange === 'plate')) await runArrange(arrange, { ...options, imported: added });
 }
 
 export function startHandoff(): () => void {

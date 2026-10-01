@@ -4,10 +4,11 @@
  * plate, moving objects between plates and arranging.
  */
 import { argNumber, argString, type BridgeTool } from '@cubby/shared/bridge';
-import { addPlateCmd, deletePlateCmd, reportUnplaced, selectPlate } from '../../app/shell/actions';
+import { addPlateCmd, deletePlateCmd, selectPlate } from '../../app/shell/actions';
+import { runArrange } from '../../app/shell/arrange';
 import { useSliceController } from '../../app/slice';
 import type { ConfigValue } from '../../engine/types';
-import { activePlate, arrangeObjects, moveObjectsToPlate, objects, objectsOnPlate, plates, renamePlate, setPlateLocked } from '../../project/store';
+import { activePlate, moveObjectsToPlate, objects, objectsOnPlate, plates, renamePlate, setPlateLocked } from '../../project/store';
 import { MAX_PLATES, plateLabel } from '../../project/plates';
 import { PLATE_KEYS, plateConfig, setPlateConfig } from '../../plates/store';
 import { currentPresets, presetsSettled } from '../../presets/store';
@@ -113,20 +114,22 @@ export function plateTools(): BridgeTool[] {
 
     {
       name: 'arrange',
-      description: 'Arrange like the Arrange buttons: scope "plate" (the active plate, or `plate`), "all" (every unlocked plate; what doesn’t fit spills onto new plates) or `ids` (those objects on the active plate around the rest).',
+      description: 'Arrange like the Arrange buttons (OrcaSlicer\u2019s arrange): scope "plate" (the active plate, or `plate`), "all" (every unlocked plate; what doesn\u2019t fit spills onto new plates) or `ids` (those objects, around the rest). ' +
+        'spacing / rotate default to the user\u2019s Arrange options.',
       inputSchema: obj({
         scope: oneOfS(['plate', 'all'], 'Default "plate".'), plate: num('Plate for scope "plate" (1-based).'), ids: strList('Only these objects.'),
-        spacing: num('Gap in mm (default 6).'), allPlates: bool('Older form of scope "all".'),
+        spacing: num('Gap between objects in mm; 0 = auto (each object\u2019s brim / support margin).'), rotate: bool('Let arrange rotate objects about Z.'),
+        allPlates: bool('Older form of scope "all".'),
       }),
-      run(args) {
-        const spacing = argNumber(args, 'spacing', { optional: true }) ?? 6;
-        if (!(spacing >= 0 && spacing <= 100)) throw new Error('spacing must be 0-100 mm.');
+      async run(args) {
+        const spacing = argNumber(args, 'spacing', { optional: true });
+        if (spacing !== undefined && !(spacing >= 0 && spacing <= 1000)) throw new Error('spacing must be 0-1000 mm.');
         const scope = args.allPlates === true ? 'all' : args.scope === undefined ? 'plate' : oneOf(args.scope, ['plate', 'all'] as const, 'scope');
         const plate = plateArg(args);
         if (plate !== undefined) selectPlate(plate);
         const ids = args.ids !== undefined ? idsArg(args) : undefined;
-        const unplaced = arrangeObjects(ids, spacing, ids ? 'plate' : scope);
-        if (unplaced) reportUnplaced(unplaced);
+        const r = await runArrange(ids ? 'selection' : scope, { distance: spacing, enableRotation: typeof args.rotate === 'boolean' ? args.rotate : undefined, ids });
+        const unplaced = r?.unplaced ?? 0;
         return { data: { ok: true, unplaced, plates: plates.value.length, objects: objects.value.map((o) => ({ ...objectDetail(o.id), parts: undefined })) } };
       },
     },

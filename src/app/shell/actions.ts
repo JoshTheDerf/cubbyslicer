@@ -35,6 +35,7 @@ import { downloadBytes, pickFiles, safeFileName, saveBytes } from './download';
 import type { SliceControllerLike } from './external';
 import { chooseAction, confirmAction, setClipboard, ui } from './uiState';
 import { preferences } from '../preferences';
+import { runArrange } from './arrange';
 import { setCloudLocation } from '../../cloud/store';
 import { folderAccessSupported, setLocalLocation, STL_TYPES, THREEMF_TYPES } from '../../localfs/store';
 
@@ -82,7 +83,7 @@ export async function importBuffer(name: string, buffer: ArrayBuffer, opts: { au
     const ids = addParsedObjects(res.objects, { label: `Import ${name}` });
     activeView.value = 'prepare';
     // Preferences → Auto arrange plate after import.
-    if ((opts.autoArrange ?? preferences.autoArrangeImport) && ids.length) { const n = arrangeObjects(undefined, 6, 'plate'); if (n) reportUnplaced(n); }
+    if ((opts.autoArrange ?? preferences.autoArrangeImport) && ids.length) await runArrange('plate', { imported: ids });
     // OBJ face colours → filaments (Orca ObjColorDialog).
     if (res.objects.some((o) => o.faceGroups)) void offerObjColors(res.objects, ids);
     if (res.warnings.length) {
@@ -286,10 +287,7 @@ export function togglePlateLock(i = activePlate.value): void {
   if (p) setPlateLocked(i, !p.locked);
 }
 
-export function arrangePlate(): void {
-  const n = arrangeObjects(undefined, 6, 'plate');
-  if (n) reportUnplaced(n);
-}
+export function arrangePlate(): void { void runArrange('plate'); }
 
 // ---- instances / split -------------------------------------------------------------
 
@@ -535,7 +533,7 @@ export async function autoOrientObjects(scope: 'auto' | 'all'): Promise<void> {
     if (outside) {
       toast.warn(`${outside === 1 ? '1 object no longer fits' : `${outside} objects no longer fit`} on the plate after orienting.`, {
         detail: 'Arrange the plate (A) or scale the object down.',
-        action: { label: 'Arrange', run: () => { const n = arrangeObjects(); if (n) reportUnplaced(n); } },
+        action: { label: 'Arrange', run: () => { void runArrange('all'); } },
       });
     } else if (res.cancelled) {
       toast.info(`Stopped. Oriented ${res.rotations.length} of ${targets.length} objects.`);

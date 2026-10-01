@@ -657,15 +657,15 @@ export async function addHandyModel(id: string): Promise<boolean> {
   const m = HANDY_MODELS.find((h) => h.id === id);
   if (!m) return false;
   const { importBuffer } = await import('../app/shell/actions');
-  const { arrangeObjects } = await import('../project/store');
+  const { runArrange } = await import('../app/shell/arrange');
   try {
-    let added = 0;
+    const added: string[] = [];
     for (const f of m.files) {
       const rsp = await fetch(calibAssetUrl(`handy/${f}`));
       if (!rsp.ok) throw new Error(`${f} is not available on this server (HTTP ${rsp.status}). Run scripts/stage-calib.mjs.`);
-      added += (await importBuffer(f, await rsp.arrayBuffer())).length;
+      added.push(...await importBuffer(f, await rsp.arrayBuffer()));
     }
-    if (m.arrange && added) arrangeObjects(undefined, 6, 'plate');
+    if (m.arrange && added.length) await runArrange('plate', { imported: added });
     activeView.value = 'prepare';
   } catch (e) {
     toast.error(`Couldn’t add ${m.label}.`, { detail: (e as Error)?.message ?? String(e) });

@@ -13,7 +13,7 @@
  * error) tears all of those down too.
  */
 import type {
-  ConfigSchema, EngineId, EngineVersion, FlatConfig, PaintMap, SliceJob, SliceObjectInput, SliceProgress, SliceReport,
+  ArrangeArgs, ArrangeResult, ConfigSchema, EngineId, EngineVersion, FlatConfig, PaintMap, SliceJob, SliceObjectInput, SliceProgress, SliceReport,
   SliceResult, ToolMesh, WorkerRequest, WorkerResponse,
 } from './types';
 
@@ -199,6 +199,19 @@ export async function autoOrient(object: SliceObjectInput, signal?: AbortSignal)
   const res = await w.request({ type: 'orient', id: w.nextId(), object }, [], undefined, signal);
   if (res.type === 'orient') return res.rotation;
   throw new SliceError(res.type === 'error' ? res.message : 'auto-orient failed', null, res.type === 'error' && res.fatal);
+}
+
+/**
+ * OrcaSlicer's auto arrange (ArrangeJob: Arrange all / Arrange plate) over the
+ * project's objects. `objects` are slice-job inputs (transforms plate-local for
+ * objects on a plate); `args.items` is parallel to them. Always runs on the
+ * Orca engine.
+ */
+export async function orcaArrange(config: FlatConfig, objects: SliceObjectInput[], args: ArrangeArgs, signal?: AbortSignal): Promise<ArrangeResult> {
+  const w = workerFor('orca');
+  const res = await w.request({ type: 'arrange', id: w.nextId(), config, objects, args }, [], undefined, signal);
+  if (res.type === 'tool') return res.result as ArrangeResult;
+  throw new SliceError(res.type === 'error' ? res.message : 'arrange failed', null, res.type === 'error' && res.fatal);
 }
 
 // ---- engine tools (cs_tool) --------------------------------------------------------

@@ -10,7 +10,7 @@
  */
 import { computed, markRaw, ref, shallowRef, toRaw, watch } from 'vue';
 import { bedFromConfig, markSliceInputsChanged, resolvedConfig } from '../app/state';
-import type { ConfigValue, FlatConfig, PaintLayer, PaintLayers, PaintMap, SliceObjectInput } from '../engine/types';
+import type { ArrangeResult, ConfigValue, FlatConfig, PaintLayer, PaintLayers, PaintMap, SliceObjectInput } from '../engine/types';
 import { arrange, type ArrangeItem, type Rect } from './arrange';
 import { mergeWorldInfo, partWorldInfo, worldInfo, type WorldInfo } from './geometry';
 import { HistoryManager, type Operation } from '@cubby/shared/history';
@@ -643,9 +643,12 @@ function shiftToPlate(objs: ProjectObject[], p: number): void {
   }
 }
 
+const KEEP_IN_PLACE = -2;
+
 /**
  * Re-layout: the plate grid changes shape with the plate count, so objects
- * follow their plate (`map[old] = new index`, -1 = plate deleted → its objects removed).
+ * follow their plate (`map[old] = new index`, -1 = plate deleted → its objects
+ * removed, KEEP_IN_PLACE = plate deleted, its objects stay where they are).
  */
 function relayoutPlates(nOld: number, nNew: number, map: (old: number) => number): void {
   const b = bed.value;
@@ -655,6 +658,7 @@ function relayoutPlates(nOld: number, nNew: number, map: (old: number) => number
     const from = i ? plateIndexAt((i.min[0] + i.max[0]) / 2, (i.min[1] + i.max[1]) / 2, nOld, b) : -1;
     if (from < 0) { keep.push(o); continue; }
     const to = map(from);
+    if (to === KEEP_IN_PLACE) { keep.push(o); continue; }
     if (to < 0) continue;
     const [dx, dy] = plateShift(b, from, nOld, to, nNew);
     if (dx || dy) o.position = [o.position[0] + dx, o.position[1] + dy, o.position[2]];
@@ -1246,6 +1250,113 @@ export function arrangeObjects(ids?: string[], spacing = 6, scope: 'all' | 'plat
     unplaced = [...unplaced, ...carry.map((o) => o.id)];
   });
   return unplaced.length;
+}
+
+// ---- Orca auto arrange (engine) --------------------------------------------------
+
+/**
+ * Inputs for the engine's Orca arrange (src/engine/client.ts orcaArrange):
+ * every object except CubbyCAD holes, as slice-job objects whose transforms
+ * are plate-local for objects on a plate, plus the per-object and per-plate
+ * facts ArrangeJob reads. `ids[i]` is the object of `objects[i]`. `imported`
+ * objects on no plate count as on the active plate.
+ */
+export function arrangeInputs(selection: readonly string[] = [], imported: readonly string[] = []): {
+  ids: string[]; objects: SliceObjectInput[];
+  items: Array<{ plate: number; printable: boolean; selected: boolean }>;
+  plates: Array<{ locked: boolean; seq: '' | 'by layer' | 'by object'; toolChanges: number[] }>;
+} {
+  const sel = new Set(selection), fresh = new Set(imported);
+  const n = plates.value.length;
+  const ids: string[] = [], out: SliceObjectInput[] = [], items: Array<{ plate: number; printable: boolean; selected: boolean }> = [];
+  const cfgOf = (ov: Record<string, ConfigValue>): FlatConfig | undefined => {
+    const raw = toRaw(ov);
+    return Object.keys(raw).length ? Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, Array.isArray(v) ? [...v] : v])) : undefined;
+  };
+  for (const o of objects.value) {
+    if (isHoleObject(o.cad?.node)) continue;
+    const mesh = meshes.get(o.meshId);
+    const info = objectWorldInfo(o);
+    if (!mesh || !info) continue;
+    let plate = plateOfInfo(info);
+    if (plate < 0 && fresh.has(o.id)) plate = activePlate.value;
+    const [ox, oy] = plate >= 0 ? plateOffset(plate, n, bed.value) : [0, 0];
+    const pos: Vec3 = [o.position[0] - ox, o.position[1] - oy, o.position[2] - info.min[2]];
+    const transform = composeTRS(pos, [...o.rotation] as Quat, [...o.scale] as Vec3);
+    const parts = (o.parts ?? []).flatMap((p) => {
+      const pm = meshes.get(p.meshId);
+      if (!pm) return [];
+      const pt = mat4Multiply(transform, composeTRS([...p.position] as Vec3, [...p.rotation] as Quat, [...p.scale] as Vec3));
+      const pp = paintFor(p.meshId);
+      return [{ id: p.id, name: p.name, type: p.type, positions: pm.positions, indices: pm.indices, transform: pt, config: cfgOf(p.overrides), ...(pp ? { paint: pp } : {}) }];
+    });
+    const paint = paintFor(o.meshId);
+    out.push({
+      id: o.id, name: o.name, positions: mesh.positions, indices: mesh.indices, transform, config: cfgOf(o.overrides),
+      ...(parts.length ? { parts } : {}), ...(paint ? { paint } : {}),
+      ...layerSliceFields(toRaw(o), info.max[2] - info.min[2], resolvedConfig.value),
+    });
+    ids.push(o.id);
+    items.push({ plate, printable: o.printable, selected: sel.has(o.id) });
+  }
+  const seqOf = (p: PlateMeta): '' | 'by layer' | 'by object' => {
+    const v = p.config?.print_sequence ?? (p.config?.complete_objects !== undefined ? (String(p.config.complete_objects) === '1' ? 'by object' : 'by layer') : '');
+    const sv = Array.isArray(v) ? String(v[0] ?? '') : String(v);
+    return sv === 'by object' || sv === 'by layer' ? sv : '';
+  };
+  const platesOut = plates.value.map((p) => ({
+    locked: !!p.locked, seq: seqOf(p),
+    toolChanges: (p.customGcodes ?? []).filter((g) => g.type === 'tool_change' && (g.extruder ?? 0) > 0).map((g) => g.extruder!),
+  }));
+  return { ids, objects: out, items, plates: platesOut };
+}
+
+export interface ArrangeOutcome { moved: number; unplaced: number }
+
+/**
+ * Apply an Orca arrange result (one undo step): new plates are appended,
+ * objects placed (plate-local XY + rotation about Z, height kept), and after
+ * "Arrange all" trailing plates left empty or without printable objects are
+ * removed (PartPlateList::rebuild_plates_after_arrangement). By-object
+ * printing also takes the arrange order as the object order.
+ */
+export function applyArrange(ids: readonly string[], r: ArrangeResult, mode: 'all' | 'plate' | 'selection'): ArrangeOutcome {
+  let moved = 0;
+  mutate('Arrange', () => {
+    while (plates.value.length < Math.min(r.plates, MAX_PLATES)) insertPlate(plates.value.length);
+    const n = plates.value.length;
+    const byId = new Map(objects.value.map((o) => [o.id, o]));
+    r.items.forEach((it, k) => {
+      const o = byId.get(ids[k]);
+      if (!o || !it.moved) return;
+      const [ox, oy] = plateOffset(it.plate, n, bed.value);
+      const q = it.dRot ? quatNormalize(quatMultiply(quatFromAxisAngle([0, 0, 1], it.dRot), [...o.rotation] as Quat)) : o.rotation;
+      o.rotation = q;
+      o.position = [it.x + ox, it.y + oy, o.position[2]];
+      moved++;
+    });
+    if (mode === 'all') {
+      // Recycle: from the last plate down, drop plates that are empty or hold nothing printable; stop at the first other unlocked one.
+      for (let i = plates.value.length - 1; i > 0; i--) {
+        const on = objects.value.filter((o) => plateOfLive(o) === i);
+        if (!on.length || !on.some((o) => o.printable)) {
+          const cnt = plates.value.length;
+          relayoutPlates(cnt, cnt - 1, (p) => (p === i ? KEEP_IN_PLACE : p > i ? p - 1 : p));
+          plates.value = plates.value.filter((_, k) => k !== i);
+        } else if (plates.value[i].locked) continue;
+        else break;
+      }
+    }
+    if (r.seqPrint && r.order.length > 1) {
+      // Orca sorts objects by arrange order: refill the arranged objects' slots in that order.
+      const ordered = r.order.map((k) => ids[k]).filter((id) => byId.has(id));
+      const set = new Set(ordered);
+      let next = 0;
+      objects.value = objects.value.map((o) => (set.has(o.id) ? byId.get(ordered[next++])! : o));
+    }
+  });
+  clampActivePlate();
+  return { moved, unplaced: r.unplaced.length };
 }
 
 // ---- per-object overrides -------------------------------------------------------

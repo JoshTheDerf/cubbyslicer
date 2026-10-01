@@ -195,7 +195,9 @@ export type WorkerRequest =
   | { type: 'evalCondition'; id: number; expr: string; config: FlatConfig }
   | { type: 'orient'; id: number; object: SliceObjectInput }
   /** Engine tools (cs_tool): painting sessions, cut, layer height profiles, … */
-  | { type: 'tool'; id: number; op: string; args: unknown; meshes: ToolMesh[] };
+  | { type: 'tool'; id: number; op: string; args: unknown; meshes: ToolMesh[] }
+  /** Orca auto arrange (cs_tool "arrange"): the objects as in a slice job. */
+  | { type: 'arrange'; id: number; config: FlatConfig; objects: SliceObjectInput[]; args: ArrangeArgs };
 
 export type WorkerResponse =
   | { type: 'progress'; id: number; percent: number; message: string }
@@ -205,6 +207,29 @@ export type WorkerResponse =
   | { type: 'orient'; id: number; rotation: number[] }
   | { type: 'tool'; id: number; result: unknown; meshes: ToolMesh[] }
   | { type: 'error'; id: number; message: string; report?: SliceReport; fatal: boolean; stalled?: boolean };
+
+/** Orca auto arrange request (docs/ENGINE-CONTRACT.md "arrange"); `items` is parallel to the objects. */
+export interface ArrangeArgs {
+  mode: 'all' | 'plate' | 'selection';
+  currentPlate: number;
+  plates: Array<{ locked: boolean; seq: '' | 'by layer' | 'by object'; toolChanges: number[] }>;
+  items: Array<{ plate: number; printable: boolean; selected: boolean }>;
+  settings: { distance: number; enableRotation: boolean; alignToYAxis: boolean; allowMultiMaterials: boolean; avoidCaliRegion: boolean };
+  /** BBL vendor printer (offers "Avoid extrusion calibration region"). */
+  bbl: boolean;
+}
+
+export interface ArrangeResult {
+  /** Per object: unmoved, or its plate and new mesh-origin XY (plate-local) and rotation about world Z. */
+  items: Array<{ moved: false } | { moved: true; plate: number; x: number; y: number; dRot: number }>;
+  /** Plate count after arranging (new plates are appended). */
+  plates: number;
+  unplaced: string[];
+  warnings: string[];
+  /** Object indices in arrange order (Orca's by-object print order). */
+  order: number[];
+  seqPrint: boolean;
+}
 
 /** A mesh passed to / returned from an engine tool (mesh-local float32 xyz + uint32 triangles). */
 export interface ToolMesh { positions: Float32Array; indices: Uint32Array }

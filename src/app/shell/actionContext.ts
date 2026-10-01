@@ -19,6 +19,7 @@ import { getAllActions, registerActions } from '../actions/registry';
 import { setActionErrorHandler } from '../actions/run';
 import { toast } from '../../ui';
 import * as cmd from './actions';
+import { runArrange } from './arrange';
 import { cloud } from '../../cloud/store';
 import { saveToCloudLocation } from '../../cloud/commands';
 import { fsAccessSupported, local } from '../../localfs/store';
@@ -94,8 +95,8 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     perObjectSettings: cmd.revealObjectSettings,
     nudge: cmd.nudge,
     autoOrient: cmd.autoOrientObjects,
-    arrangeAll: () => { const n = cmd.arrangeObjects(); if (n) cmd.reportUnplaced(n); },
-    arrangeSelection: () => { const n = cmd.arrangeObjects(selectedIds.value.slice()); if (n) cmd.reportUnplaced(n); },
+    arrangeAll: () => { void runArrange('all'); },
+    arrangeSelection: () => { void runArrange('selection'); },
     setView,
     fitSelection,
     fitBed,

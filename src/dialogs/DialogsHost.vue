@@ -2,7 +2,7 @@
 /**
  * Mounts the Orca tool dialogs (calibration, flushing volumes, filament
  * grouping, object table, create printer / filament, export preset bundle,
- * bed shape, preferences) and applies the app-wide preferences. Mounted once
+ * bed shape, preferences, arrange options) and applies the app-wide preferences. Mounted once
  * from App.vue.
  */
 import { onBeforeUnmount, watch } from 'vue';
@@ -17,6 +17,7 @@ import CreatePresetDialog from './presets/CreatePresetDialog.vue';
 import ExportBundleDialog from './presets/ExportBundleDialog.vue';
 import BedShapeDialog from './bed/BedShapeDialog.vue';
 import PreferencesDialog from './PreferencesDialog.vue';
+import ArrangeOptionsDialog from './ArrangeOptionsDialog.vue';
 import { installAutoFlush } from './flush/flushStore';
 
 // Preferences → Default engine (once per page load).
@@ -42,6 +43,7 @@ onBeforeUnmount(() => { stopKbd(); stopFlush(); });
   <ExportBundleDialog />
   <BedShapeDialog />
   <PreferencesDialog />
+  <ArrangeOptionsDialog />
 </template>
 
 <style>

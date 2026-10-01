@@ -12,6 +12,12 @@ Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full S
 
 The transform gizmo is CubbyCAD's: move, rotate and scale handles on one gizmo (G). M, R and S limit it to one of them, and pressing the same key again brings back the full gizmo. View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches between perspective and orthographic.
 
+## Arranging
+
+Arrange (A), Arrange plate (Shift+A) and Arrange selection run OrcaSlicer's own arrange in the Orca engine, whichever engine you slice with. Object ▸ Arrange options… has Orca's arrange settings: spacing (0 means auto, so each object keeps its brim or support margin), auto rotate, multiple materials on one plate, align to the Y axis and, on Bambu Lab printers that scan the first layer, avoiding the extrusion calibration region. As in Orca, spacing and auto rotate are kept separately for printing by layer and by object. The options are saved in this browser.
+
+With preFlight, Orca's arrange gets your bed shape but uses Orca's defaults for skirt, support and clearance.
+
 ## Modelling with CubbyCAD shapes
 
 The slicer has CubbyCAD's basic modelling: built-in shapes, holes and groups. It edits CubbyCAD's own node tree, so a `.cubby` file (or a model sent from CubbyCAD with `cad_to_slicer`) opens here as editable shapes, and goes back to CubbyCAD the same way.
@@ -76,8 +82,9 @@ The [CubbyCAD editor](https://cubbycad.com/editor) sends the current model with 
 - `?model=<url>` loads a model or 3MF project on startup. The link must be an absolute http(s) URL, URL-encoded, and its server must allow CORS. Repeat `model` to load several files in order. Optional params:
   - `name=<file>` names the file when the link's path doesn't (for example `/download?id=42` or a signed URL). The Nth `name` goes with the Nth `model`. Without it, the name comes from `Content-Disposition` (if the server exposes it), then the URL path, then `Content-Type` or a zip signature (3MF).
   - `arrange=all` (or `1`) arranges every unlocked plate once everything has loaded, `arrange=plate` arranges only the active plate, and `arrange=0` skips Preferences ▸ Auto arrange plate after import. Arranging replaces the plate layout saved in a 3MF project.
+  - `spacing=<mm>` and `rotate=1|0` set that arrange's options. Spacing defaults to `auto` (Orca's 0: each object keeps its brim or support margin) and auto rotate defaults to on. Links don't use your saved Arrange options, so they lay out the same for everyone.
 
-  For example: `/slicer/?model=https%3A%2F%2Fapi.example.com%2Fdownload%3Fid%3D42&name=bracket.3mf&arrange=all`. These params are removed from the address bar once the files have loaded.
+  For example: `/slicer/?model=https%3A%2F%2Fapi.example.com%2Fdownload%3Fid%3D42&name=bracket.3mf&arrange=all&spacing=5`. These params are removed from the address bar once the files have loaded.
 - Open `/slicer/?handoff=<id>`, wait for `{ type: 'cubby-slicer:ready', handoff: id }` on `BroadcastChannel('cubby-slicer-handoff')`, then post `{ type: 'cubby-slicer:model', handoff: id, stl, name }` (same origin only). This works across the slicer's cross-origin isolation, which the older `window.opener` `postMessage` path doesn't.
 
 ## AI agents (MCP)

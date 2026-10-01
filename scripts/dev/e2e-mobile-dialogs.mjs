@@ -249,6 +249,7 @@ const DIALOGS = [
   { id: 'createFilament', name: 'Create filament', open: (p) => uiMod(p, (m) => m.openDialog('createFilament')) },
   { id: 'exportBundle', name: 'Export preset bundle', open: (p) => uiMod(p, (m) => m.openDialog('exportBundle')) },
   { id: 'bedShape', name: 'Bed shape', open: (p) => uiMod(p, (m) => m.openDialog('bedShape')) },
+  { id: 'arrange', name: 'Arrange options', open: (p) => uiMod(p, (m) => m.openDialog('arrange')) },
   ...['temp', 'flow', 'pa', 'retraction', 'volumetric', 'vfa', 'cornering', 'is_freq', 'is_damp'].map((c) => ({
     id: `calib-${c}`, open: (p) => uiMod(p, (m, c) => { m.calibUi.open = c; }, c), close: closeUi((m) => { m.calibUi.open = null; }),
   })),

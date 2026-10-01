@@ -82,6 +82,16 @@ int  cs_orient(const char* job_json, int job_len, const uint8_t* blob, int blob_
 //   layer_profile_adaptive / layer_profile_smooth   variable layer height
 //   cut                   Orca Cut: plane or groove, connectors (plug/dowel/snap)
 //   mixed_filaments       (fullspectrum) list / add / edit / remove mixed filaments; see bridge comment
+//   inspect_3mf           OrcaSlicer's own 3MF loader on a project file (checks)
+//   arrange               (orca) OrcaSlicer's ArrangeJob (Arrange all / plate / selection). The
+//     request also carries the slice-job "config" and "objects" (same packing
+//     as cs_slice; transforms plate-local for objects on a plate) next to
+//     args {mode, currentPlate, plates:[{locked, seq, toolChanges}],
+//     items:[{plate, printable, selected}] (parallel to objects),
+//     settings:{distance (0 = auto), enableRotation, alignToYAxis,
+//     allowMultiMaterials, avoidCaliRegion}, bbl}. Result: {items:[{moved,
+//     plate, x, y (mesh origin, plate-local), dRot (about Z)}], plates,
+//     unplaced, warnings, order, seqPrint}. See the bridge comment.
 int  cs_tool(const char* req_json, int req_len, const uint8_t* blob, int blob_len,
              char** out_json, int* out_len, uint8_t** out_blob, int* out_blob_len);
 

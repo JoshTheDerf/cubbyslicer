@@ -10,9 +10,10 @@
  */
 import { argNumber, argString, base64ToBytes, bytesToBase64, type BridgeTool } from '@cubby/shared/bridge';
 import { activeView } from '../../app/state';
-import { addModelPart, addPrimitivePart, autoOrientObjects, importBuffer, reportUnplaced } from '../../app/shell/actions';
+import { addModelPart, addPrimitivePart, autoOrientObjects, importBuffer } from '../../app/shell/actions';
+import { runArrange } from '../../app/shell/arrange';
 import {
-  activePlate, arrangeObjects, centerObjects, clearPlate, dropToBed, duplicateObjects, getMesh, getObject, instancesOf, layOnFace,
+  activePlate, centerObjects, clearPlate, dropToBed, duplicateObjects, getMesh, getObject, instancesOf, layOnFace,
   mirrorObjects, objectInfo, objectLocalBBox, objects, objectsOnPlate, plates, projectName, removeObjects, removePart, renameObject, renamePart,
   scaleToFit, select, selectedIds, selectedPart, setActivePlate, setColor, setInstanceCount, setObjectOverride, setPartTransform,
   setPartType, setPrintable, setTransforms, setVisible, splitToObjects, splitToParts, type TransformPatch,
@@ -232,8 +233,7 @@ export function objectTools(): BridgeTool[] {
             break;
           }
           case 'arrange': {
-            const unplaced = arrangeObjects(ids, 6, 'plate');
-            if (unplaced) reportUnplaced(unplaced);
+            const unplaced = (await runArrange('selection', { ids }))?.unplaced ?? 0;
             extra = { unplaced };
             break;
           }
@@ -342,7 +342,7 @@ export function objectTools(): BridgeTool[] {
         const ids = await importBuffer(name, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
         if (!ids.length) throw new Error(`Couldn’t import ${name} (see the app’s notification for details).`);
         let unplaced = 0;
-        if (args.arrange !== false) unplaced = arrangeObjects(undefined, 6, 'plate');
+        if (args.arrange !== false) unplaced = (await runArrange('plate', { imported: ids }))?.unplaced ?? 0;
         return { data: { ok: true, imported: ids.filter((id) => getObject(id)).map((id) => objectDetail(id)), unplaced: unplaced || undefined } };
       },
     },
