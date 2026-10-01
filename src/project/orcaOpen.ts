@@ -29,7 +29,7 @@ import type { BedShape } from '../app/state';
 
 export interface OrcaOpenResult {
   name: string; objects: number; plates: number; sliced: number; warnings: string[];
-  /** Saved by Cubby Slicer (restored exactly, including its settings). */
+  /** Saved by CubbySlicer (restored exactly, including its settings). */
   own?: boolean;
 }
 
@@ -56,7 +56,7 @@ function meshData(id: string, positions: Float32Array, indices: Uint32Array): Me
 }
 
 /**
- * A 3MF saved by Cubby Slicer carries its own project JSON: reopen it exactly
+ * A 3MF saved by CubbySlicer carries its own project JSON: reopen it exactly
  * (meshes come from the 3MF's object file). Returns null for other 3MFs.
  */
 function openCubby3mf(buffer: ArrayBuffer): OrcaOpenResult | null {

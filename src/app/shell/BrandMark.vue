@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Cubby Slicer mark (docs/logo.svg): the CubbyCAD cat sliced into layers. The
+// CubbySlicer mark (docs/logo.svg): the CubbyCAD cat sliced into layers. The
 // app is dark-only, so this is the logo's dark-scheme colouring (paper cat).
 import { useId } from 'vue';
 

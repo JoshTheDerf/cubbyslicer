@@ -48,9 +48,9 @@ function onName(e: Event) {
         <UButton :icon="sidebarOpen() ? 'i-lucide-panel-left-close' : 'i-lucide-panel-left-open'" color="neutral" variant="ghost" size="sm"
                  :aria-label="sidebarOpen() ? 'Hide sidebar' : 'Show sidebar'" :aria-pressed="sidebarOpen()" @click="run('view.panel.sidebar')" />
       </UTooltip>
-      <div v-if="!phone" class="brand" aria-label="Cubby Slicer">
+      <div v-if="!phone" class="brand" aria-label="CubbySlicer">
         <BrandMark class="brand__mark" />
-        <span class="brand__name">Cubby Slicer</span>
+        <span class="brand__name">CubbySlicer</span>
       </div>
       <MenuBar :collapsed="compact" />
       <USeparator v-if="!phone" orientation="vertical" class="h-5 mx-1" />

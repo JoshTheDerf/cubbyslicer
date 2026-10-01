@@ -85,11 +85,11 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
     </template>
   </UModal>
 
-  <UModal v-model:open="ui.aboutOpen" title="Cubby Slicer source and licence" :ui="{ content: 'sm:max-w-lg' }">
+  <UModal v-model:open="ui.aboutOpen" title="CubbySlicer source and licence" :ui="{ content: 'sm:max-w-lg' }">
     <template #body>
       <div class="about text-sm">
         <p>
-          Cubby Slicer is free software under the GNU Affero General Public License v3.0 or later.
+          CubbySlicer is free software under the GNU Affero General Public License v3.0 or later.
           Because it runs over a network, you are entitled to its complete corresponding source.
         </p>
         <p v-if="sourceUrl">Source for this build: <ULink :href="sourceUrl" target="_blank" rel="noopener" class="text-info">{{ sourceUrl }}</ULink></p>

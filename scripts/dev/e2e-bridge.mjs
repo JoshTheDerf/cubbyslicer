@@ -1,6 +1,6 @@
 /**
  * MCP bridge e2e: a real MCP client spawns cubby-mcp over stdio, a
- * Playwright Cubby Slicer tab pairs with it, and the test drives a path
+ * Playwright CubbySlicer tab pairs with it, and the test drives a path
  * through every tool group (engines, presets, objects / parts, plates,
  * painting, layers, tools, slicing, preview screenshots, export, commands).
  *

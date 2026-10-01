@@ -22,7 +22,7 @@ export function buildStl(objects: ProjectObject[], getMesh: (id: string) => Mesh
   for (const v of vols) tris += v.mesh.triangleCount;
   const out = new Uint8Array(84 + tris * 50);
   const dv = new DataView(out.buffer);
-  const header = 'Exported by Cubby Slicer';
+  const header = 'Exported by CubbySlicer';
   for (let i = 0; i < header.length; i++) out[i] = header.charCodeAt(i);
   dv.setUint32(80, tris, true);
   let off = 84;

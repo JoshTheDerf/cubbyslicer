@@ -5,7 +5,7 @@
  * project settings (resolved config + preset names + changed keys), variable
  * layer heights, height ranges and the slider's custom G-code.
  *
- * Everything Cubby Slicer needs to reopen the project exactly (part
+ * Everything CubbySlicer needs to reopen the project exactly (part
  * transforms, emboss, brim ears, UI sections, …) rides along in
  * Metadata/cubby_slicer.json, which Orca ignores.
  */
@@ -264,7 +264,7 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   const gcodes = customGcodeXml(plates);
   if (gcodes) files['Metadata/custom_gcode_per_layer.xml'] = strToU8(gcodes);
 
-  // Exact round-trip for Cubby Slicer: the project JSON, with meshes pointing into the model file.
+  // Exact round-trip for CubbySlicer: the project JSON, with meshes pointing into the model file.
   // CubbyCAD trees go to their own file (stock Orca ignores both; it just sees the meshes).
   const trees: CadTreesJson = { format: 'cubbycad-trees', version: 1, objects: {} };
   const plain = objects.map((o) => {

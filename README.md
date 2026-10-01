@@ -1,6 +1,6 @@
-<p align="center"><img src="docs/logo.svg" width="120" alt="Cubby Slicer logo"></p>
+<p align="center"><img src="docs/logo.svg" width="120" alt="CubbySlicer logo"></p>
 
-# Cubby Slicer
+# CubbySlicer
 
 A browser slicer built on OrcaSlicer, preFlight and Full Spectrum compiled to WebAssembly, live at [cubbycad.com/slicer](https://cubbycad.com/slicer).
 

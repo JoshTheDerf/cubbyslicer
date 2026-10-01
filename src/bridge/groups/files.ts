@@ -90,7 +90,7 @@ export function fileTools(): BridgeTool[] {
 
     {
       name: 'open_project',
-      description: 'Open a 3MF project (OrcaSlicer / Bambu Studio / Cubby Slicer): plates, parts, paint and settings replace the current project. Give a local path or URL (through cubby-mcp), or name + dataBase64. With objects on the plate the user chooses in the browser (open as project, or import only its models).',
+      description: 'Open a 3MF project (OrcaSlicer / Bambu Studio / CubbySlicer): plates, parts, paint and settings replace the current project. Give a local path or URL (through cubby-mcp), or name + dataBase64. With objects on the plate the user chooses in the browser (open as project, or import only its models).',
       fileInput: true,
       timeoutMs: 10 * 60_000,
       inputSchema: obj({ name: str('File name, e.g. "part.3mf".'), dataBase64: str('File bytes, base64.') }, ['name', 'dataBase64']),

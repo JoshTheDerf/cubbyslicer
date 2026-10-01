@@ -237,7 +237,7 @@ const DIALOGS = [
   { id: 'drawer', name: 'Settings', phoneOnly: true, open: (p) => uiMod(p, (m) => { m.drawerOpen.value = true; }), close: closeUi((m) => { m.drawerOpen.value = false; }) },
   { id: 'palette', name: 'Command palette', open: (p) => uiMod(p, (m) => { m.ui.paletteOpen = true; }) },
   { id: 'shortcuts', name: 'Keyboard shortcuts', open: (p) => uiMod(p, (m) => { m.ui.shortcutsOpen = true; }) },
-  { id: 'about', name: 'Cubby Slicer source and licence', open: (p) => uiMod(p, (m) => { m.ui.aboutOpen = true; }) },
+  { id: 'about', name: 'CubbySlicer source and licence', open: (p) => uiMod(p, (m) => { m.ui.aboutOpen = true; }) },
   { id: 'instances', name: 'Set number of instances', needs: 'object', open: (p) => uiMod(p, (m) => { m.ui.instancesOpen = true; }) },
   { id: 'confirm', open: (p) => uiMod(p, (m) => { void m.confirmAction({ title: 'Delete all objects?', message: 'This removes every object from every plate, including “An extremely long object name that goes on and on.stl”. You can undo it.', confirmLabel: 'Delete all', danger: true }); }),
     close: closeUi((m) => { m.confirmRequest.value?.resolve(false); m.confirmRequest.value = null; }) },

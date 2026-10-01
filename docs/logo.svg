@@ -1,5 +1,5 @@
 <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-  <!-- Cubby Slicer: the CubbyCAD cat, sliced into layers. Inverts on a dark colour scheme. -->
+  <!-- CubbySlicer: the CubbyCAD cat, sliced into layers. Inverts on a dark colour scheme. -->
   <style>
     .ink { fill: #0a0a0a; }
     .paper { fill: #fafaf7; }

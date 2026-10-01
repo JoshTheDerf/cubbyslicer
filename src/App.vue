@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Cubby Slicer shell, laid out like OrcaSlicer's main window:
+ * CubbySlicer shell, laid out like OrcaSlicer's main window:
  *  - top: menu/title bar, Prepare | Preview switch, slice controls (TopBar);
  *  - left: the sidebar (printer / filament / process settings, rendered by
  *    the settings area) with our object list in its `#objects` slot;

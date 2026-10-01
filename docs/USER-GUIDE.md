@@ -1,6 +1,6 @@
 # User guide
 
-Cubby Slicer works like OrcaSlicer, with the same menus, tools and shortcuts (press `?` for the list, Ctrl+K for the command palette). This page only covers what's different in the browser version.
+CubbySlicer works like OrcaSlicer, with the same menus, tools and shortcuts (press `?` for the list, Ctrl+K for the command palette). This page only covers what's different in the browser version.
 
 ## Engines
 

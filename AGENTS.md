@@ -4,7 +4,7 @@ Guidance for AI agents working in the cubby-slicer repository.
 
 ## What this is
 
-Cubby Slicer is a 3D printing slicer application. It converts 3D models into instructions for 3D printers.
+CubbySlicer is a 3D printing slicer application. It converts 3D models into instructions for 3D printers.
 
 ## Commands
 

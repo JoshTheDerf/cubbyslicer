@@ -97,7 +97,7 @@ async function copy(text: string) {
 </script>
 
 <template>
-  <UModal v-model:open="printhostUi.setupOpen" title="Physical printer" :description="shortScreen ? undefined : `Send G-code from Cubby Slicer to “${boundPrinter.name}” over the network.`"
+  <UModal v-model:open="printhostUi.setupOpen" title="Physical printer" :description="shortScreen ? undefined : `Send G-code from CubbySlicer to “${boundPrinter.name}” over the network.`"
           :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl' }">
     <template #body>
       <div class="pp dlg-flow space-y-4 text-sm phone:space-y-3">

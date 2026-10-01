@@ -53,7 +53,7 @@ class ChunkWriter {
 export function build3mf(objects: ProjectObject[], getMesh: (id: string) => MeshData | undefined): Uint8Array {
   const w = new ChunkWriter();
   w.write('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n');
-  w.write(' <metadata name="Application">Cubby Slicer</metadata>\n <resources>\n');
+  w.write(' <metadata name="Application">CubbySlicer</metadata>\n <resources>\n');
   const objIds = new Map<string, number>();
   let next = 1;
   const meshList: Array<{ id: string; name: string }> = [];

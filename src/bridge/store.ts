@@ -19,7 +19,7 @@ export const bridgeUi = reactive({
 
 export const bridge = new BridgeClient({
   app: 'slicer',
-  appName: 'Cubby Slicer',
+  appName: 'CubbySlicer',
   tools: () => import('./tools').then((m) => m.slicerTools()),
   confirm: (req) => new Promise((resolve) => {
     bridgeUi.confirm?.resolve({ ok: false, always: false });
