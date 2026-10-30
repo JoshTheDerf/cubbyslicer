@@ -33,6 +33,8 @@ export class PresetNameError extends Error {
 }
 
 const PREFIX = 'userpreset:';
+/** Tells the other tabs a user preset changed (they re-read the backend). */
+const CHANNEL = 'cubby-slicer.userpresets';
 
 function copyValues(v: PresetValues): PresetValues {
   const out: PresetValues = {};
@@ -44,13 +46,14 @@ export class UserPresetStore {
   readonly list: ShallowRef<UserPreset[]> = shallowRef([]);
   readonly ready: Promise<void>;
   private kv: KvBackend | null = null;
+  private channel: BroadcastChannel | null = null;
+  private listeners: Array<() => void> = [];
 
   constructor(readonly engine: EngineId, kv?: KvBackend | Promise<KvBackend>) {
     this.ready = (async () => {
       try {
         this.kv = await (kv ?? openKv());
-        const rows = await this.kv.getAll(`${PREFIX}${engine}:`);
-        const loaded = rows.map(([, v]) => v).filter(isUserPreset).filter((p) => p.engine === engine);
+        const loaded = await this.load();
         // Keep anything created before the backend finished loading.
         const byId = new Map(loaded.map((p) => [p.id, p]));
         for (const p of this.list.value) byId.set(p.id, p);
@@ -58,8 +61,32 @@ export class UserPresetStore {
       } catch {
         this.kv = null;
       }
+      // Only a shared backend is worth following; tests pass their own.
+      if (!kv && this.kv && this.kv.kind !== 'memory' && typeof BroadcastChannel !== 'undefined') {
+        try {
+          this.channel = new BroadcastChannel(CHANNEL);
+          this.channel.onmessage = (e) => { if ((e.data as { engine?: string })?.engine === engine) void this.reload(); };
+        } catch { this.channel = null; }
+      }
     })();
   }
+
+  private async load(): Promise<UserPreset[]> {
+    const rows = await this.kv!.getAll(`${PREFIX}${this.engine}:`);
+    return rows.map(([, v]) => v).filter(isUserPreset).filter((p) => p.engine === this.engine);
+  }
+
+  /** Re-read after another tab changed the presets. */
+  private async reload(): Promise<void> {
+    if (!this.kv) return;
+    try { this.list.value = sortPresets(await this.load()); } catch { return; }
+    for (const fn of this.listeners) { try { fn(); } catch { /* listener's problem */ } }
+  }
+
+  /** Called after another tab created, changed or deleted one of this engine's user presets. */
+  onExternalChange(fn: () => void): void { this.listeners.push(fn); }
+
+  private announce(): void { try { this.channel?.postMessage({ engine: this.engine }); } catch { /* closed */ } }
 
   get storageKind(): string { return this.kv?.kind ?? 'memory'; }
 
@@ -86,7 +113,7 @@ export class UserPresetStore {
   }
 
   private persist(p: UserPreset): void {
-    this.kv?.set(`${PREFIX}${this.engine}:${p.id}`, p).catch(() => { /* resilient backend already degraded */ });
+    this.kv?.set(`${PREFIX}${this.engine}:${p.id}`, p).then(() => this.announce(), () => { /* resilient backend already degraded */ });
   }
 
   create(input: { kind: PresetKind; name: string; parentId?: string; inherits?: string; values: PresetValues }): UserPreset {
@@ -127,7 +154,7 @@ export class UserPresetStore {
 
   remove(id: string): void {
     this.list.value = this.list.value.filter((p) => p.id !== id);
-    this.kv?.delete(`${PREFIX}${this.engine}:${id}`).catch(() => { /* ignore */ });
+    this.kv?.delete(`${PREFIX}${this.engine}:${id}`).then(() => this.announce(), () => { /* ignore */ });
   }
 }
 

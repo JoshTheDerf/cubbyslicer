@@ -1,11 +1,14 @@
 <script setup lang="ts">
-/** Orca's PrintHostSendDialog: upload file name + folder, Upload vs Upload & Print. */
+/**
+ * Orca's PrintHostSendDialog: upload file name + folder, Upload vs Upload &
+ * Print, and which device when the preset has several.
+ */
 import { computed, ref, watch } from 'vue';
 import { useSliceController } from '../app/slice';
 import { sanitizeUploadName } from './config';
 import { hostMeta } from './registry';
 import { sendToPrinter } from './send';
-import { boundPrinter, physicalPrinter, printhostUi } from './store';
+import { boundPrinter, physicalPrinter, printerChoices, printhostUi, selectDevice } from './store';
 
 const { gcodeFilename, isStale } = useSliceController();
 const filename = ref('');
@@ -20,6 +23,8 @@ const cfg = computed(() => physicalPrinter.value?.config ?? null);
 const meta = computed(() => hostMeta(cfg.value?.type));
 const canPrint = computed(() => !!meta.value?.canPrint({ printerModel: boundPrinter.value.model, variant: cfg.value?.variant }));
 const host = computed(() => cfg.value?.host ?? '');
+const several = computed(() => printerChoices.value.length > 1);
+const deviceItems = computed(() => printerChoices.value.map((c) => ({ value: c.id, label: c.name, description: c.config.host })));
 const valid = computed(() => !!filename.value.trim() && !printhostUi.uploading);
 
 function go(print: boolean) {
@@ -31,9 +36,13 @@ function go(print: boolean) {
 
 <template>
   <UModal v-model:open="printhostUi.sendOpen" :title="printhostUi.sendMode === 'print' && canPrint ? 'Print plate' : 'Send G-code to printer'"
-          :description="meta ? `${meta.label} · ${host}` : undefined" :ui="{ content: 'sm:max-w-md' }">
+          :description="meta ? `${physicalPrinter?.name ?? boundPrinter.name} · ${meta.label} · ${host}` : undefined" :ui="{ content: 'sm:max-w-md' }">
     <template #body>
       <div class="space-y-3 text-sm">
+        <UFormField v-if="several" label="Printer">
+          <USelect :model-value="physicalPrinter?.id" :items="deviceItems" value-key="value" class="w-full" aria-label="Printer"
+                   @update:model-value="(v: string) => selectDevice(v)" />
+        </UFormField>
         <UFormField label="Upload as">
           <UInput v-model="filename" class="w-full" spellcheck="false" autofocus aria-label="Upload file name" @keydown.enter="valid && go(printhostUi.sendMode === 'print' && canPrint)" />
         </UFormField>

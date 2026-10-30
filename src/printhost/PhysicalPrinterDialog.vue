@@ -1,20 +1,26 @@
 <script setup lang="ts">
 /**
- * Orca's PhysicalPrinterDialog: host type, address, credentials, Test,
- * per-host setup hints. Bound to the selected printer preset; stored in this
- * browser only.
+ * Orca's PhysicalPrinterDialog: name, the printer presets it runs, host type,
+ * address, credentials, Test, per-host setup hints. Stored in this browser
+ * only. Edits the device this tab sends to, another device, or adds one.
  */
 import { computed, reactive, ref, watch } from 'vue';
 import { emptyConfig, normalizeConfig } from './config';
 import { HOSTS, OTHER_UNSUPPORTED, hostMeta } from './registry';
 import { describeError, openWebUi, testConnection } from './send';
-import { boundPrinter, hostContext, physicalPrinter, printhostUi, removePhysicalPrinter, savePhysicalPrinter } from './store';
+import { currentPresets } from '../presets/store';
+import { presetLabel, uniqueDeviceName, type PresetRef } from './devices';
+import { boundPrinter, deviceById, deviceStore, hostContext, physicalPrinter, printhostUi, removePhysicalPrinter, savePhysicalPrinter } from './store';
 import { browserEnv, lnaAddressSpace } from './transport';
 import type { PhysicalPrinterConfig } from './types';
 import { webUiUrl } from './url';
 import { mobileDialog, shortScreen } from '../ui/mobileDialog';
 
 const draft = reactive<PhysicalPrinterConfig>(emptyConfig());
+const name = ref('');
+const presetIds = ref<string[]>([]);
+/** Device being edited (null: a new one, or the preset's own print_host turned into a device). */
+const editingId = ref<string | null>(null);
 const test = ref<{ state: 'idle' | 'running' | 'ok' | 'error'; message?: string; detail?: string }>({ state: 'idle' });
 const showPassword = ref(false);
 /** Phones: the connection form and the setup help are two tabs. */
@@ -27,7 +33,16 @@ let testAbort: AbortController | null = null;
 
 watch(() => printhostUi.setupOpen, (open) => {
   if (!open) { testAbort?.abort(); return; }
-  Object.assign(draft, physicalPrinter.value ? normalizeConfig(physicalPrinter.value.config) : emptyConfig());
+  const t = printhostUi.setupTarget;
+  const cur = physicalPrinter.value;
+  const dev = t === 'new' ? undefined : t ? deviceById(t) : cur?.source === 'saved' ? deviceById(cur.id) : undefined;
+  editingId.value = dev?.id ?? null;
+  // A new device starts from the current one's host type, so a second identical printer only needs its address.
+  const from = dev?.config ?? (t === 'new' ? (cur ? { ...emptyConfig(cur.config.type), variant: cur.config.variant } : emptyConfig()) : cur?.config ?? emptyConfig());
+  Object.assign(draft, normalizeConfig(from));
+  if (t === 'new') { draft.host = ''; draft.apiKey = ''; draft.password = ''; draft.serial = ''; }
+  name.value = dev?.name ?? uniqueDeviceName(deviceStore.value, cur && t !== 'new' ? cur.name : boundPrinter.value.name);
+  presetIds.value = dev?.presets.map((p) => p.id) ?? [boundPrinter.value.id];
   test.value = { state: 'idle' };
   printers.value = null;
   showPassword.value = false;
@@ -54,8 +69,18 @@ const insecure = computed(() => {
 });
 const lna = lnaAddressSpace();
 const webUi = computed(() => webUiUrl(draft.host, draft.webUi));
-const valid = computed(() => !!draft.host.trim() && meta.value?.support !== 'none');
-const existing = computed(() => physicalPrinter.value);
+const valid = computed(() => !!draft.host.trim() && meta.value?.support !== 'none' && presetIds.value.length > 0);
+const existing = computed(() => (editingId.value ? deviceById(editingId.value) : printhostUi.setupTarget === 'new' ? null : physicalPrinter.value));
+const presetItems = computed(() => {
+  const items = currentPresets.value.printerInfos.value.filter((p) => p.source !== 'default').map((p) => ({ value: p.id, label: p.name }));
+  // Presets of another engine / not installed here stay listed so saving keeps them.
+  for (const p of deviceById(editingId.value)?.presets ?? []) if (!items.some((i) => i.value === p.id)) items.push({ value: p.id, label: p.name });
+  return items;
+});
+function presetRefs(): PresetRef[] {
+  const known = new Map(presetItems.value.map((i) => [i.value, i.label]));
+  return presetIds.value.map((id) => ({ id, name: known.get(id) ?? presetLabel(id) }));
+}
 
 async function runTest() {
   testAbort?.abort();
@@ -84,11 +109,11 @@ async function browsePrinters() {
 }
 
 function save() {
-  savePhysicalPrinter(normalizeConfig(draft));
+  savePhysicalPrinter(normalizeConfig(draft), { id: editingId.value, name: name.value, presets: presetRefs() });
   printhostUi.setupOpen = false;
 }
 function remove() {
-  removePhysicalPrinter();
+  removePhysicalPrinter(editingId.value ?? physicalPrinter.value?.id);
   printhostUi.setupOpen = false;
 }
 async function copy(text: string) {
@@ -97,11 +122,22 @@ async function copy(text: string) {
 </script>
 
 <template>
-  <UModal v-model:open="printhostUi.setupOpen" title="Physical printer" :description="shortScreen ? undefined : `Send G-code from CubbySlicer to “${boundPrinter.name}” over the network.`"
+  <UModal v-model:open="printhostUi.setupOpen" :title="printhostUi.setupTarget === 'new' ? 'Add physical printer' : 'Physical printer'"
+          :description="shortScreen ? undefined : 'Send G-code from CubbySlicer to a printer on your network. Add one per machine: two printers of the same model share the printer preset but each has its own address.'"
           :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl' }">
     <template #body>
       <div class="pp dlg-flow space-y-4 text-sm phone:space-y-3">
         <UTabs v-if="mobileDialog" class="dlg-span" v-model="tab" :items="[{ value: 'conn', label: 'Connection' }, { value: 'help', label: hints.length ? 'Setup help •' : 'Help' }]" :content="false" size="sm" />
+        <div v-show="conn" class="grid grid-cols-2 gap-3 phone:grid-cols-1">
+          <UFormField label="Name" required>
+            <UInput v-model="name" class="w-full" autocomplete="off" placeholder="e.g. Voron left" aria-label="Printer name" />
+          </UFormField>
+          <UFormField label="Printer presets" hint="Sliced for" required>
+            <USelectMenu v-model="presetIds" :items="presetItems" value-key="value" multiple class="w-full" aria-label="Printer presets"
+                         :search-input="presetItems.length > 8 ? { placeholder: 'Search presets…' } : false" />
+          </UFormField>
+        </div>
+
         <UFormField v-show="conn" label="Host type">
           <USelect v-model="draft.type" :items="typeItems" value-key="value" class="w-full" aria-label="Host type" />
         </UFormField>
@@ -191,7 +227,7 @@ async function copy(text: string) {
 
         <p v-show="help" class="dlg-span text-xs text-dimmed flex items-start gap-1.5">
           <UIcon name="i-lucide-lock" class="size-3.5 mt-0.5 flex-none" />
-          <span>Settings and credentials are stored only in this browser (localStorage), for the “{{ boundPrinter.name }}” preset. They are sent only to the printer address above.</span>
+          <span>Settings and credentials are stored only in this browser (localStorage) and shared by its CubbySlicer tabs. They are sent only to the printer address above.</span>
         </p>
       </div>
     </template>

@@ -62,6 +62,14 @@ The top bar shows where the project is saved (cloud or disk icon, amber when the
 
 Printer ▸ ⋯ ▸ Physical printer… sets up OctoPrint, Moonraker, PrusaLink, Duet, Repetier, Creality, Elegoo, FlashForge or a plain upload URL. The printer has to allow CORS from `https://cubbycad.com` (the dialog shows the setting for each host type). On an HTTPS page, plain `http://` printers only work in Chrome with Local Network Access (allow the prompt the first time).
 
+Each physical printer has a name and the printer presets it prints. Several printers can share a preset: for two identical printers, set up the first, then use Print ▸ ⌄ ▸ Add another printer… and enter the second one's address. When the selected preset has more than one printer, the Print button names the one it sends to, and its menu and the send dialog switch between them. Each tab remembers its own choice, so two tabs can drive two printers. A new tab starts on the printer you used last.
+
+## Several tabs
+
+Each tab has its own plate and its own printer, filament and process selection, including unsaved preset edits. Reloading a tab brings back that tab's plate. A new tab opens the most recent plate from a tab you closed, so closing the browser by accident loses nothing. Duplicating a tab copies its plate.
+
+Your user presets, the installed printer list and the physical printers are shared: saving a preset in one tab shows it in the others straight away.
+
 ## Mixed filaments (Full Spectrum)
 
 Needs two or more filaments. Filament ▸ Mixed filaments lists the blends the engine creates for every filament pair, plus your own. Each mixed filament gets a filament number after the physical ones, and you use it like any other filament (object filament, object table, colour painting).

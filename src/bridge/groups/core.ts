@@ -84,7 +84,7 @@ export function coreTools(): BridgeTool[] {
             selection: { ids: selectedIds.value, part: selectedPart.value ?? undefined },
             openTool: paintUi.layer ? `paint:${paintUi.layer}` : toolState.active ?? (layersUi.editing ? 'variable layer height' : undefined),
             slice: { status: slicer.status.value, sliced: !!r, stale: slicer.isStale.value, error: slicer.error.value, progress: slicer.status.value === 'slicing' ? slicer.progress.value : undefined },
-            printHost: pp ? { type: pp.config.type, label: hostMeta(pp.config.type)?.label, host: pp.config.host, source: pp.source } : null,
+            printHost: pp ? { device: pp.name, deviceId: pp.id, type: pp.config.type, label: hostMeta(pp.config.type)?.label, host: pp.config.host, source: pp.source } : null,
             undo: historyState.value.undo, redo: historyState.value.redo,
             busy: ui.busy ?? undefined,
             waitingForUser: confirmRequest.value ? { title: confirmRequest.value.title, message: confirmRequest.value.message } : undefined,

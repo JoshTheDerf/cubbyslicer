@@ -93,7 +93,7 @@ function closeSetup(): void { setupOpen.value = false; lsSet(SETUP_DONE_KEY, tru
 const printerMenu = computed<DropdownMenuItem[][]>(() => [[
   { label: 'Add / remove printers…', icon: 'i-lucide-list-plus', onSelect: () => { addPrinter.value = true; } },
   { label: 'Printer & filament setup…', icon: 'i-lucide-wand-sparkles', onSelect: () => { setupOpen.value = true; } },
-  { label: 'Physical printer…', icon: 'i-lucide-router', description: 'Send G-code over the network', onSelect: openPhysicalPrinterDialog },
+  { label: 'Physical printer…', icon: 'i-lucide-router', description: 'Send G-code over the network', onSelect: () => openPhysicalPrinterDialog() },
 ], [
   { label: 'Bed shape…', icon: 'i-lucide-square-dashed', description: 'Printable area, height, custom texture / model', onSelect: () => openDialog('bedShape') },
   { label: 'Create printer…', icon: 'i-lucide-printer', onSelect: () => openDialog('createPrinter') },

@@ -65,6 +65,13 @@ export interface PersistedEngineState {
 const LS_KEY = (e: EngineId) => `cubby.presets.v1.${e}`;
 const LS_ENGINE = 'cubby.presets.v1.activeEngine';
 
+/**
+ * Bumped (debounced) whenever any engine's selection / overrides / project
+ * values change, so this tab's autosave slot picks them up. localStorage only
+ * holds the last-used state, which a brand-new tab starts from.
+ */
+export const presetsRevision = ref(0);
+
 export function defaultInfo(kind: PresetKind, engine: EngineId): PresetInfo {
   const label = engine === 'orca' ? 'OrcaSlicer' : engine === 'fullspectrum' ? 'Full Spectrum' : 'preFlight';
   const noun = kind === 'printer' ? 'printer' : kind === 'process' ? 'process' : 'filament';
@@ -157,6 +164,8 @@ export class EnginePresets {
   readonly loading = ref(0);
   readonly error = ref<string | null>(null);
   readonly ready: Promise<void>;
+  /** `ready` has resolved: `snapshot()` is the real state, not the constructor defaults. */
+  isReady = false;
   private seq = 0;
   private evaluate: ConditionEvaluator | null = null;
   private readonly persist: boolean;
@@ -193,6 +202,7 @@ export class EnginePresets {
         hadSavedState = !!saved;
         if (saved) this.applyPersisted(saved);
         watch(() => [this.selection, this.overrides, this.installedPrinters.value, this.project], () => this.schedulePersist(), { deep: true });
+        this.followOtherTabs();
       }
       await this.refreshPrinterList();
       await this.refresh({ keepSelection: true });
@@ -209,16 +219,45 @@ export class EnginePresets {
     } catch (e) {
       this.error.value = e instanceof Error ? e.message : String(e);
     } finally {
+      this.isReady = true;
       this.loading.value--;
     }
   }
 
   // ---- persistence ------------------------------------------------------------
 
+  /**
+   * The printer list and user presets are shared by every tab; the selection
+   * and unsaved edits are per tab. Another tab installing a printer (via the
+   * localStorage `storage` event) or saving a user preset updates this tab.
+   */
+  private followOtherTabs(): void {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e) => {
+        if (e.key !== LS_KEY(this.engine) || !e.newValue) return;
+        let theirs: unknown;
+        try { theirs = (JSON.parse(e.newValue) as Partial<PersistedEngineState>).installedPrinters; } catch { return; }
+        if (!Array.isArray(theirs)) return;
+        const next = theirs.filter((x): x is string => typeof x === 'string');
+        // Keep this tab's selected system printer listed even if the other tab removed it.
+        const sel = this.selection.printer;
+        if (sel.startsWith('sys:') && !next.includes(sel)) next.push(sel);
+        const cur = this.installedPrinters.value;
+        if (next.length === cur.length && next.every((x, i) => x === cur[i])) return;
+        this.installedPrinters.value = next;
+        void this.refreshPrinterList();
+      });
+    }
+    this.users.onExternalChange(async () => {
+      await this.refreshPrinterList();
+      await this.refresh({ keepSelection: true });
+    });
+  }
+
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private schedulePersist(): void {
     if (this.persistTimer) clearTimeout(this.persistTimer);
-    this.persistTimer = setTimeout(() => { this.persistTimer = null; lsSet(LS_KEY(this.engine), this.snapshot()); }, 300);
+    this.persistTimer = setTimeout(() => { this.persistTimer = null; lsSet(LS_KEY(this.engine), this.snapshot()); presetsRevision.value++; }, 300);
   }
 
   snapshot(): PersistedEngineState {
@@ -247,8 +286,10 @@ export class EnginePresets {
   /** Load state from a project file; re-resolves. */
   async load(s: Partial<PersistedEngineState>): Promise<void> {
     await this.ready;
+    // The installed-printer list is shared by all tabs: add to it, never drop from it.
+    const installed = this.installedPrinters.value.slice();
     this.applyPersisted(s);
-    for (const id of s.installedPrinters ?? []) if (!this.installedPrinters.value.includes(id)) this.installedPrinters.value.push(id);
+    for (const id of installed) if (!this.installedPrinters.value.includes(id)) this.installedPrinters.value.push(id);
     if (s.selection?.printer?.startsWith('sys:') && !this.installedPrinters.value.includes(s.selection.printer)) this.installedPrinters.value.push(s.selection.printer);
     await this.refreshPrinterList();
     await this.refresh({ keepSelection: true });
@@ -958,6 +999,19 @@ export interface PresetsProjectData {
   version: 1;
   activeEngine: EngineId;
   engines: Partial<Record<EngineId, PersistedEngineState>>;
+}
+
+/**
+ * This tab's preset state for its autosave slot. Engines still loading keep
+ * what `pending` (the slot being restored) had for them, so a save racing the
+ * restore doesn't record the constructor defaults.
+ */
+export function presetsAutosaveData(pending?: unknown): PresetsProjectData {
+  const base = (pending && typeof pending === 'object' ? pending : {}) as Partial<PresetsProjectData>;
+  const engine = base.activeEngine && ENGINES.includes(base.activeEngine) ? base.activeEngine : activeEngine.value;
+  const out: PresetsProjectData = { version: 1, activeEngine: engine, engines: { ...(base.engines ?? {}) } };
+  for (const [id, s] of engines) if (s.isReady) out.engines[id] = s.snapshot();
+  return out;
 }
 
 /** Project file section `presets` (selection + unsaved overrides per engine). */

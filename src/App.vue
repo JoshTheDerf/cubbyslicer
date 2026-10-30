@@ -50,7 +50,7 @@ import PrepareViewport from './viewport/PrepareViewport.vue';
 import TransformPanel from './viewport/TransformPanel.vue';
 import CadPanel from './cad/CadPanel.vue';
 import ShapePalettePopover from './cad/ShapePalettePopover.vue';
-import { objects, plates } from './project/store';
+import { objects, plates, projectName } from './project/store';
 import { enableAutosave, restoreAutosave } from './project/persistence/autosave';
 import { bindToaster, toast, type Toaster } from './ui';
 
@@ -121,6 +121,12 @@ const toaster = computed(() => ({
 
 // Presets resolve from startup (the sidebar may be a closed drawer on phones).
 startPresets();
+
+// Tabs are told apart by their project (each tab keeps its own plate).
+const baseTitle = document.title;
+watch([projectName, () => objects.value.length], ([name, n]) => {
+  document.title = n || name !== 'Untitled project' ? `${name} — ${baseTitle}` : baseTitle;
+}, { immediate: true });
 
 // UI accent follows the engine: Orca green, preFlight orange (theme.css [data-engine]).
 watch(activeEngine, (e) => { document.documentElement.dataset.engine = e; }, { immediate: true });

@@ -5,7 +5,7 @@
 import { lastSlice } from '../app/state';
 import { dismissToast, toast } from '../ui';
 import { hostMeta } from './registry';
-import { hostContext, physicalPrinter, printhostUi } from './store';
+import { hostContext, physicalPrinter, printerChoices, printhostUi, rememberDevice } from './store';
 import { browserEnv } from './transport';
 import { HostError, type PhysicalPrinterConfig, type TestResult } from './types';
 import { webUiUrl } from './url';
@@ -60,7 +60,7 @@ export interface SendOutcome {
 export async function sendToPrinterDetailed(opts: { filename: string; folder: string; print: boolean }): Promise<SendOutcome> {
   const pp = physicalPrinter.value;
   const slice = lastSlice.value;
-  if (!pp) { toast.info('Set up a physical printer first.'); printhostUi.setupOpen = true; return { ok: false, message: 'No physical printer is set up for the selected printer preset.' }; }
+  if (!pp) { toast.info('Set up a physical printer first.'); printhostUi.setupTarget = null; printhostUi.setupOpen = true; return { ok: false, message: 'No physical printer is set up for the selected printer preset.' }; }
   if (!slice) { toast.info('Slice the plate before sending it to the printer.'); return { ok: false, message: 'The plate is not sliced.' }; }
   if (printhostUi.uploading) { toast.info('An upload is already running.'); return { ok: false, message: 'An upload is already running.' }; }
   const meta = hostMeta(pp.config.type);
@@ -69,6 +69,8 @@ export async function sendToPrinterDetailed(opts: { filename: string; folder: st
   const file = new Blob([slice.gcode as BlobPart], { type: 'text/x-gcode' });
   const ctx = hostContext(pp.config);
   const print = opts.print && meta.canPrint(ctx);
+  // With several printers of one model, every message says which one.
+  const where = printerChoices.value.length > 1 ? pp.name : meta.label;
   abort = new AbortController();
   printhostUi.uploading = true;
   printhostUi.progress = 0;
@@ -76,7 +78,7 @@ export async function sendToPrinterDetailed(opts: { filename: string; folder: st
   let lastPct = -1;
   const show = () => toast.info(`${printhostUi.status} ${opts.filename}…`, {
     id: PROGRESS_ID, timeout: 0,
-    detail: `${meta.label} · ${printhostUi.progress > 0 ? `${printhostUi.progress}% of ${fmtBytes(file.size)}` : fmtBytes(file.size)}`,
+    detail: `${where} · ${printhostUi.progress > 0 ? `${printhostUi.progress}% of ${fmtBytes(file.size)}` : fmtBytes(file.size)}`,
     action: { label: 'Cancel', run: cancelUpload },
   });
   show();
@@ -91,8 +93,9 @@ export async function sendToPrinterDetailed(opts: { filename: string; folder: st
       },
     });
     dismissToast(PROGRESS_ID);
+    if (pp.source === 'saved') rememberDevice(pp.id);
     const web = webUiUrl(pp.config.host, pp.config.webUi);
-    toast.success(res.message, {
+    toast.success(where === meta.label ? res.message : `${pp.name}: ${res.message}`, {
       detail: res.path ? `Saved as ${res.path}` : undefined,
       action: web ? { label: 'Open printer', run: () => openWebUi(pp.config) } : undefined,
       timeout: 7000,
@@ -102,8 +105,8 @@ export async function sendToPrinterDetailed(opts: { filename: string; folder: st
     dismissToast(PROGRESS_ID);
     if (e instanceof HostError && e.kind === 'cancelled') { toast.info('Upload cancelled.'); return { ok: false, message: 'Upload cancelled.', host: pp.config.host }; }
     const d = describeError(e);
-    toast.error(`Couldn’t send to ${meta.label}: ${d.message}`, { detail: d.detail, timeout: 15000 });
-    return { ok: false, message: `Couldn’t send to ${meta.label}: ${d.message}`, detail: d.detail, host: pp.config.host };
+    toast.error(`Couldn’t send to ${where}: ${d.message}`, { detail: d.detail, timeout: 15000 });
+    return { ok: false, message: `Couldn’t send to ${where}: ${d.message}`, detail: d.detail, host: pp.config.host };
   } finally {
     printhostUi.uploading = false;
     printhostUi.status = '';

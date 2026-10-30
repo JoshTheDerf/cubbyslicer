@@ -17,5 +17,5 @@ export { cadUi } from '../cad/commands';
 export { askStepOptions } from '../project/import/step';
 export { requestPreset } from '../settings/uiState';
 export { jumpToSetting, selectPage } from '../settings/useLayout';
-export { savePhysicalPrinter, removePhysicalPrinter } from '../printhost/store';
+export { savePhysicalPrinter, removePhysicalPrinter, selectDevice, printerChoices, physicalPrinter } from '../printhost/store';
 export { layersUi } from '../layers/store';
