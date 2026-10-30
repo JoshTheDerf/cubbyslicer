@@ -15,7 +15,7 @@ const groups = useToolbar(PLATE_TOOLBAR);
       <USeparator v-if="gi" orientation="vertical" class="h-6 mx-1" />
       <UTooltip v-for="t in g" :key="t.id" :text="t.label" :kbds="t.kbds" :content="{ side: 'bottom', sideOffset: 6 }">
         <UButton :icon="t.icon" :aria-label="t.label" :aria-pressed="t.active || undefined" :disabled="t.disabled"
-                 :color="t.active ? 'primary' : t.tone === 'danger' ? 'error' : 'neutral'" :variant="t.active ? 'soft' : 'ghost'"
+                 :color="t.active ? 'primary' : t.tone === 'danger' && !t.disabled ? 'error' : 'neutral'" :variant="t.active ? 'soft' : 'ghost'"
                  size="md" class="size-9 justify-center" :data-action="t.id" @click="t.run()" />
       </UTooltip>
     </template>

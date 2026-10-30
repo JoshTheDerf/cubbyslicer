@@ -68,7 +68,7 @@ export async function jumpToSetting(key: string): Promise<boolean> {
 const PAGE_ICONS: Record<string, string> = {
   quality: 'i-lucide-layers', strength: 'i-lucide-shield-half', speed: 'i-lucide-gauge', support: 'i-lucide-tree-pine',
   'support material': 'i-lucide-tree-pine', multimaterial: 'i-lucide-palette', 'multiple extruders': 'i-lucide-palette',
-  others: 'i-lucide-sliders-horizontal', other: 'i-lucide-ellipsis', 'layers and perimeters': 'i-lucide-layers', infill: 'i-lucide-grid-3x3',
+  others: 'i-lucide-sliders-horizontal', other: 'i-lucide-ellipsis', more: 'i-lucide-ellipsis', 'layers and perimeters': 'i-lucide-layers', infill: 'i-lucide-grid-3x3',
   'skirt and brim': 'i-lucide-square-dashed', advanced: 'i-lucide-settings-2', preprocessing: 'i-lucide-wand-sparkles',
   'output options': 'i-lucide-file-output', notes: 'i-lucide-notebook-pen', dependencies: 'i-lucide-link',
   filament: 'i-lucide-disc', cooling: 'i-lucide-fan', 'setting overrides': 'i-lucide-file-pen', 'basic information': 'i-lucide-printer',

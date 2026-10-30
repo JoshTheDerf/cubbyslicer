@@ -13,6 +13,8 @@ import { hostMeta } from './registry';
 import { cancelUpload, openWebUi } from './send';
 import { boundPrinter, hostReady, openPhysicalPrinterDialog, openSendDialog, physicalPrinter, printerChoices, printhostUi, selectDevice } from './store';
 
+/** `primary`: the plate is sliced, so printing is the next step. */
+const props = defineProps<{ primary?: boolean }>();
 const { status } = useSliceController();
 const meta = computed(() => hostMeta(physicalPrinter.value?.config.type));
 const canPrint = computed(() => !!meta.value?.canPrint({ printerModel: boundPrinter.value.model, variant: physicalPrinter.value?.config.variant }));
@@ -46,11 +48,11 @@ const menu = computed<DropdownMenuItem[][]>(() => [
     <UTooltip :text="tip" :kbds="printhostUi.uploading ? undefined : kbds" :content="{ side: 'bottom' }">
       <UButton v-if="printhostUi.uploading" color="neutral" variant="outline" icon="i-lucide-x" :label="`${printhostUi.progress}%`" :loading="false"
                aria-label="Cancel upload" class="phb__main" @click="cancelUpload()" />
-      <UButton v-else color="neutral" variant="outline" :icon="canPrint ? 'i-lucide-printer' : 'i-lucide-send'" :label="several ? `${canPrint ? 'Print' : 'Send'} · ${target}` : canPrint ? 'Print' : 'Send'"
+      <UButton v-else :color="props.primary ? 'primary' : 'neutral'" :variant="props.primary ? 'solid' : 'outline'" :icon="canPrint ? 'i-lucide-printer' : 'i-lucide-send'" :label="several ? `${canPrint ? 'Print' : 'Send'} · ${target}` : canPrint ? 'Print' : 'Send'"
                :disabled="disabled" class="phb__main" @click="openSendDialog(canPrint ? 'print' : 'upload')" />
     </UTooltip>
     <UDropdownMenu :items="menu" :content="{ align: 'end' }" size="sm">
-      <UButton color="neutral" variant="outline" icon="i-lucide-chevron-down" aria-label="More printer actions" />
+      <UButton :color="props.primary ? 'primary' : 'neutral'" :variant="props.primary ? 'solid' : 'outline'" icon="i-lucide-chevron-down" aria-label="More printer actions" />
     </UDropdownMenu>
   </UFieldGroup>
 </template>

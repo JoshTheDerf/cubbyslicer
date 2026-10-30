@@ -238,6 +238,7 @@ watch(selectedIds, async (ids) => {
 <template>
   <section class="ol" data-object-list>
     <header class="ol__head">
+      <UIcon name="i-lucide-boxes" class="ol__hicon" />
       <h2>Objects</h2>
       <UBadge v-if="objects.length" color="neutral" variant="subtle" size="sm" :label="String(objects.length)" />
       <span class="ol__spacer" />
@@ -247,8 +248,7 @@ watch(selectedIds, async (ids) => {
     </header>
 
     <div v-if="!objects.length" class="ol__empty">
-      <p>Nothing on the plate yet.</p>
-      <UButton size="xs" icon="i-lucide-file-input" label="Import model…" color="neutral" variant="outline" @click="run('file.import')" />
+      <p>Nothing on the plate yet. Import a model, or drop files on the plate.</p>
     </div>
 
     <UContextMenu v-else v-model:open="menuOpen" :items="menuNuxt" :ui="{ content: 'min-w-52' }">
@@ -334,6 +334,7 @@ watch(selectedIds, async (ids) => {
 <style scoped>
 .ol { display: flex; flex-direction: column; min-height: 0; }
 .ol__head { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 6px 0 10px; flex: none; }
+.ol__hicon { width: 16px; height: 16px; color: var(--ui-primary); flex: none; }
 .ol__head h2 { margin: 0; font: 600 var(--fs-md) var(--font); color: var(--fg-0); }
 .ol__spacer { flex: 1; }
 .ol__empty { padding: 4px 10px 12px; color: var(--fg-2); font-size: var(--fs-sm); }

@@ -1,5 +1,8 @@
 <template>
-  <!-- Orca's top-right slice controls: status/progress, "Slice plate" (primary), "Export G-code". -->
+  <!--
+    Orca's top-right slice controls: status/progress, "Slice plate", "Export G-code" (+ Print).
+    The next step is the primary button: Slice until the plate is sliced, then Print / Export.
+  -->
   <div class="slicebar flex shrink-0 items-center gap-2" :class="status" role="group" aria-label="Slicing">
     <div v-if="status === 'slicing'" class="flex items-center gap-2 min-w-0" role="status" aria-live="polite">
       <div class="flex flex-col min-w-0 gap-1" :class="phone ? 'w-20' : 'w-44'">
@@ -40,8 +43,8 @@
     </template>
 
     <UTooltip :text="sliceTitle" :kbds="sliceKbds" :content="{ side: 'bottom' }">
-      <UButton color="primary" variant="solid" size="sm" icon="i-lucide-layers" class="font-semibold"
-               :label="phone && status === 'slicing' ? undefined : phone ? 'Slice' : lastSlice && isStale ? 'Re-slice' : 'Slice plate'" :loading="status === 'slicing'"
+      <UButton :color="sliced ? 'neutral' : 'primary'" :variant="sliced ? 'outline' : 'solid'" size="sm" :icon="sliced ? 'i-lucide-check' : 'i-lucide-layers'" :class="{ 'font-semibold': !sliced }"
+               :label="phone && status === 'slicing' ? undefined : phone ? (sliced ? 'Sliced' : 'Slice') : sliced ? 'Sliced' : lastSlice && isStale ? 'Re-slice' : 'Slice plate'" :loading="status === 'slicing'"
                :aria-label="lastSlice && isStale ? 'Re-slice' : 'Slice plate'"
                :disabled="!canSlice || status === 'slicing'" @click="slice()" />
     </UTooltip>
@@ -50,10 +53,11 @@
                :disabled="status === 'slicing'" />
     </UDropdownMenu>
     <UTooltip text="Export G-code" :kbds="exportKbds" :content="{ side: 'bottom' }">
-      <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-download" :label="narrow ? undefined : 'Export G-code'" aria-label="Export G-code"
+      <UButton :color="sliced && !hostReady ? 'primary' : 'neutral'" :variant="sliced && !hostReady ? 'solid' : 'outline'" size="sm" icon="i-lucide-download"
+               :label="narrow ? undefined : 'Export G-code'" aria-label="Export G-code"
                :disabled="!lastSlice || status === 'slicing'" class="export-btn" @click="exportGcode()" />
     </UTooltip>
-    <PrintHostButton />
+    <PrintHostButton :primary="sliced" />
   </div>
 </template>
 
@@ -65,6 +69,7 @@ import { getSliceObjects, objects, plates } from '../project/store';
 import { getConfigProblems, type ConfigProblem } from '../settings/validate';
 import { bindingTokensOf } from './shell/useActions';
 import PrintHostButton from '../printhost/PrintHostButton.vue';
+import { hostReady } from '../printhost/store';
 import { compact, narrow, phone } from './shell/uiState';
 
 const { status, progress, message, error, isStale, slice, sliceAll, cancel, exportGcode, exportAllGcode, plateStates } = useSliceController();
@@ -84,10 +89,12 @@ const allProblems = computed<ConfigProblem[]>(() => {
 });
 const fmtProblem = (p: ConfigProblem) => `${p.label}${p.index !== undefined ? ` [${p.index + 1}]` : ''}: ${p.message}`;
 const problems = computed(() => allProblems.value.filter((p) => p.severity === 'error').map(fmtProblem));
+/** The active plate's slice is current: nothing left to slice. */
+const sliced = computed(() => !!lastSlice.value && !isStale.value && status.value !== 'slicing' && status.value !== 'error');
 const hasObjects = computed(() => { void objects.value; return getSliceObjects().length > 0; });
 const canSlice = computed(() => hasObjects.value && problems.value.length === 0);
 const sliceTitle = computed(() =>
-  !hasObjects.value ? 'Add a printable model first' : problems.value.length ? 'Fix the highlighted settings first' : 'Slice plate');
+  !hasObjects.value ? 'Add a printable model first' : problems.value.length ? 'Fix the highlighted settings first' : sliced.value ? 'Up to date — slice again' : 'Slice plate');
 const sliceKbds = computed(() => bindingTokensOf('slice.run'));
 const exportKbds = computed(() => bindingTokensOf('slice.export-gcode'));
 

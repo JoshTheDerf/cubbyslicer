@@ -176,6 +176,9 @@ const schemaNote = computed(() => {
         <UIcon name="i-lucide-chevron-down" class="sp__chev" :class="{ 'sp__chev--closed': !isOpen('printer') }" />
         <UIcon name="i-lucide-printer" class="sp__icon" />
         <h3 class="sp__title">Printer<span v-if="!isOpen('printer')" class="sp__sub"> | {{ p.infos.value.printer.name }}</span></h3>
+        <span v-if="nozzles.length" class="sp__nozzle" :title="`Nozzle diameter${nozzles.length > 1 ? 's' : ''}`">
+          <UIcon name="i-lucide-pen-tool" class="size-3.5" />{{ nozzles.join(' / ') }} mm
+        </span>
         <div class="sp__acts" @click.stop>
           <UDropdownMenu :items="printerMenu" :content="{ align: 'end' }" size="sm">
             <UButton size="xs" variant="ghost" icon="i-lucide-ellipsis" square aria-label="Printer menu" />
@@ -188,20 +191,15 @@ const schemaNote = computed(() => {
                    :variant="activeEngine === e ? 'soft' : 'outline'" :color="activeEngine === e ? 'primary' : 'neutral'" :title="engineTitle(e)"
                    @click="setActiveEngine(e)">
             <span class="sp__led" :class="{ ok: engineInfo[e].available === true, bad: engineInfo[e].available === false }" />
-            {{ ENGINE_LABELS[e] }}<small v-if="engineInfo[e].version" class="text-dimmed">{{ engineInfo[e].version }}</small>
+            <span class="whitespace-nowrap">{{ ENGINE_LABELS[e] }}</span>
           </UButton>
         </UFieldGroup>
         <PresetRow :presets="p" kind="printer" :items="printerItems" group-by="vendor" editable
                    @edit="openSettingsTab('printer')" @add-printer="addPrinter = true" />
-        <div v-if="showBedType || nozzles.length" class="sp__info">
-          <template v-if="showBedType">
-            <span class="sp__lbl">Plate</span>
-            <USelect :model-value="p.bedType() ?? undefined" :items="bedItems" value-key="value" size="xs" class="min-w-0 flex-1" aria-label="Plate type"
-                     @update:model-value="(v: unknown) => p.setBedType(String(v))" />
-          </template>
-          <span v-if="nozzles.length" class="sp__nozzle" :title="`Nozzle diameter${nozzles.length > 1 ? 's' : ''}`">
-            <UIcon name="i-lucide-pen-tool" class="size-3.5" />{{ nozzles.join(' / ') }} mm
-          </span>
+        <div v-if="showBedType" class="sp__info">
+          <span class="sp__lbl">Plate</span>
+          <USelect :model-value="p.bedType() ?? undefined" :items="bedItems" value-key="value" size="xs" class="min-w-0 flex-1" aria-label="Plate type"
+                   @update:model-value="(v: unknown) => p.setBedType(String(v))" />
         </div>
       </div>
     </section>
@@ -233,6 +231,11 @@ const schemaNote = computed(() => {
       </div>
     </section>
 
+    <!-- ============ Objects (always visible: what's on the plate) ============ -->
+    <section class="sp__sec sp__objlist" aria-label="Objects">
+      <slot name="objects" />
+    </section>
+
     <!-- ============ Process ============ -->
     <section class="sp__sec sp__sec--grow" :class="{ 'sp__sec--closed': !isOpen('process') }" aria-label="Process">
       <header class="sp__bar" @click="toggleSection('process')">
@@ -243,7 +246,8 @@ const schemaNote = computed(() => {
           <UFieldGroup size="xs" role="radiogroup" aria-label="Edit global or per-object settings">
             <UButton v-for="r in (['global', 'objects'] as const)" :key="r" role="radio" :aria-checked="region === r" size="xs"
                      :variant="region === r ? 'solid' : 'outline'" :color="region === r ? 'primary' : 'neutral'"
-                     :label="r === 'global' ? 'Global' : 'Objects'" @click="region = r; isOpen('process') || toggleSection('process')" />
+                     :label="r === 'global' ? 'Global' : 'Per object'"
+                     :title="r === 'global' ? 'Settings for the whole plate' : 'Override settings for the selected object'" @click="region = r; isOpen('process') || toggleSection('process')" />
           </UFieldGroup>
           <span class="flex-1" />
           <ModeSelect />
@@ -251,7 +255,8 @@ const schemaNote = computed(() => {
         </div>
       </header>
       <div v-show="isOpen('process')" class="sp__body sp__body--grow">
-        <PresetRow :presets="p" kind="process" :items="processItems" group-by="none" />
+        <!-- The process preset is plate-wide; per-object mode only shows overrides. -->
+        <PresetRow v-if="region === 'global'" :presets="p" kind="process" :items="processItems" group-by="none" />
 
         <template v-if="region === 'global'">
           <nav v-if="processTab" class="sp__tabs" :class="{ 'sp__tabs--wrap': processTab.pages.length > 7 }" role="tablist" aria-label="Process settings">
@@ -281,11 +286,10 @@ const schemaNote = computed(() => {
         </template>
 
         <div v-else class="sp__scroll sp__objects">
-          <slot name="objects" />
           <ObjectSettingsPanel v-if="singleSel" :key="`${singleSel.id}|${partSel ?? ''}|${rangeSel ?? ''}`" :object-id="singleSel.id" :part-id="rangeSel ? undefined : partSel" :range-id="rangeSel" />
           <p v-else class="sp__hint">
             <UIcon name="i-lucide-mouse-pointer-click" class="size-4" />
-            {{ selectedIds.length > 1 ? 'Select a single object to edit its settings.' : 'Select an object to override process settings for it.' }}
+            {{ selectedIds.length > 1 ? 'Select a single object to edit its settings.' : 'Select an object on the plate or in the Objects list to override process settings for it.' }}
           </p>
         </div>
       </div>
@@ -325,7 +329,13 @@ const schemaNote = computed(() => {
 .sp__led.bad { background: var(--ui-error); }
 .sp__info { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ui-text-muted); }
 .sp__lbl { color: var(--ui-text-dimmed); }
-.sp__nozzle { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; white-space: nowrap; color: var(--ui-text-toned); }
+.sp__nozzle { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; white-space: nowrap; font-size: 12px; color: var(--ui-text-muted); }
+.sp__nozzle + .sp__acts { margin-left: 4px; }
+/* The object list keeps its own header; match the section bars. */
+.sp__objlist :deep(.ol__head) { height: 34px; background: var(--ui-bg-muted); border-bottom: 1px solid var(--ui-border); }
+.sp__objlist :deep(.ol__head h2) { font-size: 13px; }
+.sp__objlist :deep(.ol__list) { max-height: 28vh; padding-top: 4px; }
+.sp--flow .sp__objlist :deep(.ol__list) { max-height: none; }
 .sp__fils { gap: 4px; max-height: 40vh; overflow: auto; }
 .sp__slotno { width: 14px; text-align: right; font-size: 11px; color: var(--ui-text-dimmed); flex: none; margin-right: 2px; font-variant-numeric: tabular-nums; }
 .sp__fils :deep(.cf) { margin-right: 4px; }

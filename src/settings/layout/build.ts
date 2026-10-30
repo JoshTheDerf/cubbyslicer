@@ -1,7 +1,7 @@
 /**
  * Build the concrete settings layout for a schema: hand/generated layout
  * filtered to the schema, per-extruder pages expanded, and every remaining
- * key of the tab's scope collected into auto "Other" groups so nothing is
+ * key of the tab's scope collected into an auto "More" page so nothing is
  * unreachable.
  */
 import type { ConfigSchema, EngineId } from '../../engine/types';
@@ -54,7 +54,7 @@ export function buildLayout(schema: ConfigSchema, engine: EngineId, extruders = 
         pages.push({ id: `${tab}:${slug(p.title)}`, title: p.title, groups: base });
       }
     }
-    // Everything else of this scope → "Other", grouped by category.
+    // Everything else of this scope → "More", grouped by category (Orca already has an "Others" page).
     const rest = Object.keys(schema.options).filter((k) => belongs(k) && !used.has(k));
     if (rest.length) {
       const byCat = new Map<string, string[]>();
@@ -68,7 +68,7 @@ export function buildLayout(schema: ConfigSchema, engine: EngineId, extruders = 
       const groups: BuiltGroup[] = [...byCat.entries()]
         .sort(([a], [b]) => (a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b)))
         .map(([c, keys]) => ({ id: `${tab}:other:${slug(c)}`, title: c, keys: keys.sort((a, b) => label(a).localeCompare(label(b))), auto: true }));
-      pages.push({ id: `${tab}:other`, title: 'Other', groups });
+      pages.push({ id: `${tab}:other`, title: 'More', groups });
     }
     const built: BuiltTab = { id: tab, kind: tab === 'printer' ? 'printer' : tab, title: TITLES[tab], pages };
     out[tab] = built;
