@@ -143,8 +143,8 @@ async function start(): Promise<void> {
           <URadioGroup v-model="temp.filament" :items="tempItems" orientation="horizontal" :variant="mobileDialog ? 'card' : 'table'" size="xs" class="cd__wrap" :ui="{ fieldset: 'phone:gap-1.5', item: 'phone:px-2.5 phone:py-0' }" />
         </UFormField>
         <div class="cd__grid">
-          <UFormField label="Start temp" hint="°C"><UInputNumber :model-value="temp.start" :min="155" :max="500" :step="5" size="sm" @update:model-value="(v: number | null) => (temp.start = snapTemp(n(v, 230)))" /></UFormField>
-          <UFormField label="End temp" hint="°C"><UInputNumber :model-value="temp.end" :min="155" :max="500" :step="5" size="sm" @update:model-value="(v: number | null) => (temp.end = snapTemp(n(v, 190)))" /></UFormField>
+          <UFormField label="Start temp" hint="°C"><UInputNumber :step-snapping="false" :model-value="temp.start" :min="155" :max="500" :step="5" size="sm" @update:model-value="(v: number | null) => (temp.start = snapTemp(n(v, 230)))" /></UFormField>
+          <UFormField label="End temp" hint="°C"><UInputNumber :step-snapping="false" :model-value="temp.end" :min="155" :max="500" :step="5" size="sm" @update:model-value="(v: number | null) => (temp.end = snapTemp(n(v, 190)))" /></UFormField>
           <UFormField label="Temp step" hint="°C"><UInputNumber :model-value="5" disabled size="sm" /></UFormField>
         </div>
         <p class="cd__note dlg-span">Prints a tower of 10 mm blocks, one per temperature, from the start temperature at the bottom down to the end temperature at the top.</p>
@@ -172,9 +172,9 @@ async function start(): Promise<void> {
           </UFormField>
         </div>
         <div class="cd__grid">
-          <UFormField label="Start PA"><UInputNumber :model-value="pa.start" :min="0" :step="0.001" :format-options="{ maximumFractionDigits: 4 }" size="sm" @update:model-value="(v: number | null) => (pa.start = n(v))" /></UFormField>
-          <UFormField label="End PA"><UInputNumber :model-value="pa.end" :min="0" :step="0.001" :format-options="{ maximumFractionDigits: 4 }" size="sm" @update:model-value="(v: number | null) => (pa.end = n(v))" /></UFormField>
-          <UFormField label="PA step"><UInputNumber :model-value="pa.step" :min="0.001" :step="0.001" :format-options="{ maximumFractionDigits: 4 }" size="sm" @update:model-value="(v: number | null) => (pa.step = n(v))" /></UFormField>
+          <UFormField label="Start PA"><UInputNumber :step-snapping="false" :model-value="pa.start" :min="0" :step="0.001" :format-options="{ maximumFractionDigits: 4 }" size="sm" @update:model-value="(v: number | null) => (pa.start = n(v))" /></UFormField>
+          <UFormField label="End PA"><UInputNumber :step-snapping="false" :model-value="pa.end" :min="0" :step="0.001" :format-options="{ maximumFractionDigits: 4 }" size="sm" @update:model-value="(v: number | null) => (pa.end = n(v))" /></UFormField>
+          <UFormField label="PA step"><UInputNumber :step-snapping="false" :model-value="pa.step" :min="0.001" :step="0.001" :format-options="{ maximumFractionDigits: 4 }" size="sm" @update:model-value="(v: number | null) => (pa.step = n(v))" /></UFormField>
         </div>
         <UCheckbox v-model="pa.printNumbers" label="Print numbers" :disabled="pa.method !== 'pa_line'" />
         <div v-if="pa.method === 'pa_pattern'" class="cd__grid2">
@@ -190,9 +190,9 @@ async function start(): Promise<void> {
       <!-- Retraction / max flowrate / VFA -->
       <template v-else-if="id === 'retraction' || id === 'volumetric' || id === 'vfa'">
         <div class="cd__grid">
-          <UFormField :label="rangeMeta.start" :hint="rangeMeta.unit"><UInputNumber :model-value="range.start" :step="rangeMeta.step" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (range.start = n(v))" /></UFormField>
-          <UFormField :label="rangeMeta.end" :hint="rangeMeta.unit"><UInputNumber :model-value="range.end" :step="rangeMeta.step" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (range.end = n(v))" /></UFormField>
-          <UFormField label="Step" :hint="rangeMeta.unit"><UInputNumber :model-value="range.step" :step="rangeMeta.step" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (range.step = n(v))" /></UFormField>
+          <UFormField :label="rangeMeta.start" :hint="rangeMeta.unit"><UInputNumber :step-snapping="false" :model-value="range.start" :step="rangeMeta.step" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (range.start = n(v))" /></UFormField>
+          <UFormField :label="rangeMeta.end" :hint="rangeMeta.unit"><UInputNumber :step-snapping="false" :model-value="range.end" :step="rangeMeta.step" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (range.end = n(v))" /></UFormField>
+          <UFormField label="Step" :hint="rangeMeta.unit"><UInputNumber :step-snapping="false" :model-value="range.step" :step="rangeMeta.step" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (range.step = n(v))" /></UFormField>
         </div>
         <p v-if="id === 'volumetric'" class="cd__note">Prints a vase-mode wall whose speed rises with height. The filament’s max volumetric speed is raised to 200 mm³/s for the test.</p>
         <p v-else-if="id === 'retraction'" class="cd__note">The retraction length increases by one step per millimetre of tower height.</p>
@@ -222,7 +222,7 @@ async function start(): Promise<void> {
           </UFormField>
         </div>
         <UFormField label="Damp" description="Recommended: 0 — uses the printer’s default or saved value.">
-          <UInputNumber :model-value="isf.damp" :min="0" :max="1" :step="0.01" :format-options="{ maximumFractionDigits: 3 }" size="sm" class="w-32" @update:model-value="(v: number | null) => (isf.damp = n(v))" />
+          <UInputNumber :step-snapping="false" :model-value="isf.damp" :min="0" :max="1" :step="0.01" :format-options="{ maximumFractionDigits: 3 }" size="sm" class="w-32" @update:model-value="(v: number | null) => (isf.damp = n(v))" />
         </UFormField>
       </template>
 
@@ -241,8 +241,8 @@ async function start(): Promise<void> {
           </UFormField>
           <UFormField label="Damp start / end">
             <div class="cd__pair">
-              <UInputNumber :model-value="isd.start" :min="0" :max="1" :step="0.01" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (isd.start = n(v))" />
-              <UInputNumber :model-value="isd.end" :min="0" :max="1" :step="0.01" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (isd.end = n(v))" />
+              <UInputNumber :step-snapping="false" :model-value="isd.start" :min="0" :max="1" :step="0.01" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (isd.start = n(v))" />
+              <UInputNumber :step-snapping="false" :model-value="isd.end" :min="0" :max="1" :step="0.01" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (isd.end = n(v))" />
             </div>
           </UFormField>
         </div>
@@ -253,8 +253,8 @@ async function start(): Promise<void> {
       <template v-else-if="id === 'cornering'">
         <UFormField label="Test model"><URadioGroup v-model="corner.model" :items="cornerModels" orientation="horizontal" size="sm" /></UFormField>
         <div class="cd__grid2">
-          <UFormField label="Start" :hint="cornerDef.unit"><UInputNumber :model-value="corner.start" :min="0" :step="facts.junctionDeviation ? 0.005 : 0.5" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (corner.start = n(v))" /></UFormField>
-          <UFormField label="End" :hint="cornerDef.unit"><UInputNumber :model-value="corner.end" :min="0" :step="facts.junctionDeviation ? 0.005 : 0.5" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (corner.end = n(v))" /></UFormField>
+          <UFormField label="Start" :hint="cornerDef.unit"><UInputNumber :step-snapping="false" :model-value="corner.start" :min="0" :step="facts.junctionDeviation ? 0.005 : 0.5" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (corner.start = n(v))" /></UFormField>
+          <UFormField label="End" :hint="cornerDef.unit"><UInputNumber :step-snapping="false" :model-value="corner.end" :min="0" :step="facts.junctionDeviation ? 0.005 : 0.5" :format-options="{ maximumFractionDigits: 3 }" size="sm" @update:model-value="(v: number | null) => (corner.end = n(v))" /></UFormField>
         </div>
         <p class="cd__note">
           Lower values give sharper corners but slower speeds.

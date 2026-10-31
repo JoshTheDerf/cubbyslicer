@@ -14,7 +14,9 @@ Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on fa
 
 ## Moving objects
 
-The transform gizmo is CubbyCAD's: move, rotate and scale handles on one gizmo (G). M, R and S limit it to one of them, and pressing the same key again brings back the full gizmo. View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches between perspective and orthographic.
+The transform gizmo is CubbyCAD's: move, rotate and scale handles on one gizmo (G). M, R and S limit it to one of them, and pressing the same key again brings back the full gizmo. The Object manipulation panel (bottom left) types exact values. Each row ends in its own button: drop to bed, reset rotation, reset scale, and the link that keeps scale and size proportional. With several objects selected it edits them as one group, like Orca's world coordinates: position and size are the group's, and rotation and scale turn or scale the whole group about its centre (always uniformly), then read 0° and 100% again. Collapsed, it shows the selection's size.
+
+View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches between perspective and orthographic.
 
 ## Arranging
 

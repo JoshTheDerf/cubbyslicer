@@ -242,7 +242,7 @@ async function save(): Promise<void> {
           <div v-for="(c, i) in d.components" :key="`o${i}`" class="me__row">
             <span class="me__sw" :style="{ background: filamentColourOf(c.id) }" />
             <span class="me__lbl">F{{ c.id }}</span>
-            <UInputNumber :model-value="offsets[i]" :min="-2" :max="2" :step="0.01" size="xs" class="w-28" :format-options="{ maximumFractionDigits: 2 }"
+            <UInputNumber :step-snapping="false" :model-value="offsets[i]" :min="-2" :max="2" :step="0.01" size="xs" class="w-28" :format-options="{ maximumFractionDigits: 2 }"
                           :aria-label="`Filament ${c.id} surface offset`" @update:model-value="(v: unknown) => setOffset(i, Number(v))" />
           </div>
           <UCheckbox v-model="d.perimeterModulation" label="Outer wall only (perimeter modulation)" size="sm" />

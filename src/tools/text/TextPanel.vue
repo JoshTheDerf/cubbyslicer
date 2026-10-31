@@ -52,13 +52,13 @@ const hint = computed(() => {
         </UFieldGroup>
       </div>
       <span class="tx__lbl">Height</span>
-      <UInputNumber v-model="params.size" :min="0.5" :max="1000" :step="0.5" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Text height (mm)" />
+      <UInputNumber :step-snapping="false" v-model="params.size" :min="0.5" :max="1000" :step="0.5" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Text height (mm)" />
       <span class="tx__lbl">Depth</span>
-      <UInputNumber v-model="params.depth" :min="0.05" :max="500" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Emboss depth (mm)" />
+      <UInputNumber :step-snapping="false" v-model="params.depth" :min="0.05" :max="500" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Emboss depth (mm)" />
       <span class="tx__lbl">Letter gap</span>
-      <UInputNumber v-model="params.letterSpacing" :min="-50" :max="50" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Letter spacing (mm)" />
+      <UInputNumber :step-snapping="false" v-model="params.letterSpacing" :min="-50" :max="50" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Letter spacing (mm)" />
       <span class="tx__lbl">Line gap</span>
-      <UInputNumber v-model="params.lineSpacing" :min="-50" :max="50" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Line spacing (mm)" />
+      <UInputNumber :step-snapping="false" v-model="params.lineSpacing" :min="-50" :max="50" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Line spacing (mm)" />
       <template v-if="!target">
         <span class="tx__lbl">Add as</span>
         <USelect v-model="place" :items="placeItems" size="sm" class="w-full" aria-label="Add as" />

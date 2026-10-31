@@ -33,7 +33,7 @@ const step = (k: string) => (schema.value[k]?.type === 'int' ? 1 : isPercent(k) 
         </template>
         <template v-else>
           <span class="ms__lbl">{{ schema[k].label }}</span>
-          <UInputNumber :model-value="num(k)" :min="schema[k].min ?? undefined" :max="schema[k].max ?? undefined" :step="step(k)" size="xs" class="w-28"
+          <UInputNumber :step-snapping="false" :model-value="num(k)" :min="schema[k].min ?? undefined" :max="schema[k].max ?? undefined" :step="step(k)" size="xs" class="w-28"
                         :format-options="{ maximumFractionDigits: 3 }" :aria-label="schema[k].label" @update:model-value="(v: unknown) => setNum(k, v)" />
           <span class="ms__unit">{{ isPercent(k) ? '%' : schema[k].sidetext }}</span>
         </template>

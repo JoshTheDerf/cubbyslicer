@@ -216,7 +216,7 @@ onBeforeUnmount(() => { installHandler(null); overlay.dispose(); });
     <div v-if="result && primaryDistance(result)" class="ms__scale">
       <UFormField label="Scale to distance" size="xs" :ui="{ help: 'text-xs' }" :help="sameObject ? 'Scales the object uniformly so this distance matches.' : 'Pick both features on the same object to scale it.'">
         <div class="flex gap-2 items-center">
-          <UInputNumber v-model="scaleTarget" :min="0.001" :step="0.1" :format-options="{ maximumFractionDigits: 3 }" size="sm" class="w-32"
+          <UInputNumber :step-snapping="false" v-model="scaleTarget" :min="0.001" :step="0.1" :format-options="{ maximumFractionDigits: 3 }" size="sm" class="w-32"
                         :disabled="!sameObject" aria-label="Target distance in mm" @keydown.enter="applyScale" />
           <span class="text-xs text-dimmed">mm</span>
           <UButton size="sm" color="primary" variant="soft" label="Scale" :disabled="!sameObject" @click="applyScale" />

@@ -165,7 +165,7 @@ onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydow
         <span class="be__lbl">Head diameter</span>
         <div class="flex items-center gap-2">
           <USlider v-model="diameter" :min="EAR_DEFAULTS.headDiameterMin" :max="EAR_DEFAULTS.headDiameterMax" :step="0.1" size="sm" class="flex-1" aria-label="Head diameter" />
-          <UInputNumber v-model="diameter" :min="EAR_DEFAULTS.headDiameterMin" :max="EAR_DEFAULTS.headDiameterMax" :step="0.1" size="xs" class="w-20" :format-options="{ maximumFractionDigits: 1 }" aria-label="Head diameter (mm)" />
+          <UInputNumber :step-snapping="false" v-model="diameter" :min="EAR_DEFAULTS.headDiameterMin" :max="EAR_DEFAULTS.headDiameterMax" :step="0.1" size="xs" class="w-20" :format-options="{ maximumFractionDigits: 1 }" aria-label="Head diameter (mm)" />
         </div>
         <span class="be__lbl">Max angle</span>
         <div class="flex items-center gap-2">
@@ -175,7 +175,7 @@ onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydow
         <span class="be__lbl">Detection radius</span>
         <div class="flex items-center gap-2">
           <USlider v-model="detection" :min="0" :max="Math.max(1, Math.floor(detectionMax))" :step="0.1" size="sm" class="flex-1" aria-label="Detection radius" />
-          <UInputNumber v-model="detection" :min="0" :max="detectionMax" :step="0.1" size="xs" class="w-20" :format-options="{ maximumFractionDigits: 1 }" aria-label="Detection radius (mm)" />
+          <UInputNumber :step-snapping="false" v-model="detection" :min="0" :max="detectionMax" :step="0.1" size="xs" class="w-20" :format-options="{ maximumFractionDigits: 1 }" aria-label="Detection radius (mm)" />
         </div>
       </div>
       <div class="flex flex-wrap gap-2">

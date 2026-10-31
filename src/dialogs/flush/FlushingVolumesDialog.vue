@@ -72,7 +72,7 @@ const textOn = (hex: string) => {
               <label v-if="j !== fromIdx" class="fv__to">
                 <span class="text-xs text-muted">To</span>
                 <span class="fv__chip" :style="{ background: state.colours[j], color: textOn(state.colours[j]) }">{{ j + 1 }}</span>
-                <UInputNumber :model-value="v" :min="0" :max="MAX_FLUSH_VOLUME" :step="10" size="xs" :increment="false" :decrement="false"
+                <UInputNumber :step-snapping="false" :model-value="v" :min="0" :max="MAX_FLUSH_VOLUME" :step="10" size="xs" :increment="false" :decrement="false"
                               :aria-label="`Flush from filament ${fromIdx + 1} to ${j + 1}`" class="min-w-0 flex-1" :color="v > 700 ? 'warning' : 'primary'" :highlight="v > 700"
                               @update:model-value="(x: number | null) => setCell(fromIdx, j, x)" />
               </label>
@@ -94,7 +94,7 @@ const textOn = (hex: string) => {
                 <th><span class="fv__chip" :style="{ background: state.colours[i], color: textOn(state.colours[i]) }">{{ i + 1 }}</span></th>
                 <td v-for="(v, j) in row" :key="j">
                   <span v-if="i === j" class="fv__diag">—</span>
-                  <UInputNumber v-else :model-value="v" :min="0" :max="MAX_FLUSH_VOLUME" :step="10" size="xs" :increment="false" :decrement="false"
+                  <UInputNumber :step-snapping="false" v-else :model-value="v" :min="0" :max="MAX_FLUSH_VOLUME" :step="10" size="xs" :increment="false" :decrement="false"
                                 :aria-label="`Flush from filament ${i + 1} to ${j + 1}`" class="fv__in" :color="v > 700 ? 'warning' : 'primary'" :highlight="v > 700"
                                 @update:model-value="(x: number | null) => setCell(i, j, x)" />
                 </td>
@@ -104,7 +104,7 @@ const textOn = (hex: string) => {
         </div>
         <div class="fv__row">
           <UFormField v-if="state.engine !== 'preflight'" label="Multiplier" :error="badMult ? 'The multiplier should be in range [0.00, 3.00].' : undefined" orientation="horizontal">
-            <UInputNumber v-model="multiplier" :min="0" :max="3" :step="0.05" :format-options="{ maximumFractionDigits: 2 }" size="sm" class="w-28" />
+            <UInputNumber :step-snapping="false" v-model="multiplier" :min="0" :max="3" :step="0.05" :format-options="{ maximumFractionDigits: 2 }" size="sm" class="w-28" />
           </UFormField>
           <span class="flex-1" />
           <UButton icon="i-lucide-refresh-cw" label="Re-calculate" variant="outline" size="sm" @click="recalc" />

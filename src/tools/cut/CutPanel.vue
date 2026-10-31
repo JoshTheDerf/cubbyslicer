@@ -203,7 +203,7 @@ onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydow
           <span class="ct__lbl">Height</span>
           <div class="flex items-center gap-2">
             <USlider v-model="height" :min="0" :max="+(zMax - zMin).toFixed(2)" :step="0.1" size="sm" class="flex-1" aria-label="Cut height" />
-            <UInputNumber v-model="height" :step="0.1" size="xs" class="w-24" :format-options="{ maximumFractionDigits: 2 }" aria-label="Cut height (mm)" />
+            <UInputNumber :step-snapping="false" v-model="height" :step="0.1" size="xs" class="w-24" :format-options="{ maximumFractionDigits: 2 }" aria-label="Cut height (mm)" />
           </div>
           <span class="ct__lbl">Tilt X</span>
           <div class="flex items-center gap-2">
@@ -220,8 +220,8 @@ onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydow
 
         <template v-if="s.mode === 'groove'">
           <div class="ct__grid">
-            <span class="ct__lbl">Depth</span><UInputNumber v-model="s.groove.depth" :min="0.1" :step="0.1" size="xs" aria-label="Groove depth (mm)" />
-            <span class="ct__lbl">Width</span><UInputNumber v-model="s.groove.width" :min="0.1" :step="0.1" size="xs" aria-label="Groove width (mm)" />
+            <span class="ct__lbl">Depth</span><UInputNumber :step-snapping="false" v-model="s.groove.depth" :min="0.1" :step="0.1" size="xs" aria-label="Groove depth (mm)" />
+            <span class="ct__lbl">Width</span><UInputNumber :step-snapping="false" v-model="s.groove.width" :min="0.1" :step="0.1" size="xs" aria-label="Groove width (mm)" />
             <span class="ct__lbl">Flaps angle</span><UInputNumber v-model="s.groove.flapsAngle" :min="1" :max="89" size="xs" aria-label="Flaps angle (degrees)" />
             <span class="ct__lbl">Groove angle</span><UInputNumber v-model="s.groove.angle" :min="-89" :max="89" size="xs" aria-label="Groove angle (degrees)" />
           </div>
@@ -252,8 +252,8 @@ onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydow
             <span class="ct__lbl">Style</span><URadioGroup v-model="s.connectorStyle" :items="styleItems" orientation="horizontal" size="sm" />
             <span class="ct__lbl">Shape</span><USelect v-model="s.connectorShape" :items="shapeItems" size="xs" aria-label="Connector shape" />
           </template>
-          <span class="ct__lbl">Size</span><UInputNumber v-model="s.connectorSize" :min="0.5" :step="0.5" size="xs" aria-label="Connector diameter (mm)" />
-          <span class="ct__lbl">Depth</span><UInputNumber v-model="s.connectorDepth" :min="0.5" :step="0.5" size="xs" aria-label="Connector depth (mm)" />
+          <span class="ct__lbl">Size</span><UInputNumber :step-snapping="false" v-model="s.connectorSize" :min="0.5" :step="0.5" size="xs" aria-label="Connector diameter (mm)" />
+          <span class="ct__lbl">Depth</span><UInputNumber :step-snapping="false" v-model="s.connectorDepth" :min="0.5" :step="0.5" size="xs" aria-label="Connector depth (mm)" />
           <span class="ct__lbl">Size tolerance</span><UInputNumber v-model="s.radiusTolerance" :min="0" :max="50" :step="1" size="xs" aria-label="Size tolerance (%)" />
           <span class="ct__lbl">Depth tolerance</span><UInputNumber v-model="s.heightTolerance" :min="0" :max="50" :step="1" size="xs" aria-label="Depth tolerance (%)" />
         </div>

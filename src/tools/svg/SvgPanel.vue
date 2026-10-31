@@ -73,7 +73,7 @@ const hint = computed(() => {
       <span class="sv__lbl">Height</span>
       <span class="text-sm text-muted font-mono">{{ (params.width * aspect).toFixed(2) }}</span>
       <span class="sv__lbl">Depth</span>
-      <UInputNumber v-model="params.depth" :min="0.05" :max="500" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Depth (mm)" />
+      <UInputNumber :step-snapping="false" v-model="params.depth" :min="0.05" :max="500" :step="0.1" size="sm" :format-options="{ maximumFractionDigits: 2 }" aria-label="Depth (mm)" />
       <template v-if="!target">
         <span class="sv__lbl">Add as</span>
         <USelect v-model="place" :items="placeItems" size="sm" class="w-full" aria-label="Add as" />
