@@ -8,6 +8,10 @@ Pick OrcaSlicer, preFlight or Full Spectrum at the top of the Printer section. E
 
 Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full Spectrum).
 
+## Plate toolbar
+
+Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on face), transform, modify (cut, mesh boolean, text), print adjustments (painting, variable layer height, brim ears) and measure. The four paint tools share the brush button's menu; L, P, N and H still open them directly. In a narrow window the groups that don't fit move into the ⋯ menu at the end.
+
 ## Moving objects
 
 The transform gizmo is CubbyCAD's: move, rotate and scale handles on one gizmo (G). M, R and S limit it to one of them, and pressing the same key again brings back the full gizmo. View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches between perspective and orthographic.

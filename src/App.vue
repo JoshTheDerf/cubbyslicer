@@ -171,7 +171,7 @@ onBeforeUnmount(() => stopHandoff?.());
         <!-- Canvas -->
         <main class="center">
           <PrepareViewport v-show="activeView === 'prepare'" class="center__vp" @contextmenu="onViewportMenu">
-            <div class="ov ov--top"><PlateToolbar /><ShapePalettePopover class="ov__palette" /></div>
+            <div class="ov ov--top"><PlateToolbar :reserve="phone ? 16 : 220" /><ShapePalettePopover class="ov__palette" /></div>
             <div v-if="!layersUi.editing" class="ov ov--cad"><CadPanel /></div>
             <div class="ov ov--bl">
               <TransformPanel />
