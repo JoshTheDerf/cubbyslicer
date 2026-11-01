@@ -67,7 +67,9 @@ describe('menu projection', () => {
     expect(edit.find((i) => i.label === 'Redo')?.disabled).toBe(true);
     expect(edit.filter((i) => i.separator)).toHaveLength(EDIT_MENU.groups.length - 1);
     const obj = projectMenu(ACTIONS, ctx, OBJECT_MENU, { platform: 'other' });
-    expect(obj.find((i) => i.label === 'Move')?.checked).toBe(true);
+    expect(obj.find((i) => i.label === 'Transform gizmo')?.children?.find((c) => c.label === 'Move')?.checked).toBe(true);
+    const addPart = obj.find((i) => i.label === 'Add part or modifier')?.children?.find((c) => c.label === 'Add part');
+    expect(addPart?.children?.map((c) => c.label)).toContain('Box');
     expect(obj.find((i) => i.label === 'Mirror')?.children).toHaveLength(3);
     const view = projectMenu(ACTIONS, ctx, VIEW_MENU, { platform: 'other' });
     expect(view.find((i) => i.label === 'Prepare')?.checked).toBe(true);

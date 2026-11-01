@@ -27,12 +27,13 @@ export interface MenuItem {
   action?: () => void;
 }
 
-export interface MenuSubmenu { label: string; icon?: string; children: string[] }
+export interface MenuSubmenu { label: string; icon?: string; children: MenuEntry[] }
 export type MenuEntry = string | MenuSubmenu;
 export interface MenuLayout { groups: MenuEntry[][] }
 
 export function menuLayoutIds(layout: MenuLayout): string[] {
-  return layout.groups.flatMap((g) => g.flatMap((e) => (typeof e === 'string' ? [e] : e.children)));
+  const ids = (e: MenuEntry): string[] => (typeof e === 'string' ? [e] : e.children.flatMap(ids));
+  return layout.groups.flatMap((g) => g.flatMap(ids));
 }
 
 export interface ProjectMenuOptions {
@@ -62,11 +63,17 @@ export function projectMenu(actions: Action[], ctx: AppContext, layout: MenuLayo
   const byId = new Map(actions.map((a) => [a.id, a]));
   const out: MenuItem[] = [];
   for (const group of layout.groups) {
-    const items = group.map((e): MenuItem => {
+    const entry = (e: MenuEntry): MenuItem => {
       if (typeof e === 'string') return resolve(byId, e, ctx, o);
-      const children = e.children.map((id) => resolve(byId, id, ctx, o));
+      // "Add part ▸ Add part: Box" reads "Add part ▸ Box" (the palette keeps the full title).
+      const prefix = `${e.label}: `;
+      const children = e.children.map((c) => {
+        const it = entry(c);
+        return it.label?.startsWith(prefix) ? { ...it, label: it.label.slice(prefix.length) } : it;
+      });
       return { label: e.label, icon: e.icon, children, disabled: children.every((c) => c.disabled) };
-    });
+    };
+    const items = group.map(entry);
     if (!items.length) continue;
     if (out.length) out.push({ separator: true });
     out.push(...items);

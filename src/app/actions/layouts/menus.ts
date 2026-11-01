@@ -50,21 +50,27 @@ export const VIEW_MENU: MenuLayout = {
   ],
 };
 
+/**
+ * Object menu: what to do with the selection, by task (place, transform,
+ * modify, add to it, CubbyCAD modelling, print settings, view). Plate-wide
+ * arrange / orient live in the Plate menu; the gizmo modes, which have
+ * toolbar buttons and keys, share one submenu.
+ */
+const MIRROR_MENU = { label: 'Mirror', icon: 'i-lucide-flip-horizontal-2', children: ['object.mirror.x', 'object.mirror.y', 'object.mirror.z'] };
+const ROTATE90_MENU = { label: 'Rotate 90°', icon: 'i-lucide-rotate-cw', children: ['object.rotate90.x', 'object.rotate90.y', 'object.rotate90.z'] };
+const SPLIT_MENU = { label: 'Split', icon: 'i-lucide-split', children: ['object.split-objects', 'object.split-parts'] };
+
 export const OBJECT_MENU: MenuLayout = {
   groups: [
-    ['object.gizmo.all', 'object.gizmo.move', 'object.gizmo.rotate', 'object.gizmo.scale', 'object.lay-on-face'],
-    ['object.auto-orient', 'object.drop', 'object.center', 'object.scale-to-fit'],
-    [
-      { label: 'Mirror', icon: 'i-lucide-flip-horizontal-2', children: ['object.mirror.x', 'object.mirror.y', 'object.mirror.z'] },
-      { label: 'Rotate 90°', icon: 'i-lucide-rotate-cw', children: ['object.rotate90.x', 'object.rotate90.y', 'object.rotate90.z'] },
-    ],
-    ['tool.cut', 'object.split-objects', 'object.split-parts'],
-    [ADD_SHAPE_MENU, 'cad.palette', ...CAD_GROUP, 'cad.edit-tree'],
-    ADD_SUBMENUS,
-    ['arrange.all', 'arrange.plate', 'arrange.selection', 'arrange.options', 'plate.auto-orient-all'],
-    ['object.toggle-hidden', 'object.toggle-printable', 'object.settings', 'object.table'],
-    ['layers.edit', 'object.height-range', 'layers.reset'],
-    ['tool.measure', 'tool.text', 'tool.svg', 'tool.simplify', 'tool.boolean', 'tool.brim-ears'],
+    ['object.auto-orient', 'object.lay-on-face', 'object.drop', 'object.center', 'object.scale-to-fit', 'arrange.selection'],
+    [{ label: 'Transform gizmo', icon: 'i-lucide-move-3d', children: ['object.gizmo.all', 'object.gizmo.move', 'object.gizmo.rotate', 'object.gizmo.scale'] },
+      MIRROR_MENU, ROTATE90_MENU],
+    ['tool.cut', SPLIT_MENU, 'tool.boolean', 'tool.simplify'],
+    [{ label: 'Add part or modifier', icon: 'i-lucide-box', children: ADD_SUBMENUS }, 'tool.text', 'tool.svg'],
+    [{ ...ADD_SHAPE_MENU, children: ['cad.palette', ...ADD_SHAPE_MENU.children] },
+      { label: 'Shape modelling', icon: 'i-lucide-boxes', children: [...CAD_GROUP, 'cad.edit-tree'] }],
+    ['object.settings', 'object.height-range', 'layers.edit', 'layers.reset', 'tool.brim-ears', 'object.toggle-printable'],
+    ['object.toggle-hidden', 'tool.measure', 'object.table'],
   ],
 };
 
@@ -72,7 +78,8 @@ export const PLATE_MENU: MenuLayout = {
   groups: [
     ['plate.add', 'plate.delete'],
     ['plate.prev', 'plate.next'],
-    ['arrange.plate', 'plate.auto-orient-all', 'plate.lock'],
+    ['arrange.all', 'arrange.plate', 'arrange.options'],
+    ['plate.auto-orient-all', 'plate.lock'],
     ['plate.clear'],
     ['plate.settings'],
   ],
@@ -124,10 +131,9 @@ export const OBJECT_CONTEXT_MENU: MenuLayout = {
     ['edit.rename', 'object.settings'],
     ['edit.cut', 'edit.copy', 'edit.paste'],
     ['edit.duplicate', 'edit.instance-remove', 'edit.instances'],
-    ['tool.cut', { label: 'Split', icon: 'i-lucide-split', children: ['object.split-objects', 'object.split-parts'] }, ...ADD_SUBMENUS, 'object.height-range'],
+    ['tool.cut', SPLIT_MENU, ...ADD_SUBMENUS, 'object.height-range'],
     ['object.auto-orient', 'object.center', 'object.drop', 'object.lay-on-face', 'object.scale-to-fit'],
-    [{ label: 'Mirror', icon: 'i-lucide-flip-horizontal-2', children: ['object.mirror.x', 'object.mirror.y', 'object.mirror.z'] },
-      { label: 'Rotate 90°', icon: 'i-lucide-rotate-cw', children: ['object.rotate90.x', 'object.rotate90.y', 'object.rotate90.z'] }],
+    [MIRROR_MENU, ROTATE90_MENU],
     ['arrange.all', 'arrange.plate', 'arrange.selection', 'arrange.options'],
     CAD_GROUP,
     ['object.toggle-hidden', 'object.toggle-printable', 'export.selection-stl'],

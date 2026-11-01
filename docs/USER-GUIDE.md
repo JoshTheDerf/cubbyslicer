@@ -20,7 +20,7 @@ View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches betw
 
 ## Arranging
 
-Arrange (A), Arrange plate (Shift+A) and Arrange selection run OrcaSlicer's own arrange in the Orca engine, whichever engine you slice with. Object ▸ Arrange options… has Orca's arrange settings: spacing (0 means auto, so each object keeps its brim or support margin), auto rotate, multiple materials on one plate, align to the Y axis and, on Bambu Lab printers that scan the first layer, avoiding the extrusion calibration region. As in Orca, spacing and auto rotate are kept separately for printing by layer and by object. The options are saved in this browser.
+Arrange (A), Arrange plate (Shift+A) and Arrange selection run OrcaSlicer's own arrange in the Orca engine, whichever engine you slice with. Plate ▸ Arrange options… has Orca's arrange settings: spacing (0 means auto, so each object keeps its brim or support margin), auto rotate, multiple materials on one plate, align to the Y axis and, on Bambu Lab printers that scan the first layer, avoiding the extrusion calibration region. As in Orca, spacing and auto rotate are kept separately for printing by layer and by object. The options are saved in this browser.
 
 With preFlight, Orca's arrange gets your bed shape but uses Orca's defaults for skirt, support and clearance.
 
@@ -30,8 +30,8 @@ The slicer has CubbyCAD's basic modelling: built-in shapes, holes and groups. It
 
 - Add a shape: the shapes button on the plate toolbar (or Object ▸ Add shape) opens CubbyCAD's palette: box, sphere, cylinder, cone, torus, tube, star and the rest. Each one lands on the plate as a new object.
 - The Shape panel (top right, when a shape object is selected) shows its node tree and the picked node's settings: its parameters (drag a slider or type a value; a drag is one undo step), Hole, and Colour. Double-click a row to rename it. The row buttons toggle hole, hide, lock and delete.
-- Holes: Object ▸ Make hole (or the Hole switch) makes a shape cut instead of add. A hole on its own shows as a grey ghost and isn't printed.
-- Group: select two or more objects and use Object ▸ Group. The objects become one manifold group, where solids join and holes cut, like a Sharp group in CubbyCAD. Plain meshes (STL, 3MF, …) can join a group too, so you can drill a hole through an imported model. Object ▸ Ungroup splits a group back into objects, in place.
+- Holes: Object ▸ Shape modelling ▸ Make hole (or the Hole switch) makes a shape cut instead of add. A hole on its own shows as a grey ghost and isn't printed.
+- Group: select two or more objects and use Object ▸ Shape modelling ▸ Group. The objects become one manifold group, where solids join and holes cut, like a Sharp group in CubbyCAD. Plain meshes (STL, 3MF, …) can join a group too, so you can drill a hole through an imported model. Object ▸ Ungroup splits a group back into objects, in place.
 - Pick a node in the tree and the transform gizmo moves, rotates or scales just that node inside its object. Pick the top row to move the whole object again.
 - Delete with a node picked deletes that node only.
 - Parameter changes rebuild the object's mesh, which clears its painting (supports, seams, colours, fuzzy skin), as other tools that change a mesh do.

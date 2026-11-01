@@ -22,7 +22,7 @@ export function layerActions(): Action[] {
       run: () => runAdaptive(editObject.value!.id) },
     { id: 'layers.smooth', title: 'Variable layer height: Smooth', icon: 'i-lucide-waves', category: 'Object',
       when: () => editing() && !layersUi.busy, run: () => runSmooth(editObject.value!.id) },
-    { id: 'layers.reset', title: 'Variable layer height: Reset', icon: 'i-lucide-rotate-ccw', category: 'Object',
+    { id: 'layers.reset', title: 'Reset variable layer height', icon: 'i-lucide-rotate-ccw', category: 'Object',
       when: () => single() && hasCustomProfile(editObject.value), run: () => resetLayerProfile(editObject.value!.id) },
     { id: 'object.height-range', title: 'Height range modifier', icon: 'i-lucide-between-horizontal-start', category: 'Object',
       aliases: ['layer range', 'height range', 'layers', 'range modifier'],
