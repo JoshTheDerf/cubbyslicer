@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildActions } from './buildActions';
 import { fuzzyScore, projectPalette, rankPalette, sectionPalette } from './project/palette';
 import { projectMenu } from './project/menu';
-import { EDIT_MENU, OBJECT_MENU, VIEW_MENU } from './layouts/menus';
+import { EDIT_MENU, OBJECT_CONTEXT_MENU, OBJECT_MENU, VIEW_MENU } from './layouts/menus';
 import { fixtureContext } from './testing/fixtureContext';
 
 const ACTIONS = buildActions();
@@ -74,6 +74,18 @@ describe('menu projection', () => {
     const view = projectMenu(ACTIONS, ctx, VIEW_MENU, { platform: 'other' });
     expect(view.find((i) => i.label === 'Prepare')?.checked).toBe(true);
     expect(view.find((i) => i.label === 'Preview')?.checked).toBeUndefined();
+  });
+
+  it('context menus leave out what does not apply', () => {
+    const labels = (items: ReturnType<typeof projectMenu>) => items.filter((i) => !i.separator).map((i) => i.label);
+    const none = projectMenu(ACTIONS, fixtureContext({ selection: { ...fixtureContext().selection, count: 0 } }), OBJECT_CONTEXT_MENU);
+    expect(none.some((i) => i.disabled)).toBe(false);
+    expect(labels(none)).not.toContain('Delete');
+    const one = projectMenu(ACTIONS, fixtureContext(), OBJECT_CONTEXT_MENU);
+    expect(labels(one)).toContain('Delete');
+    expect(one.some((i) => i.disabled)).toBe(false);
+    expect(one[0].separator).toBeUndefined();
+    expect(one.at(-1)?.separator).toBeUndefined();
   });
 
   it('runs the action on select', () => {

@@ -125,31 +125,36 @@ export const MENU_BAR: Array<{ id: string; label: string; layout: MenuLayout }> 
   { id: 'help', label: 'Help', layout: HELP_MENU },
 ];
 
-/** Right-click on one or more objects. */
+/**
+ * Right-click on one or more objects (the viewport and the object list).
+ * Contextual: only what applies to the clicked selection is listed, so one
+ * object, several objects and a CubbyCAD shape each get their own menu.
+ * Clipboard cut stays in Edit (Ctrl+X): here "Cut" is the cut tool.
+ */
 export const OBJECT_CONTEXT_MENU: MenuLayout = {
+  contextual: true,
   groups: [
     ['edit.rename', 'object.settings'],
-    ['edit.cut', 'edit.copy', 'edit.paste'],
-    ['edit.duplicate', 'edit.instance-remove', 'edit.instances'],
-    ['tool.cut', SPLIT_MENU, ...ADD_SUBMENUS, 'object.height-range'],
-    ['object.auto-orient', 'object.center', 'object.drop', 'object.lay-on-face', 'object.scale-to-fit'],
-    [MIRROR_MENU, ROTATE90_MENU],
-    ['arrange.all', 'arrange.plate', 'arrange.selection', 'arrange.options'],
-    CAD_GROUP,
+    [{ label: 'Add part or modifier', icon: 'i-lucide-box', children: ADD_SUBMENUS }, 'object.height-range', 'tool.text', 'tool.svg'],
+    ['edit.copy', 'edit.paste', 'edit.duplicate', 'edit.instance-remove', 'edit.instances'],
+    ['object.auto-orient', 'object.drop', 'object.center', 'object.scale-to-fit', 'arrange.selection', MIRROR_MENU, ROTATE90_MENU],
+    ['tool.cut', SPLIT_MENU, 'tool.boolean', 'tool.simplify', 'tool.brim-ears'],
+    [...CAD_GROUP, 'cad.edit-tree'],
     ['object.toggle-hidden', 'object.toggle-printable', 'export.selection-stl'],
-    ['tool.text', 'tool.svg', 'tool.simplify', 'tool.boolean', 'tool.brim-ears'],
     ['edit.delete'],
   ],
 };
 
-/** Right-click on empty plate. */
+/** Right-click on empty plate (contextual, like the object menu). */
 export const PLATE_CONTEXT_MENU: MenuLayout = {
+  contextual: true,
   groups: [
     ['file.import', 'edit.paste'],
-    [ADD_SHAPE_MENU, 'tool.text.object', 'tool.svg', { label: 'Add handy model', icon: 'i-lucide-box', children: HANDY_MODEL_IDS.map(([id]) => `handy.${id}`) }],
-    ['arrange.all', 'arrange.plate', 'arrange.options', 'plate.auto-orient-all', 'edit.select-all'],
-    ['plate.add', 'plate.lock', 'plate.clear', 'plate.delete'],
-    ['plate.settings'],
+    [{ ...ADD_SHAPE_MENU, children: ['cad.palette', ...ADD_SHAPE_MENU.children] }, 'tool.text.object', 'tool.svg',
+      { label: 'Add handy model', icon: 'i-lucide-box', children: HANDY_MODEL_IDS.map(([id]) => `handy.${id}`) }],
+    ['arrange.plate', 'arrange.options', 'plate.auto-orient-all', 'edit.select-all'],
+    ['plate.add', 'plate.lock', 'plate.settings'],
+    ['plate.clear', 'plate.delete'],
     ['view.fit-plate'],
   ],
 };

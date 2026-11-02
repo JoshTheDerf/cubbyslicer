@@ -29,7 +29,11 @@ export interface MenuItem {
 
 export interface MenuSubmenu { label: string; icon?: string; children: MenuEntry[] }
 export type MenuEntry = string | MenuSubmenu;
-export interface MenuLayout { groups: MenuEntry[][] }
+export interface MenuLayout {
+  groups: MenuEntry[][];
+  /** Context menus: leave out what doesn't apply (disabled items, empty submenus) instead of greying it. */
+  contextual?: boolean;
+}
 
 export function menuLayoutIds(layout: MenuLayout): string[] {
   const ids = (e: MenuEntry): string[] => (typeof e === 'string' ? [e] : e.children.flatMap(ids));
@@ -70,10 +74,10 @@ export function projectMenu(actions: Action[], ctx: AppContext, layout: MenuLayo
       const children = e.children.map((c) => {
         const it = entry(c);
         return it.label?.startsWith(prefix) ? { ...it, label: it.label.slice(prefix.length) } : it;
-      });
+      }).filter((it) => !(layout.contextual && it.disabled));
       return { label: e.label, icon: e.icon, children, disabled: children.every((c) => c.disabled) };
     };
-    const items = group.map(entry);
+    const items = group.map(entry).filter((it) => !(layout.contextual && it.disabled));
     if (!items.length) continue;
     if (out.length) out.push({ separator: true });
     out.push(...items);
