@@ -29,6 +29,8 @@ export interface SettingsAction {
 
 const CATEGORY = 'Settings';
 const panelMounted = () => settingsUi.mounted > 0;
+/** The settings dialogs (SettingsHost) work whether or not the sidebar is showing. */
+const dialogsReady = () => settingsUi.hosts > 0;
 const slotIndex = () => (activeKind() === 'filament' ? settingsUi.filamentSlot : 0);
 const TAB_TITLES: Record<SettingsTabId, string> = { process: 'Process settings', filament: 'Filament settings…', printer: 'Printer settings…' };
 const MODE_TITLES: Record<ConfigMode, string> = { simple: 'Simple', advanced: 'Advanced', expert: 'Expert' };
@@ -37,7 +39,7 @@ const KIND_TITLES: Record<PresetKind, string> = { printer: 'printer', process: '
 export const settingsActions: SettingsAction[] = [
   {
     id: 'settings.search.focus', title: 'Search settings', category: CATEGORY, aliases: ['find setting', 'option', 'parameter'],
-    binding: { key: 'f', ctrlOrMeta: true, shift: true }, when: panelMounted,
+    binding: { key: 'f', ctrlOrMeta: true, shift: true }, when: dialogsReady,
     run: () => { panelRequest.focusSearch++; },
   },
   ...ENGINES.map((e: EngineId): SettingsAction => ({
@@ -58,11 +60,11 @@ export const settingsActions: SettingsAction[] = [
   {
     id: 'settings.setup', title: 'Printer & filament setup…', category: CATEGORY,
     aliases: ['setup wizard', 'first run', 'choose printer', 'choose filament', 'onboarding'],
-    when: panelMounted, run: () => { panelRequest.setupWizard++; },
+    when: dialogsReady, run: () => { panelRequest.setupWizard++; },
   },
   {
     id: 'settings.printer.add', title: 'Add / remove printers…', category: CATEGORY, aliases: ['printer', 'vendor', 'machine', 'wizard'],
-    when: panelMounted, run: () => { panelRequest.addPrinter++; },
+    when: dialogsReady, run: () => { panelRequest.addPrinter++; },
   },
   {
     id: 'settings.preset.save', title: 'Save preset', category: CATEGORY, aliases: ['save profile'],
@@ -83,7 +85,7 @@ export const settingsActions: SettingsAction[] = [
   },
   {
     id: 'settings.presets.import', title: 'Import presets…', category: CATEGORY, aliases: ['import profile', 'orca', 'bambu', 'bundle'],
-    when: panelMounted, run: () => { panelRequest.importFiles++; },
+    when: dialogsReady, run: () => { panelRequest.importFiles++; },
   },
   ...(['simple', 'advanced', 'expert'] as ConfigMode[]).map((m): SettingsAction => ({
     id: `settings.mode.${m}`, title: `${MODE_TITLES[m]} settings mode`, category: CATEGORY, aliases: ['mode', 'show all settings', m],
@@ -93,7 +95,7 @@ export const settingsActions: SettingsAction[] = [
   ...(['process', 'filament', 'printer'] as SettingsTabId[]).map((t): SettingsAction => ({
     id: `settings.tab.${t}`, title: TAB_TITLES[t], category: CATEGORY, aliases: ['tab', 'edit', t, ...(t === 'printer' ? ['machine', 'bed', 'g-code'] : [])],
     state: () => (t === 'process' ? (settingsUi.editor === null && settingsUi.region === 'global' ? 'active' : undefined) : settingsUi.editor === t ? 'active' : undefined),
-    when: panelMounted, run: () => openSettingsTab(t),
+    when: t === 'process' ? panelMounted : dialogsReady, run: () => openSettingsTab(t),
   })),
   ...(['global', 'objects'] as SettingsRegion[]).map((r): SettingsAction => ({
     id: `settings.region.${r}`, title: r === 'global' ? 'Edit global process settings' : 'Edit per-object settings',

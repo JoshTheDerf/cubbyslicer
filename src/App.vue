@@ -22,6 +22,7 @@ import EmptyState from './app/shell/EmptyState.vue';
 import ToolHost from './tools/ToolHost.vue';
 import DropOverlay from './app/shell/DropOverlay.vue';
 import ShellDialogs from './app/shell/ShellDialogs.vue';
+import SettingsHost from './settings/SettingsHost.vue';
 import LayerHeightPanel from './layers/LayerHeightPanel.vue';
 import PlateSettingsDialog from './plates/PlateSettingsDialog.vue';
 import { layersUi } from './layers/store';
@@ -206,6 +207,7 @@ onBeforeUnmount(() => stopHandoff?.());
 
       <AnchoredMenu v-model:open="vpMenu.open" :x="vpMenu.x" :y="vpMenu.y" :items="vpItems" />
       <ShellDialogs />
+      <SettingsHost />
       <PlateSettingsDialog />
       <PrintHostDialogs />
       <BridgeDialogs />

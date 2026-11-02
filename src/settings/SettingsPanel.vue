@@ -9,12 +9,13 @@
  *               Global: Quality / Strength / Speed / Support / Multimaterial / Others tabs
  *               Objects: <slot name="objects" /> (the shell's object list) + per-object settings
  *
- * Printer and filament settings are edited in large dialogs (PresetSettingsModal).
+ * Printer and filament settings are edited in large dialogs (PresetSettingsModal). Those and the
+ * other settings dialogs live in SettingsHost, which the app mounts once: below 1100 px this panel is
+ * a drawer that only exists while open.
  */
 import { mobileDialog } from '../ui/mobileDialog';
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive } from 'vue';
 import type { DropdownMenuItem } from '@nuxt/ui';
-import { useToast } from '@nuxt/ui/composables';
 import { activeEngine } from '../app/state';
 import { ENGINE_LABELS, getEngineVersion, isEngineAvailable } from '../engine/client';
 import MixedFilamentsPanel from '../mixed/MixedFilamentsPanel.vue';
@@ -23,22 +24,15 @@ import { objects, overrideCount, primarySelection, selectedIds, selectedPart } f
 import { selectedRange } from '../layers/store';
 import { currentPresets, ENGINES, FILAMENT_PALETTE, setActiveEngine, startPresets } from '../presets/store';
 import { asArray } from '../presets/values';
-import { lsGet, lsSet } from '../presets/kv';
-import AddPrinterDialog from './AddPrinterDialog.vue';
 import { openPhysicalPrinterDialog } from '../printhost/store';
 import ColorField from './controls/ColorField.vue';
 import ModeSelect from './ModeSelect.vue';
 import ObjectSettingsPanel from './ObjectSettingsPanel.vue';
 import PresetRow from './PresetRow.vue';
-import PresetSettingsModal from './PresetSettingsModal.vue';
 import SettingsGroups from './SettingsGroups.vue';
-import SettingsSearch from './SettingsSearch.vue';
-import SetupWizard from './SetupWizard.vue';
-import { registerPresetsSection } from './projectAdapter';
 import { configProblems } from './validate';
-import { registerSettingsActions } from './actions';
 import { currentPageOf, jumpToSetting, pageDirty, pageIcon, selectPage, settingsLayout } from './useLayout';
-import { openSettingsTab, panelRequest, settingsUi, setupWizardState, SETUP_DONE_KEY, type SidebarSection } from './uiState';
+import { openSettingsTab, panelRequest, settingsUi, type SidebarSection } from './uiState';
 import FilamentSectionActions from '../dialogs/FilamentSectionActions.vue';
 import { openDialog } from '../dialogs/state';
 
@@ -48,12 +42,9 @@ defineSlots<{
 }>();
 
 startPresets();
-registerPresetsSection();
-void registerSettingsActions();
 onMounted(() => { settingsUi.mounted++; });
 onBeforeUnmount(() => { settingsUi.mounted--; });
 
-const toast = useToast();
 const p = computed(() => currentPresets.value);
 
 // ---- sections ----------------------------------------------------------------------
@@ -76,30 +67,19 @@ onMounted(() => {
 });
 const engineTitle = (e: EngineId) => (engineInfo[e].available === false ? `${ENGINE_LABELS[e]} is not deployed` : `${ENGINE_LABELS[e]} ${engineInfo[e].version}`.trim());
 
-// ---- dialogs / requests --------------------------------------------------------------
-const addPrinter = ref(false);
-const searchOpen = ref(false);
-const setupOpen = ref(false);
-watch(() => panelRequest.focusSearch, () => { searchOpen.value = true; });
-watch(() => panelRequest.addPrinter, () => { addPrinter.value = true; });
-watch(() => panelRequest.setupWizard, () => { setupOpen.value = true; });
-watch(() => panelRequest.closeSetupWizard, () => { if (setupOpen.value) closeSetup(); });
-watch(setupOpen, (o) => { setupWizardState.open = o; }, { immediate: true });
-watch(() => panelRequest.importFiles, () => fileInput.value?.click());
-// First visit: walk the user through picking their printer and filament.
-if (!lsGet<boolean>(SETUP_DONE_KEY)) void p.value.ready.then(() => { if (!lsGet<boolean>(SETUP_DONE_KEY)) setupOpen.value = true; });
-function closeSetup(): void { setupOpen.value = false; lsSet(SETUP_DONE_KEY, true); }
+// ---- dialogs (SettingsHost) ------------------------------------------------------------
+const addPrinter = () => { panelRequest.addPrinter++; };
 
 const printerMenu = computed<DropdownMenuItem[][]>(() => [[
-  { label: 'Add / remove printers…', icon: 'i-lucide-list-plus', onSelect: () => { addPrinter.value = true; } },
-  { label: 'Printer & filament setup…', icon: 'i-lucide-wand-sparkles', onSelect: () => { setupOpen.value = true; } },
+  { label: 'Add / remove printers…', icon: 'i-lucide-list-plus', onSelect: addPrinter },
+  { label: 'Printer & filament setup…', icon: 'i-lucide-wand-sparkles', onSelect: () => { panelRequest.setupWizard++; } },
   { label: 'Physical printer…', icon: 'i-lucide-router', description: 'Send G-code over the network', onSelect: () => openPhysicalPrinterDialog() },
 ], [
   { label: 'Bed shape…', icon: 'i-lucide-square-dashed', description: 'Printable area, height, custom texture / model', onSelect: () => openDialog('bedShape') },
   { label: 'Create printer…', icon: 'i-lucide-printer', onSelect: () => openDialog('createPrinter') },
   { label: 'Create filament…', icon: 'i-lucide-disc', onSelect: () => openDialog('createFilament') },
 ], [
-  { label: 'Import presets…', icon: 'i-lucide-upload', description: 'Orca / Bambu .json, .zip, .orca_printer, .bbscfg…', onSelect: () => fileInput.value?.click() },
+  { label: 'Import presets…', icon: 'i-lucide-upload', description: 'Orca / Bambu .json, .zip, .orca_printer, .bbscfg…', onSelect: () => { panelRequest.importFiles++; } },
   { label: 'Export preset bundle…', icon: 'i-lucide-package', description: '.orca_printer / .orca_filament / .zip', onSelect: () => openDialog('exportBundle') },
 ]]);
 
@@ -144,22 +124,6 @@ const overridden = computed(() => objects.value.filter((o) => overrideCount(o.id
 const problems = computed(() => configProblems.value);
 const problemErrors = computed(() => problems.value.filter((x) => x.severity === 'error').length);
 
-// ---- import -----------------------------------------------------------------------------
-const fileInput = ref<HTMLInputElement | null>(null);
-async function onImport(ev: Event): Promise<void> {
-  const files = [...((ev.target as HTMLInputElement).files ?? [])];
-  (ev.target as HTMLInputElement).value = '';
-  if (!files.length) return;
-  const data = await Promise.all(files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
-  const r = await p.value.importFiles(data);
-  const w = r.warnings.length ? `${r.warnings.slice(0, 6).join('\n')}${r.warnings.length > 6 ? `\n… ${r.warnings.length - 6} more` : ''}` : undefined;
-  toast.add({
-    title: `Imported ${r.imported.length} preset${r.imported.length === 1 ? '' : 's'}`, description: w,
-    color: r.warnings.length ? 'warning' : 'success', icon: r.warnings.length ? 'i-lucide-triangle-alert' : 'i-lucide-check',
-    duration: r.warnings.length ? 12000 : 4000,
-  });
-}
-
 const schemaNote = computed(() => {
   const s = p.value.schemaSource.value;
   if (s === 'fixture') return 'Engine schema.json not found — using the bundled development schema.';
@@ -197,7 +161,7 @@ const schemaNote = computed(() => {
           </UButton>
         </UFieldGroup>
         <PresetRow :presets="p" kind="printer" :items="printerItems" group-by="vendor" editable
-                   @edit="openSettingsTab('printer')" @add-printer="addPrinter = true" />
+                   @edit="openSettingsTab('printer')" @add-printer="addPrinter" />
         <div v-if="showBedType" class="sp__info">
           <span class="sp__lbl">Plate</span>
           <USelect :model-value="p.bedType() ?? undefined" :items="bedItems" value-key="value" size="xs" class="min-w-0 flex-1" aria-label="Plate type"
@@ -246,7 +210,7 @@ const schemaNote = computed(() => {
         <h3 class="sp__title">Process<span v-if="!isOpen('process')" class="sp__sub"> | {{ region === 'global' ? 'Global' : 'Per object' }}</span></h3>
         <div class="sp__acts" @click.stop>
           <ModeSelect />
-          <UButton size="xs" variant="ghost" icon="i-lucide-search" square aria-label="Search settings" title="Search settings (Ctrl+Shift+F)" @click="searchOpen = true" />
+          <UButton size="xs" variant="ghost" icon="i-lucide-search" square aria-label="Search settings" title="Search settings (Ctrl+Shift+F)" @click="panelRequest.focusSearch++" />
         </div>
       </header>
       <div v-show="isOpen('process')" class="sp__body sp__body--grow">
@@ -299,12 +263,6 @@ const schemaNote = computed(() => {
       </div>
     </section>
 
-    <input ref="fileInput" type="file" multiple hidden accept=".json,.zip,.orca_printer,.orca_filament,.bbscfg,.bbsflmt,application/json,application/zip" @change="onImport" />
-    <PresetSettingsModal kind="printer" @add-printer="addPrinter = true" />
-    <PresetSettingsModal kind="filament" />
-    <SettingsSearch v-model:open="searchOpen" />
-    <AddPrinterDialog v-if="addPrinter" :presets="p" @close="addPrinter = false" />
-    <SetupWizard v-if="setupOpen" @close="closeSetup" />
   </div>
 </template>
 

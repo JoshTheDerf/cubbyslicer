@@ -11,6 +11,7 @@ import type { EngineId } from '../engine/types';
 import { ENGINES, presetsFor, setActiveEngine } from '../presets/store';
 import type { PresetInfo } from '../presets/types';
 import { activeEngine } from '../app/state';
+import { run } from '../app/shell/useActions';
 import { mobileDialog, shortScreen } from '../ui/mobileDialog';
 import PrinterBrowser from './PrinterBrowser.vue';
 
@@ -36,6 +37,8 @@ const dialogTitle = computed(() => {
 const engine = computed<EngineId>(() => activeEngine.value);
 const p = computed(() => presetsFor(engine.value));
 const busy = ref(false);
+/** The printer's profiles (and so its filament list) are still loading. */
+const loading = computed(() => busy.value || p.value.loading.value > 0);
 const engineItems = ENGINES.map((e) => ({ label: ENGINE_LABELS[e], value: e }));
 
 function chooseEngine(e: unknown): void { if (typeof e === 'string' && e !== engine.value) setActiveEngine(e as EngineId); }
@@ -116,7 +119,10 @@ function onStep(v: unknown): void {
       </section>
 
       <section v-else-if="step === 'filament'" class="pane">
-        <p class="text-sm text-muted">Filaments compatible with <strong class="text-highlighted">{{ printerName }}</strong><span v-if="busy"> — loading…</span></p>
+        <p class="text-sm text-muted">
+          Filaments compatible with <strong class="text-highlighted">{{ printerName }}</strong><span v-if="loading"> — loading…</span>
+          <template v-else-if="slots === 1"> · Current: <strong class="text-highlighted">{{ p.infos.value.filaments[0]?.name }}</strong></template>
+        </p>
         <div v-if="slots > 1" class="flex flex-wrap gap-1.5">
           <UButton v-for="i in slots" :key="i" size="xs" :variant="slot === i - 1 ? 'soft' : 'outline'" :color="slot === i - 1 ? 'primary' : 'neutral'"
                    :label="`Extruder ${i}: ${p.infos.value.filaments[i - 1]?.name ?? '—'}`" @click="slot = i - 1" />
@@ -133,7 +139,8 @@ function onStep(v: unknown): void {
                    @click="type = type === t ? null : t" />
         </div>
         <div class="flist">
-          <div v-if="!filaments.length" class="text-sm text-dimmed">No compatible filament presets — the default filament will be used.</div>
+          <div v-if="loading" class="flex items-center gap-2 text-sm text-dimmed"><UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />Loading filaments…</div>
+          <div v-else-if="!filaments.length" class="text-sm text-dimmed">No compatible filament presets — the default filament will be used.</div>
           <div v-for="[g, list] in groups" :key="g" class="fgroup">
             <h5>{{ g }}</h5>
             <button v-for="f in list" :key="f.id" type="button" class="fil" :class="{ on: selectedFilament(slot) === f.id }" @click="pickFilament(f.id)">
@@ -154,7 +161,7 @@ function onStep(v: unknown): void {
             <dd class="flex items-center gap-2"><span class="inline-block size-3 rounded-sm" :style="{ background: p.filamentColour(i) }" />{{ f.name }}</dd>
           </template>
         </dl>
-        <p class="text-sm text-dimmed">Drop a model on the plate (or use File → Import) and press <UKbd>Slice plate</UKbd>.
+        <p class="text-sm text-dimmed">Drop a model on the plate (or import one) and press <strong>Slice plate</strong>.
           You can change any of this later in the sidebar, or rerun this setup from Help.</p>
       </section>
     </template>
@@ -166,7 +173,10 @@ function onStep(v: unknown): void {
         <UButton v-if="step !== 'printer'" variant="outline" class="shrink-0" :label="mobileDialog ? undefined : 'Back'" aria-label="Back" icon="i-lucide-arrow-left" @click="step = step === 'done' ? 'filament' : 'printer'" />
         <UButton v-if="step === 'printer'" color="primary" class="min-w-0" :label="`Keep ${printerName} →`" :title="`Keep ${printerName}`" @click="step = 'filament'" />
         <UButton v-else-if="step === 'filament'" color="primary" label="Next →" @click="step = 'done'" />
-        <UButton v-else color="primary" label="Start slicing" icon="i-lucide-play" @click="close(true)" />
+        <template v-else>
+          <UButton variant="outline" class="shrink-0" icon="i-lucide-file-input" :label="mobileDialog ? 'Import' : 'Import model…'" @click="close(true); run('file.import')" />
+          <UButton color="primary" label="Done" icon="i-lucide-check" @click="close(true)" />
+        </template>
       </div>
     </template>
   </UModal>

@@ -275,7 +275,6 @@ const DIALOGS = [
   }), close: closeUi((m) => { m.objColorRequest.value = null; }) },
   { id: 'shapePalette', selector: 'section[aria-label="Add shape"]', open: (p) => uiMod(p, (m) => { m.cadUi.paletteOpen = true; }), close: closeUi((m) => { m.cadUi.paletteOpen = false; }) },
   // Popovers.
-  { id: 'plateRename', needs: 'object', open: (p) => setComp(p, 'PlateBar', 'renaming', 0), close: (p) => setComp(p, 'PlateBar', 'renaming', null) },
   { id: 'layerHelp', needs: 'object', open: async (p) => {
     await p.evaluate(() => window.__cubbyProject.select([window.__cubbyProject.objects.value[0].id]));
     await uiMod(p, (m) => { m.layersUi.editing = true; });

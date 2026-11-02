@@ -30,8 +30,10 @@ export const settingsUi = reactive({
   collapsedSections: (lsGet<SidebarSection[]>('cubby.settings.collapsed') ?? []) as SidebarSection[],
   /** Key flashed after a search jump. */
   highlightKey: null as string | null,
-  /** Number of mounted SettingsPanel instances (actions are gated on it). */
+  /** Number of mounted SettingsPanel instances (sidebar-only actions are gated on it). */
   mounted: 0,
+  /** Number of mounted SettingsHost instances (the settings dialogs; normally 1). */
+  hosts: 0,
 });
 watch(() => settingsUi.mode, (m) => lsSet('cubby.settings.mode', m));
 watch(() => settingsUi.tab, (t) => lsSet('cubby.settings.tab', t));

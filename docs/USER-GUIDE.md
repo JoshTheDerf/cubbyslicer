@@ -8,6 +8,16 @@ Pick OrcaSlicer, preFlight or Full Spectrum at the top of the Printer section. E
 
 Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full Spectrum).
 
+## First-run setup
+
+On your first visit (at any window size, including phones), a short setup asks for your printer, then your filament.
+
+- **Printer:** pick a vendor and model, then Use next to your nozzle size (0.4 mm, the usual one, is marked "common"). Add puts a printer in your printer list without switching to it.
+- **Filament:** the list shows filaments made for that printer, with the current one named at the top.
+- **The last step** sums up your choices. Import model… opens a file straight away.
+
+To rerun the setup, use Help ▸ Printer & filament setup… or the command palette.
+
 ## Top bar
 
 From left to right, the top bar has:

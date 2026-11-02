@@ -30,7 +30,7 @@ const chosen = await dlg.locator('.fil.on').first().innerText();
 await dlg.getByRole('button', { name: 'Next →' }).click();
 await page.screenshot({ path: `${out}/w3-done.png` });
 const summary = (await dlg.locator('dl').innerText()).replace(/\s+/g, ' ');
-await dlg.getByRole('button', { name: 'Start slicing' }).click();
+await dlg.getByRole('button', { name: 'Done' }).click();
 await dlg.waitFor({ state: 'detached' });
 // import a cube and slice with the chosen presets
 const s = 20, v = [[0,0,0],[s,0,0],[s,s,0],[0,s,0],[0,0,s],[s,0,s],[s,s,s],[0,s,s]];

@@ -50,10 +50,15 @@ const selectedModel = computed(() => models.value.find((m) => m.name === model.v
 const installed = computed(() => new Set(props.presets.installedPrinters.value));
 const installedCount = (m: MachineModel) => m.variants.filter((v) => installed.value.has(v.preset.id)).length;
 
+/** The variant being switched to: loading its profile takes a moment. */
+const using = ref<string | null>(null);
 async function add(id: string, select: boolean): Promise<void> {
-  if (select) { await props.presets.selectPrinter(id); emit('use', id); }
-  else await props.presets.installPrinter(id);
+  if (!select) { await props.presets.installPrinter(id); return; }
+  using.value = id;
+  try { await props.presets.selectPrinter(id); emit('use', id); } finally { using.value = null; }
 }
+/** Most printers ship with a 0.4 mm nozzle. */
+const isCommon = (variant: string) => Number(variant) === 0.4;
 async function remove(id: string): Promise<void> { await props.presets.uninstallPrinter(id); }
 // Phones: vendor picker + one scrolling model grid; picking a model shows its variants in its place.
 const vendorItems = computed(() => vendors.value.map((v) => ({ value: v.id, label: v.name })));
@@ -78,12 +83,12 @@ const hideImg = (ev: Event) => { (ev.target as HTMLElement).style.visibility = '
         </div>
           <div v-for="v in selectedModel.variants" :key="v.preset.id" class="variant">
             <div class="variant__name">
-              <strong>{{ v.variant }} mm nozzle</strong>
+              <strong>{{ v.variant }} mm nozzle<UBadge v-if="isCommon(v.variant)" size="sm" variant="subtle" color="neutral" label="common" title="Most printers ship with a 0.4 mm nozzle" class="ms-1.5 align-middle" /></strong>
               <small>{{ v.preset.name }}</small>
             </div>
             <UButton v-if="installed.has(v.preset.id)" size="xs" variant="outline" color="neutral" label="Remove" title="Remove from printer list" @click="remove(v.preset.id)" />
             <UButton v-else size="xs" variant="outline" label="Add" title="Add to the printer list" @click="add(v.preset.id, false)" />
-            <UButton size="xs" color="primary" label="Use" @click="add(v.preset.id, true)" />
+            <UButton size="xs" color="primary" label="Use" :loading="using === v.preset.id" :disabled="!!using && using !== v.preset.id" @click="add(v.preset.id, true)" />
           </div>
       </div>
       <div v-else class="pb__scroll pb__grid">
@@ -122,12 +127,12 @@ const hideImg = (ev: Event) => { (ev.target as HTMLElement).style.visibility = '
           <h4 class="mb-2 text-sm font-semibold text-highlighted">{{ selectedModel.name }}</h4>
           <div v-for="v in selectedModel.variants" :key="v.preset.id" class="variant">
             <div class="variant__name">
-              <strong>{{ v.variant }} mm nozzle</strong>
+              <strong>{{ v.variant }} mm nozzle<UBadge v-if="isCommon(v.variant)" size="sm" variant="subtle" color="neutral" label="common" title="Most printers ship with a 0.4 mm nozzle" class="ms-1.5 align-middle" /></strong>
               <small>{{ v.preset.name }}</small>
             </div>
             <UButton v-if="installed.has(v.preset.id)" size="xs" variant="outline" color="neutral" label="Remove" title="Remove from printer list" @click="remove(v.preset.id)" />
             <UButton v-else size="xs" variant="outline" label="Add" title="Add to the printer list" @click="add(v.preset.id, false)" />
-            <UButton size="xs" color="primary" label="Use" @click="add(v.preset.id, true)" />
+            <UButton size="xs" color="primary" label="Use" :loading="using === v.preset.id" :disabled="!!using && using !== v.preset.id" @click="add(v.preset.id, true)" />
           </div>
         </template>
         <p v-else class="pb__muted">Pick a model to see its nozzle variants.</p>

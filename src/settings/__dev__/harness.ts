@@ -5,5 +5,6 @@ import UApp from '@nuxt/ui/components/App.vue';
 import '../../ui/theme.css';
 import '../../style.css';
 import SettingsPanel from '../SettingsPanel.vue';
+import SettingsHost from '../SettingsHost.vue';
 
-createApp({ render: () => h(UApp, null, { default: () => h(SettingsPanel) }) }).use(ui).mount('#app');
+createApp({ render: () => h(UApp, null, { default: () => [h(SettingsPanel), h(SettingsHost)] }) }).use(ui).mount('#app');
