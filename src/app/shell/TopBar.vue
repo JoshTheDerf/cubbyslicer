@@ -54,7 +54,7 @@ function onName(e: Event) {
       </div>
       <MenuBar :collapsed="compact" />
       <USeparator v-if="!phone" orientation="vertical" class="h-5 mx-1" />
-      <UTooltip v-if="!compact" text="Save project" :kbds="bindingTokensOf('file.save')">
+      <UTooltip v-if="!phone" text="Save project" :kbds="bindingTokensOf('file.save')">
         <UButton icon="i-lucide-save" color="neutral" variant="ghost" size="sm" aria-label="Save project" @click="run('file.save')" />
       </UTooltip>
       <UTooltip v-if="!phone" :text="historyState.undo ? `Undo ${historyState.undo.toLowerCase()}` : 'Undo'" :kbds="bindingTokensOf('edit.undo')">
@@ -81,7 +81,7 @@ function onName(e: Event) {
                  :class="{ 'top__cloud--dirty': localDirty }" :aria-label="localDirty ? 'Unsaved changes: save to the local file' : `Local file ${localLabel}`"
                  @click="run('file.save')" />
       </UTooltip>
-      <input class="top__name" :value="projectName" aria-label="Project name" spellcheck="false" maxlength="80"
+      <input v-if="!phone" class="top__name" :value="projectName" aria-label="Project name" :title="`${projectName} (click to rename)`" spellcheck="false" maxlength="80"
              @change="onName" @keydown.enter="($event.target as HTMLInputElement).blur()" />
       <BridgeChip />
       <UTooltip v-if="!phone" text="Search commands" :kbds="bindingTokensOf('help.palette')">
@@ -96,7 +96,9 @@ function onName(e: Event) {
 <style scoped>
 .top {
   height: var(--topbar-h); flex: none;
-  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px;
+  /* The view switch stays centred while the left side fits; when it doesn't (menus at ~1100–1400 px), the
+     left keeps its full width and the switch moves right instead of covering redo. */
+  display: grid; grid-template-columns: minmax(max-content, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px;
   padding: 0 8px; background: var(--bg-1); border-bottom: 1px solid var(--line);
 }
 .top__left, .top__right { display: flex; align-items: center; gap: 2px; min-width: 0; }
@@ -120,5 +122,4 @@ function onName(e: Event) {
 .top--phone .top__right { flex: none; }
 .top--compact { gap: 6px; }
 @media (max-width: 1500px) { .brand__name { display: none; } }
-@media (max-width: 1360px) { .top__name { display: none; } }
 </style>

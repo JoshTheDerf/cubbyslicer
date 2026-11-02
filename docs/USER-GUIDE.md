@@ -8,6 +8,20 @@ Pick OrcaSlicer, preFlight or Full Spectrum at the top of the Printer section. E
 
 Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full Spectrum).
 
+## Top bar
+
+From left to right, the top bar has:
+
+- the sidebar toggle;
+- the menus (a ☰ menu in a narrow window);
+- save, undo and redo;
+- the Prepare / Preview switch;
+- the project name (click it to rename);
+- command search;
+- the slice controls.
+
+After slicing, the bar shows the print time (and weight on wide screens). The slice button turns into "Sliced" and Export G-code becomes the main button. On a phone the bar keeps only the sidebar and menu buttons, the view switch and the slice controls.
+
 ## Plate toolbar
 
 Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on face), transform, modify (cut, mesh boolean, text), print adjustments (painting, variable layer height, brim ears) and measure. The four paint tools share the brush button's menu; L, P, N and H still open them directly. In a narrow window the groups that don't fit move into the ⋯ menu at the end.
