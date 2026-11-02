@@ -188,6 +188,11 @@ const hasRange = computed(() => (props.def.min !== null && props.def.min !== und
 .row__pts { display: flex; gap: 4px; }
 .row__err { margin: 0; color: var(--ui-error); font-size: 11px; flex-basis: 100%; }
 .row__x { align-self: start; }
+/* Wide settings dialogs: cap the label column so a label isn't a long way from its control. */
+@container settings (min-width: 640px) {
+  .row:not(.row--full) { grid-template-columns: 20px minmax(0, 240px) minmax(0, 520px); }
+  .row:not(.row--full):has(.row__x) { grid-template-columns: 20px minmax(0, 240px) minmax(0, 520px) 22px; }
+}
 /* Phone dialogs (settings drawer / printer & filament settings): labels wrap next to the 40 px controls. */
 @media (max-width: 640px), (max-height: 500px) {
   .row__lbl { min-height: 40px; }

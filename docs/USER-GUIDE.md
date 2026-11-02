@@ -44,6 +44,10 @@ After slicing, Preview shows the G-code: the legend (top left), the layer slider
 
 The sidebar runs top to bottom: Printer (engine, printer preset, plate type), Filament, Objects and Process. Click a section's header to fold it; folded sections show what they hold, such as the printer name. Under Process, the Global / Per object switch picks between the plate-wide process preset and the selected object's own settings. Per object shows how many objects have their own settings. Long setting labels wrap onto a second line instead of being cut off, and in a narrow sidebar the page tabs tighten so every label still fits. Drag the sidebar's edge to resize it, and double-click the edge to reset its width.
 
+## Printer and filament settings
+
+The edit button next to the printer or a filament opens its settings dialog: the preset picker at the top, the pages on the left and the page's settings on the right. A dot marks pages with changes. Once you change something, a Changed page appears at the top of the list. It shows every setting that differs from the preset, grouped by page and section. Revert a setting there with its ↶ button, or keep the changes with the preset's save button. The page closes itself when nothing is left on it. On a phone the pages, including Changed, are in the page menu under the preset.
+
 ## Objects list
 
 The Objects list in the sidebar shows every object, under its plate when there is more than one plate. Instances of the same model share a row you can fold, and an object's parts, modifiers and height ranges fold under it (← and → fold the selected object). Click, Ctrl-click and Shift-click select. ↑ and ↓ move the selection, and Home and End jump to the first and last object. Double-click (or F2) renames an object, part or plate. Right-click an object for the object menu, a part for its type and settings, or a plate row for the same plate menu as the plate bar. Plate rows warn when something on the plate won't print as placed. With two or more objects, the filter button narrows the list by name, and Escape clears it.

@@ -4,8 +4,10 @@
  * edit buttons next to the sidebar combos): preset combo + save, page list
  * (Basic information, Machine G-code, Extruder N, Motion ability / Filament,
  * Cooling, Setting overrides, Advanced, …) and the page's option groups.
+ * "Changed" lists every setting that differs from the preset, by page.
  */
-import { computed, shallowRef } from 'vue';
+import { computed, shallowRef, watch } from 'vue';
+import type { BuiltPage } from './layout/types';
 import { currentPresets } from '../presets/store';
 import ColorField from './controls/ColorField.vue';
 import ModeSelect from './ModeSelect.vue';
@@ -25,15 +27,40 @@ const open = computed({
 });
 const title = computed(() => (props.kind === 'printer' ? 'Printer settings' : 'Filament settings'));
 const tab = computed(() => settingsLayout.value?.[props.kind] ?? null);
-const page = computed(() => (open.value ? currentPageOf(props.kind) : null));
+const CHANGED = '__changed';
+const showChanged = shallowRef(false);
+const dirty = computed(() => (open.value ? p.value.dirtyCount(props.kind, slotIdx.value) : 0));
+/**
+ * Every modified setting under "page › group", so a label like "Min" keeps its context
+ * (per-extruder pages repeat keys: listed once).
+ */
+const changedPage = computed<BuiltPage>(() => {
+  const seen = new Set<string>();
+  const groups = (tab.value?.pages ?? []).flatMap((pg) => pg.groups.map((g) => ({
+    id: `changed:${pg.id}:${g.id}`, title: g.title && g.title !== pg.title ? `${pg.title} › ${g.title}` : pg.title,
+    keys: g.keys.filter((k) => !seen.has(k) && p.value.isModified(props.kind, k, slotIdx.value) && seen.add(k)),
+  }))).filter((g) => g.keys.length);
+  return { id: CHANGED, title: 'Changed', groups };
+});
+// Back to the pages once nothing is left to show (and on another preset / slot).
+watch(dirty, (n) => { if (!n) showChanged.value = false; });
+const page = computed(() => (!open.value ? null : showChanged.value ? changedPage.value : currentPageOf(props.kind)));
+function pick(id: string): void {
+  if (id === CHANGED) { showChanged.value = true; return; }
+  showChanged.value = false;
+  selectPage(props.kind, id);
+}
 const slotIdx = computed(() => (props.kind === 'filament' ? Math.min(settingsUi.filamentSlot, p.value.selection.filaments.length - 1) : 0));
 const items = computed(() => (props.kind === 'printer' ? p.value.printerInfos.value : p.value.compatible.value.filament));
 
 const extruderDraft = shallowRef<number | null>(null);
 /** Phones: the page list becomes a select above the settings. */
-const pageItems = computed(() => (tab.value?.pages ?? []).map((pg) => ({
-  value: pg.id, label: pageDirty(pg, props.kind, slotIdx.value) ? `${pg.title} •` : pg.title, icon: pageIcon(pg.title),
-})));
+const pageItems = computed(() => [
+  ...(dirty.value ? [{ value: CHANGED, label: `Changed (${dirty.value})`, icon: 'i-lucide-pencil-line' }] : []),
+  ...(tab.value?.pages ?? []).map((pg) => ({
+    value: pg.id, label: pageDirty(pg, props.kind, slotIdx.value) ? `${pg.title} •` : pg.title, icon: pageIcon(pg.title),
+  })),
+]);
 
 function setExtruders(n: number | null | undefined): void {
   if (typeof n === 'number' && Number.isFinite(n) && n >= 1 && n !== extruderCount.value) p.value.setExtruderCount(n, perExtruderKeys.value);
@@ -71,7 +98,7 @@ function setExtruders(n: number | null | undefined): void {
         </div>
         <div class="psm__barrow">
           <USelect :model-value="page?.id" :items="pageItems" value-key="value" size="sm" class="min-w-0 flex-1" aria-label="Settings page"
-                   :icon="page ? pageIcon(page.title) : undefined" @update:model-value="(v: string) => selectPage(kind, v)" />
+                   :icon="showChanged ? 'i-lucide-pencil-line' : page ? pageIcon(page.title) : undefined" @update:model-value="(v: string) => pick(v)" />
           <ModeSelect />
           <UButton size="sm" variant="ghost" icon="i-lucide-search" aria-label="Search settings" @click="panelRequest.focusSearch++" />
         </div>
@@ -98,8 +125,14 @@ function setExtruders(n: number | null | undefined): void {
                       @update:model-value="(c: string) => p.setFilamentColour(slotIdx, c)" />
           <span class="truncate text-xs text-muted">Filament {{ slotIdx + 1 }}</span>
         </div>
+        <button v-if="dirty" type="button" class="psm__page psm__page--changed" :class="{ on: showChanged }"
+                :aria-current="showChanged ? 'page' : undefined" title="Every setting that differs from the preset" @click="pick(CHANGED)">
+          <UIcon name="i-lucide-pencil-line" class="size-4 flex-none" />
+          <span class="flex-1 truncate">Changed</span>
+          <span class="psm__count">{{ dirty }}</span>
+        </button>
         <button v-for="pg in tab?.pages ?? []" :key="pg.id" type="button" class="psm__page" :class="{ on: page?.id === pg.id }"
-                :aria-current="page?.id === pg.id ? 'page' : undefined" @click="selectPage(kind, pg.id)">
+                :aria-current="page?.id === pg.id ? 'page' : undefined" @click="pick(pg.id)">
           <UIcon :name="pageIcon(pg.title)" class="size-4 flex-none" />
           <span class="flex-1 truncate">{{ pg.title }}</span>
           <span v-if="pageDirty(pg, kind, slotIdx)" class="psm__dot" :title="`${pageDirty(pg, kind, slotIdx)} modified`" />
@@ -111,6 +144,10 @@ function setExtruders(n: number | null | undefined): void {
         </div>
       </nav>
       <div class="psm__content" :data-settings-scope="kind">
+        <p v-if="showChanged" class="psm__changed-note">
+          Settings that differ from <strong>{{ kind === 'printer' ? p.infos.value.printer.name : (p.infos.value.filaments[slotIdx]?.name ?? 'the preset') }}</strong>.
+          Revert one with its ↶ button, or save them with the preset's save button.
+        </p>
         <SettingsGroups :kind="kind" :page="page" :slot-index="slotIdx" />
       </div>
     </template>
@@ -126,9 +163,16 @@ function setExtruders(n: number | null | undefined): void {
 }
 .psm__page:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
 .psm__page.on { background: color-mix(in srgb, var(--ui-primary) 14%, transparent); color: var(--ui-primary); }
+.psm__page--changed { margin-bottom: 6px; color: var(--modified); }
+.psm__count {
+  font-size: 10px; min-width: 18px; padding: 0 5px; border-radius: 8px; text-align: center; font-variant-numeric: tabular-nums;
+  background: color-mix(in oklab, var(--modified) 22%, transparent); color: var(--modified);
+}
+.psm__changed-note { margin: 4px 0 8px; font-size: 12px; color: var(--ui-text-muted); }
 .psm__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--modified); }
 .psm__extr { margin-top: auto; padding: 10px 4px 2px; border-top: 1px solid var(--ui-border); display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--ui-text-muted); }
-.psm__content { flex: 1; min-width: 0; overflow: auto; padding: 8px 14px 32px; overscroll-behavior: contain; }
+/* A named container: wide dialogs keep labels next to their controls (SettingRow). */
+.psm__content { container: settings / inline-size; flex: 1; min-width: 0; overflow: auto; padding: 8px 14px 32px; overscroll-behavior: contain; }
 .psm__bar { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--ui-border); }
 .psm__barrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .psm__barrow--end { justify-content: space-between; }
