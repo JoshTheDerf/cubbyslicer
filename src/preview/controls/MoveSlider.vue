@@ -1,6 +1,6 @@
 <template>
   <!-- Orca horizontal (sequential) slider: moves within the top layer. -->
-  <div class="ms" :class="{ disabled: max < 0 }" data-testid="preview-move-slider">
+  <div ref="root" class="ms" :class="{ disabled: max < 0 }" data-testid="preview-move-slider">
     <UFieldGroup size="xs">
       <UTooltip :text="playing ? 'Pause' : 'Play moves'">
         <UButton
@@ -13,7 +13,7 @@
         />
       </UTooltip>
       <UTooltip text="First move of layer">
-        <UButton icon="i-lucide-chevrons-left" variant="soft" aria-label="First move" @click="stop(); set(0)" />
+        <UButton class="ms-ends" icon="i-lucide-chevrons-left" variant="soft" aria-label="First move" @click="stop(); set(0)" />
       </UTooltip>
       <UTooltip text="Previous move" :kbds="['←']">
         <UButton icon="i-lucide-chevron-left" variant="soft" aria-label="Previous move" @click="stop(); set(value - 1)" />
@@ -36,10 +36,10 @@
       <div class="ms-groove" />
       <div class="ms-fill" :style="{ width: pct }" />
       <div class="ms-handle" :style="{ left: pct }" />
-      <!-- Orca shows the current G-code line in a popup above the thumb -->
-      <div v-if="$slots.popup && max >= 0" class="ms-popup" :style="popupStyle" data-testid="preview-move-popup">
-        <slot name="popup" />
-      </div>
+    </div>
+    <!-- Orca shows the current G-code line in a popup above the thumb (kept inside the whole bar, not just the track) -->
+    <div v-if="$slots.popup && max >= 0" ref="popup" class="ms-popup" :style="popupStyle" data-testid="preview-move-popup">
+      <slot name="popup" />
     </div>
 
     <UFieldGroup size="xs">
@@ -47,7 +47,7 @@
         <UButton icon="i-lucide-chevron-right" variant="soft" aria-label="Next move" @click="stop(); set(value + 1)" />
       </UTooltip>
       <UTooltip text="Last move of layer">
-        <UButton icon="i-lucide-chevrons-right" variant="soft" aria-label="Last move" @click="stop(); set(max)" />
+        <UButton class="ms-ends" icon="i-lucide-chevrons-right" variant="soft" aria-label="Last move" @click="stop(); set(max)" />
       </UTooltip>
     </UFieldGroup>
     <span class="ms-count" data-testid="preview-move-count">{{ max < 0 ? '–' : `${(value + 1).toLocaleString()} / ${(max + 1).toLocaleString()}` }}</span>
@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 const props = defineProps<{
   /** Last move index (count - 1); -1 when the layer has no moves. */
@@ -65,16 +65,32 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:value': [number] }>();
 
 const track = ref<HTMLDivElement | null>(null);
+const root = ref<HTMLDivElement | null>(null);
+const popup = ref<HTMLDivElement | null>(null);
+/** Bar width, track left / width and popup width (px), for placing the popup. */
+const box = ref({ bar: 0, left: 0, track: 0, pop: 0 });
+function measure() {
+  const r = root.value, t = track.value;
+  if (!r || !t) return;
+  box.value = { bar: r.clientWidth, left: t.offsetLeft, track: t.clientWidth, pop: popup.value?.offsetWidth ?? 0 };
+}
+let ro: ResizeObserver | null = null;
+onMounted(() => {
+  ro = new ResizeObserver(measure);
+  if (root.value) ro.observe(root.value);
+  measure();
+});
+watch(popup, (el, old) => { if (old) ro?.unobserve(old); if (el) ro?.observe(el); measure(); });
 const playing = ref(false);
 let raf = 0;
 
 const frac = computed(() => (props.max <= 0 ? 1 : props.value / props.max));
 const pct = computed(() => `${frac.value * 100}%`);
-/** Keep the popup inside the track: anchor left/centre/right by thumb position. */
+/** Centre the popup over the thumb, clamped to the bar's edges (a phone's track is only a few dozen px wide). */
 const popupStyle = computed(() => {
-  const f = frac.value;
-  const shift = f < 0.15 ? '0%' : f > 0.85 ? '-100%' : '-50%';
-  return { left: pct.value, transform: `translateX(${shift})` };
+  const { bar, left, track: w, pop } = box.value;
+  const x = left + frac.value * w - pop / 2;
+  return { left: `${Math.max(0, Math.min(bar - pop, x))}px` };
 });
 
 function set(v: number) {
@@ -144,12 +160,15 @@ function togglePlay() {
 }
 
 watch(() => props.max, stop);
+onBeforeUnmount(() => ro?.disconnect());
 onBeforeUnmount(stop);
 defineExpose({ stop, playing });
 </script>
 
 <style scoped>
 .ms {
+  position: relative;
+  container-type: inline-size;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -191,7 +210,7 @@ defineExpose({ stop, playing });
 .ms-popup {
   position: absolute;
   bottom: calc(100% + 8px);
-  max-width: min(640px, 100%);
+  max-width: 100%;
   padding: 3px 8px;
   border: 1px solid var(--ui-border-accented);
   border-radius: calc(var(--ui-radius) * 0.75);
@@ -200,6 +219,11 @@ defineExpose({ stop, playing });
   pointer-events: none;
   white-space: nowrap;
   overflow: hidden;
+}
+/* Narrow bar (phones): drop first / last so the track gets the room. */
+@container (max-width: 420px) {
+  .ms-ends { display: none; }
+  .ms-count { min-width: 0; }
 }
 .ms-count {
   min-width: 96px;

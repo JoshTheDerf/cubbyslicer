@@ -16,6 +16,16 @@ Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on fa
 
 The plate bar (bottom centre) has a tab per plate. Each tab shows its object count, a warning if something on it won't print as placed, a lock, a settings icon if it has plate settings, and its slice state. Click a tab to go to that plate, double-click it to rename it, or use the arrow keys when a tab has focus. The active tab's ⌃ button, or a right-click on any tab, opens that plate's menu, which lists only what applies: slice, export its G-code once sliced, arrange, auto orient, select its objects, move the selection there, rename, lock, plate settings and delete. With more tabs than fit, the bar scrolls and keeps the active plate and the + button in view.
 
+## Preview
+
+After slicing, Preview shows the G-code: the legend (top left), the layer slider (right) and the move slider (bottom).
+
+- The legend's colour scheme menu picks what the colours mean. With Line type, click a row to hide or show that line type.
+- The Show and Total Estimation parts of the legend fold on their own, and the legend remembers how you left them. Folded, Show counts how many options are on and Total Estimation gives the time, weight and layer count.
+- L folds the whole legend down to its scheme menu and the same one-line total. Click that line to open the legend again.
+- The move slider steps through the moves in the top layer. The G-code line above it follows the slider and stays inside the bar on a phone.
+- G opens the G-code viewer and F fits the print. The keyboard button lists the other shortcuts.
+
 ## Settings sidebar
 
 The sidebar runs top to bottom: Printer (engine, printer preset, plate type), Filament, Objects and Process. Click a section's header to fold it; folded sections show what they hold, such as the printer name. Under Process, the Global / Per object switch picks between the plate-wide process preset and the selected object's own settings. Per object shows how many objects have their own settings. Long setting labels wrap onto a second line instead of being cut off, and in a narrow sidebar the page tabs tighten so every label still fits. Drag the sidebar's edge to resize it, and double-click the edge to reset its width.

@@ -134,7 +134,7 @@
       </div>
 
       <!-- bottom: horizontal move slider + current move (Orca) -->
-      <div class="pv-bottom">
+      <div class="pv-bottom" :class="{ 'pv-bottom--wide': legendCollapsed }">
         <MoveSlider ref="moveSlider" v-model:value="move" :max="layerMoves - 1">
           <template v-if="curSeg >= 0" #popup>
             <span class="pv-line" data-testid="preview-current-line">
@@ -581,7 +581,8 @@ function fit() { cameraCommand({ kind: 'fit' }); }
 }
 .pv-bottom {
   position: absolute;
-  left: 344px;
+  /* clear of the legend (340px + 10px margin); a folded legend leaves the full width */
+  left: 360px;
   right: 60px;
   bottom: 10px;
   display: flex;
@@ -594,6 +595,7 @@ function fit() { cameraCommand({ kind: 'fit' }); }
   box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
   z-index: 2;
 }
+.pv-bottom--wide { left: 10px; }
 @media (max-width: 900px) {
   .pv-bottom { left: 10px; }
   .pv-left { bottom: 110px; }
