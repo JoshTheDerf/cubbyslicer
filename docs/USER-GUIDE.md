@@ -16,6 +16,10 @@ Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on fa
 
 The plate bar (bottom centre) has a tab per plate. Each tab shows its object count, a warning if something on it won't print as placed, a lock, a settings icon if it has plate settings, and its slice state. Click a tab to go to that plate, double-click it to rename it, or use the arrow keys when a tab has focus. The active tab's ⌃ button, or a right-click on any tab, opens that plate's menu, which lists only what applies: slice, export its G-code once sliced, arrange, auto orient, select its objects, move the selection there, rename, lock, plate settings and delete. With more tabs than fit, the bar scrolls and keeps the active plate and the + button in view.
 
+## Settings sidebar
+
+The sidebar runs top to bottom: Printer (engine, printer preset, plate type), Filament, Objects and Process. Click a section's header to fold it; folded sections show what they hold, such as the printer name. Under Process, the Global / Per object switch picks between the plate-wide process preset and the selected object's own settings. Per object shows how many objects have their own settings. Long setting labels wrap onto a second line instead of being cut off, and in a narrow sidebar the page tabs tighten so every label still fits. Drag the sidebar's edge to resize it, and double-click the edge to reset its width.
+
 ## Objects list
 
 The Objects list in the sidebar shows every object, under its plate when there is more than one plate. Instances of the same model share a row you can fold, and an object's parts, modifiers and height ranges fold under it (← and → fold the selected object). Click, Ctrl-click and Shift-click select. ↑ and ↓ move the selection, and Home and End jump to the first and last object. Double-click (or F2) renames an object, part or plate. Right-click an object for the object menu, a part for its type and settings, or a plate row for the same plate menu as the plate bar. Plate rows warn when something on the plate won't print as placed. With two or more objects, the filter button narrows the list by name, and Escape clears it.

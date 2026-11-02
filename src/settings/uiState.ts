@@ -12,7 +12,7 @@ import type { SettingsTabId } from './layout/types';
 
 export type SettingsRegion = 'global' | 'objects';
 /** Collapsible sidebar sections (Orca's Printer / Filament / Process title bars). */
-export type SidebarSection = 'printer' | 'filament' | 'process';
+export type SidebarSection = 'printer' | 'filament' | 'objects' | 'process';
 
 export const settingsUi = reactive({
   mode: (lsGet<ConfigMode>('cubby.settings.mode') ?? 'advanced') as ConfigMode,

@@ -160,10 +160,10 @@ const hasRange = computed(() => (props.def.min !== null && props.def.min !== und
 
 <style scoped>
 .row {
-  display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(0, 54%); align-items: start; column-gap: 4px;
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) minmax(0, 50%); align-items: start; column-gap: 4px;
   padding: 2px 6px 2px 2px; border-radius: var(--ui-radius); position: relative; min-height: 28px;
 }
-.row:has(.row__x) { grid-template-columns: 20px minmax(0, 1fr) minmax(0, 54%) 22px; }
+.row:has(.row__x) { grid-template-columns: 20px minmax(0, 1fr) minmax(0, 50%) 22px; }
 .row:hover { background: color-mix(in srgb, var(--ui-bg-elevated) 70%, transparent); }
 .row--full { grid-template-columns: 20px minmax(0, 1fr); }
 .row--full .row__ctl { grid-column: 2 / -1; }
@@ -171,7 +171,8 @@ const hasRange = computed(() => (props.def.min !== null && props.def.min !== und
 @keyframes flash { 0%, 30% { background: color-mix(in srgb, var(--ui-info) 30%, transparent); } 100% { background: transparent; } }
 .row__rev { width: 20px; height: 24px; display: inline-flex; align-items: center; justify-content: center; }
 .row__lbl { display: flex; align-items: center; gap: 4px; min-height: 24px; min-width: 0; color: var(--ui-text-toned); font-size: 12px; cursor: default; }
-.row__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Long labels wrap (a second line beats "Wipe tower rotation a…"). */
+.row__text { overflow-wrap: anywhere; line-height: 1.25; padding-block: 4px; }
 .row--mod .row__text { color: var(--modified); }
 .row__mode { font-size: 9px; line-height: 12px; padding: 0 3px; border-radius: 3px; flex: none; color: var(--ui-warning); border: 1px solid color-mix(in srgb, var(--ui-warning) 40%, transparent); }
 .row__dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; margin: 2px 0 0; font-size: 11px; }
@@ -190,7 +191,7 @@ const hasRange = computed(() => (props.def.min !== null && props.def.min !== und
 /* Phone dialogs (settings drawer / printer & filament settings): labels wrap next to the 40 px controls. */
 @media (max-width: 640px), (max-height: 500px) {
   .row__lbl { min-height: 40px; }
-  .row__text { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; padding-block: 2px; }
+  .row__text { padding-block: 2px; }
   .row__rev { height: 40px; }
 }
 </style>

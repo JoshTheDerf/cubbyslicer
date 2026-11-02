@@ -23,12 +23,18 @@ import { closeOnOutsidePress } from './closeOnOutsidePress';
 import { plateMenu } from './plateMenu';
 import { revealObjectSettings, selectPlate } from './actions';
 import { ui } from './uiState';
+import { settingsUi } from '../../settings/uiState';
 import { clickLayerRow, isLayerRowSelected, LAYER_ROW_ICONS, layerRowLabel, layerRowMenu, layerRowsOf, type LayerRow, type LayerRowKind } from '../../layers/objectList';
 import { selectedRange } from '../../layers/store';
 import { nodeIcon } from '../../cad/tree';
 import type { LayerRange } from '../../project/types';
 
 const collapsed = reactive(new Set<string>());
+/** The whole list folds like the sidebar's other sections. */
+const listOpen = computed(() => !settingsUi.collapsedSections.includes('objects'));
+function toggleList() {
+  settingsUi.collapsedSections = listOpen.value ? [...settingsUi.collapsedSections, 'objects'] : settingsUi.collapsedSections.filter((s) => s !== 'objects');
+}
 /** CubbyCAD shapes show their shape's icon (a hole: dashed); meshes a box. */
 const objectIcon = (o: ProjectObject) => (o.cad ? (o.cad.node.contribution === 'subtract' ? 'i-lucide-circle-dashed' : nodeIcon(o.cad.node)) : 'i-lucide-box');
 const anchor = ref<string | null>(null);
@@ -292,20 +298,24 @@ watch(selectedIds, async (ids) => {
 
 <template>
   <section class="ol" data-object-list>
-    <header class="ol__head">
+    <header class="ol__head" @click="toggleList">
+      <UIcon name="i-lucide-chevron-down" class="ol__chev" :class="{ 'ol__chev--closed': !listOpen }" />
       <UIcon name="i-lucide-boxes" class="ol__hicon" />
       <h2>Objects</h2>
       <UBadge v-if="objects.length" color="neutral" variant="subtle" size="sm" :label="String(objects.length)" />
       <span class="ol__spacer" />
-      <UTooltip v-if="objects.length > 1" text="Filter by name">
+      <span class="contents" @click.stop>
+      <UTooltip v-if="objects.length > 1 && listOpen" text="Filter by name">
         <UButton icon="i-lucide-list-filter" color="neutral" :variant="filterOpen ? 'soft' : 'ghost'" size="xs" aria-label="Filter objects"
                  :aria-pressed="filterOpen" @click="toggleFilter" />
       </UTooltip>
       <UTooltip text="Import model" :kbds="['Ctrl', 'I']">
         <UButton icon="i-lucide-file-input" color="neutral" variant="ghost" size="xs" aria-label="Import model…" @click="run('file.import')" />
       </UTooltip>
+      </span>
     </header>
 
+    <template v-if="listOpen">
     <div v-if="filterOpen && objects.length" class="ol__filter">
       <UInput ref="filterEl" v-model="filter" size="xs" icon="i-lucide-search" placeholder="Filter objects" aria-label="Filter objects by name" class="w-full"
               @keydown.esc.prevent.stop="closeFilter" @keydown.down.prevent="listEl?.focus()" />
@@ -404,12 +414,16 @@ watch(selectedIds, async (ids) => {
         <p v-if="needle && !rows.length" class="ol__none">No objects match “{{ filter.trim() }}”.</p>
       </div>
     </UContextMenu>
+    </template>
   </section>
 </template>
 
 <style scoped>
 .ol { display: flex; flex-direction: column; min-height: 0; }
-.ol__head { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 6px 0 10px; flex: none; }
+.ol__head { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 6px 0 8px; flex: none; cursor: pointer; user-select: none; }
+.ol__head:hover h2 { color: var(--ui-primary); }
+.ol__chev { width: 14px; height: 14px; color: var(--ui-text-dimmed); transition: transform .12s; flex: none; }
+.ol__chev--closed { transform: rotate(-90deg); }
 .ol__hicon { width: 16px; height: 16px; color: var(--ui-primary); flex: none; }
 .ol__head h2 { margin: 0; font: 600 var(--fs-md) var(--font); color: var(--fg-0); }
 .ol__spacer { flex: 1; }

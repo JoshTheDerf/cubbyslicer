@@ -19,7 +19,7 @@ import { activeEngine } from '../app/state';
 import { ENGINE_LABELS, getEngineVersion, isEngineAvailable } from '../engine/client';
 import MixedFilamentsPanel from '../mixed/MixedFilamentsPanel.vue';
 import type { EngineId } from '../engine/types';
-import { primarySelection, selectedIds, selectedPart } from '../project/store';
+import { objects, overrideCount, primarySelection, selectedIds, selectedPart } from '../project/store';
 import { selectedRange } from '../layers/store';
 import { currentPresets, ENGINES, FILAMENT_PALETTE, setActiveEngine, startPresets } from '../presets/store';
 import { asArray } from '../presets/values';
@@ -137,6 +137,8 @@ const singleSel = computed(() => (selectedIds.value.length === 1 ? primarySelect
 const partSel = computed(() => (singleSel.value && selectedPart.value?.objectId === singleSel.value.id ? selectedPart.value.partId : undefined));
 /** A height range modifier picked in the object list: its settings instead. */
 const rangeSel = computed(() => (singleSel.value && selectedRange.value?.objectId === singleSel.value.id ? selectedRange.value.rangeId : undefined));
+/** Objects with their own settings (shown on the Per object switch). */
+const overridden = computed(() => objects.value.filter((o) => overrideCount(o.id) > 0).length);
 
 // ---- problems ---------------------------------------------------------------------------
 const problems = computed(() => configProblems.value);
@@ -241,20 +243,22 @@ const schemaNote = computed(() => {
       <header class="sp__bar" @click="toggleSection('process')">
         <UIcon name="i-lucide-chevron-down" class="sp__chev" :class="{ 'sp__chev--closed': !isOpen('process') }" />
         <UIcon name="i-lucide-layers" class="sp__icon" />
-        <h3 class="sp__title">Process</h3>
+        <h3 class="sp__title">Process<span v-if="!isOpen('process')" class="sp__sub"> | {{ region === 'global' ? 'Global' : 'Per object' }}</span></h3>
         <div class="sp__acts" @click.stop>
-          <UFieldGroup size="xs" role="radiogroup" aria-label="Edit global or per-object settings">
-            <UButton v-for="r in (['global', 'objects'] as const)" :key="r" role="radio" :aria-checked="region === r" size="xs"
-                     :variant="region === r ? 'solid' : 'outline'" :color="region === r ? 'primary' : 'neutral'"
-                     :label="r === 'global' ? 'Global' : 'Per object'"
-                     :title="r === 'global' ? 'Settings for the whole plate' : 'Override settings for the selected object'" @click="region = r; isOpen('process') || toggleSection('process')" />
-          </UFieldGroup>
-          <span class="flex-1" />
           <ModeSelect />
           <UButton size="xs" variant="ghost" icon="i-lucide-search" square aria-label="Search settings" title="Search settings (Ctrl+Shift+F)" @click="searchOpen = true" />
         </div>
       </header>
       <div v-show="isOpen('process')" class="sp__body sp__body--grow">
+        <UFieldGroup class="w-full" role="radiogroup" aria-label="Edit global or per-object settings">
+          <UButton v-for="r in (['global', 'objects'] as const)" :key="r" role="radio" :aria-checked="region === r" size="xs" class="flex-1 justify-center"
+                   :variant="region === r ? 'soft' : 'outline'" :color="region === r ? 'primary' : 'neutral'"
+                   :title="r === 'global' ? 'Settings for the whole plate' : 'Override settings for the selected object'" @click="region = r">
+            <UIcon :name="r === 'global' ? 'i-lucide-globe' : 'i-lucide-box'" class="size-3.5" />
+            {{ r === 'global' ? 'Global' : 'Per object' }}
+            <span v-if="r === 'objects' && overridden" class="sp__ovr" :title="`${overridden} object${overridden > 1 ? 's have' : ' has'} its own settings`">{{ overridden }}</span>
+          </UButton>
+        </UFieldGroup>
         <!-- The process preset is plate-wide; per-object mode only shows overrides. -->
         <PresetRow v-if="region === 'global'" :presets="p" kind="process" :items="processItems" group-by="none" />
 
@@ -305,7 +309,7 @@ const schemaNote = computed(() => {
 </template>
 
 <style scoped>
-.sp { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--ui-bg); color: var(--ui-text); font-size: 13px; }
+.sp { container: sidebar / inline-size; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--ui-bg); color: var(--ui-text); font-size: 13px; }
 .sp__sec { display: flex; flex-direction: column; border-bottom: 1px solid var(--ui-border); flex: none; }
 .sp__sec--grow { flex: 1; min-height: 0; }
 .sp__sec--closed { flex: none; }
@@ -320,7 +324,6 @@ const schemaNote = computed(() => {
 .sp__title { margin: 0; font-size: 13px; font-weight: 600; color: var(--ui-text-highlighted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sp__sub { font-weight: 400; color: var(--ui-text-muted); }
 .sp__acts { display: flex; align-items: center; gap: 4px; margin-left: auto; cursor: default; }
-.sp__sec--grow .sp__acts { flex: 1; margin-left: 8px; }
 .sp__body { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
 .sp__body--grow { flex: 1; min-height: 0; padding-bottom: 0; }
 .sp__engines { width: 100%; }
@@ -342,7 +345,7 @@ const schemaNote = computed(() => {
 .sp__tabs { display: flex; gap: 0; border-bottom: 1px solid var(--ui-border); margin: 0 -8px; padding: 0 4px; }
 .sp__tabs--wrap { flex-wrap: wrap; }
 .sp__tab {
-  position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 2px 4px;
+  position: relative; flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 2px 4px;
   border: 0; background: none; color: var(--ui-text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .sp__tab:hover { color: var(--ui-text-highlighted); }
@@ -360,5 +363,11 @@ const schemaNote = computed(() => {
 .sp--flow .sp__sec--grow > .sp__bar { position: sticky; top: 0; z-index: 3; }
 .sp--flow .sp__bar { height: 44px; }
 .sp__objects { display: flex; flex-direction: column; gap: 6px; }
+.sp__ovr {
+  font-size: 10px; min-width: 16px; padding: 0 4px; border-radius: 8px; text-align: center; font-variant-numeric: tabular-nums;
+  background: color-mix(in oklab, var(--ui-warning) 22%, transparent); color: var(--ui-warning);
+}
 .sp__hint { display: flex; align-items: center; gap: 6px; margin: 0; padding: 12px 8px; color: var(--ui-text-dimmed); font-size: 12px; }
+/* Narrow sidebar: tighter tabs so every label fits; wrap rather than cut one off. */
+@container sidebar (max-width: 350px) { .sp__tabs { flex-wrap: wrap; padding: 0 2px; } .sp__tab { padding-inline: 1px; } .sp__tabl { font-size: 10px; } }
 </style>
