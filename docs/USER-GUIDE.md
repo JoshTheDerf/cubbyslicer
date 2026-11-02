@@ -12,6 +12,10 @@ Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full S
 
 Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on face), transform, modify (cut, mesh boolean, text), print adjustments (painting, variable layer height, brim ears) and measure. The four paint tools share the brush button's menu; L, P, N and H still open them directly. In a narrow window the groups that don't fit move into the ⋯ menu at the end.
 
+## Plates
+
+The plate bar (bottom centre) has a tab per plate. Each tab shows its object count, a warning if something on it won't print as placed, a lock, a settings icon if it has plate settings, and its slice state. Click a tab to go to that plate, double-click it to rename it, or use the arrow keys when a tab has focus. The active tab's ⌃ button, or a right-click on any tab, opens that plate's menu, which lists only what applies: slice, export its G-code once sliced, arrange, auto orient, select its objects, move the selection there, rename, lock, plate settings and delete. With more tabs than fit, the bar scrolls and keeps the active plate and the + button in view.
+
 ## Moving objects
 
 The transform gizmo is CubbyCAD's: move, rotate and scale handles on one gizmo (G). M, R and S limit it to one of them, and pressing the same key again brings back the full gizmo. The Object manipulation panel (bottom left) types exact values. Each row ends in its own button: drop to bed, reset rotation, reset scale, and the link that keeps scale and size proportional. With several objects selected it edits them as one group, like Orca's world coordinates: position and size are the group's, and rotation and scale turn or scale the whole group about its centre (always uniformly), then read 0° and 100% again. Collapsed, it shows the selection's size.
