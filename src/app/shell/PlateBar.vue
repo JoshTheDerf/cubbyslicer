@@ -8,17 +8,12 @@
  * like the other right-click menus, lists only what applies to that plate.
  */
 import { computed, nextTick, ref, watch } from 'vue';
-import type { DropdownMenuItem } from '@nuxt/ui';
-import {
-  activePlate, moveObjectsToPlate, objectIssues, objectPlate, objectsOnPlate, plates, renamePlate, select, selectedIds, setActivePlate,
-} from '../../project/store';
+import { activePlate, objectIssues, objectPlate, plates, renamePlate } from '../../project/store';
 import { MAX_PLATES, plateLabel } from '../../project/plates';
 import { activeView } from '../state';
 import { useSliceController } from '../slice';
-import { openPlateSettings } from '../../plates/ui';
-import {
-  addPlateCmd, arrangePlate, autoOrientObjects, clearPlateCmd, deletePlateCmd, exportGcode, selectPlate, togglePlateLock,
-} from './actions';
+import { addPlateCmd, selectPlate } from './actions';
+import { plateMenu } from './plateMenu';
 import AnchoredMenu from './AnchoredMenu.vue';
 
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
@@ -57,40 +52,8 @@ function cancelRename(): void { renaming.value = null; }
 
 // ---- plate menu ------------------------------------------------------------------------
 
-function menu(i: number): DropdownMenuItem[][] {
-  const p = plates.value[i];
-  const n = counts.value[i];
-  const run = (fn: () => unknown) => () => { setActivePlate(i); void fn(); };
-  const moving = selectedIds.value.filter((id) => objectPlate.value.get(id) !== i);
-  const groups: Array<Array<DropdownMenuItem | false>> = [
-    [
-      n > 0 && slicer.status.value !== 'slicing' && { label: 'Slice this plate', icon: 'i-lucide-layers', onSelect: run(() => slicer.slice()) },
-      slicer.plateStates.value[i] === 'done' && { label: 'Export G-code', icon: 'i-lucide-download', onSelect: run(exportGcode) },
-    ],
-    [
-      n > 0 && !p.locked && { label: 'Arrange objects on plate', icon: 'i-lucide-layout-dashboard', kbds: ['shift', 'A'], onSelect: run(arrangePlate) },
-      n > 0 && !p.locked && { label: 'Auto orient plate', icon: 'i-lucide-compass', kbds: ['shift', 'Q'], onSelect: run(() => autoOrientObjects('all')) },
-      n > 0 && { label: 'Select objects on plate', icon: 'i-lucide-box-select', onSelect: run(() => select(objectsOnPlate(i).map((o) => o.id))) },
-      moving.length > 0 && {
-        label: moving.length > 1 ? `Move ${moving.length} selected objects here` : 'Move selected object here', icon: 'i-lucide-move-right',
-        onSelect: () => moveObjectsToPlate(moving, i),
-      },
-    ],
-    [
-      { label: 'Rename…', icon: 'i-lucide-text-cursor-input', onSelect: () => startRename(i) },
-      { label: p.locked ? 'Unlock plate' : 'Lock plate', icon: p.locked ? 'i-lucide-lock-open' : 'i-lucide-lock', onSelect: () => togglePlateLock(i) },
-      { label: 'Plate settings…', icon: 'i-lucide-settings-2', onSelect: run(() => openPlateSettings(i)) },
-    ],
-    [
-      n > 0 && { label: 'Delete all objects on plate', icon: 'i-lucide-eraser', color: 'error', onSelect: () => clearPlateCmd(i) },
-      plates.value.length > 1 && { label: 'Delete plate', icon: 'i-lucide-square-x', color: 'error', onSelect: () => deletePlateCmd(i) },
-    ],
-  ];
-  return groups.map((g) => g.filter((it): it is DropdownMenuItem => !!it)).filter((g) => g.length);
-}
-
 const menuAt = ref({ open: false, plate: 0, x: 0, y: 0 });
-const menuItems = computed(() => (menuAt.value.open ? menu(menuAt.value.plate) : []));
+const menuItems = computed(() => (menuAt.value.open ? plateMenu(menuAt.value.plate, startRename) : []));
 // A press on the open menu's own chevron closes it (outside press) before the
 // click lands: remember that so the click doesn't reopen it.
 let closed = { plate: -1, t: 0 };

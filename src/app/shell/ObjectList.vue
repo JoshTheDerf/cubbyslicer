@@ -2,12 +2,14 @@
 /**
  * Plate object list (Orca's object list, shown by the settings sidebar in its
  * Process "Objects" mode via the `#objects` slot). Instances (objects sharing
- * a mesh) are grouped under a collapsible parent row. Click / Ctrl-click / Shift-click select; double-
- * click or F2 renames; right-click opens the object context menu.
+ * a mesh) are grouped under a collapsible parent row, and an object's parts and
+ * height ranges fold under it. Click / Ctrl-click / Shift-click select; double-
+ * click or F2 renames; right-click opens the object (or part, or plate) menu.
+ * Arrow keys walk the objects (← / → fold), and the filter narrows the list by name.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import {
-  activePlate, getMesh, objectIssues, objectPlate, objects, overrideCount, plates, removePart, renameObject, renamePart, select,
+  activePlate, getMesh, objectIssues, objectPlate, objects, overrideCount, plates, removePart, renameObject, renamePart, renamePlate, select,
   selectedIds, selectedPart, setActivePlate, setPartType, setPrintable, setVisible,
 } from '../../project/store';
 import { PART_TYPE_LABELS, type ObjectPart, type PartType } from '../../project/types';
@@ -18,6 +20,7 @@ import type { DropdownMenuItem } from '@nuxt/ui';
 import { OBJECT_CONTEXT_MENU } from '../actions/layouts/menus';
 import { menuItems, run, toNuxtItems } from './useActions';
 import { closeOnOutsidePress } from './closeOnOutsidePress';
+import { plateMenu } from './plateMenu';
 import { revealObjectSettings, selectPlate } from './actions';
 import { ui } from './uiState';
 import { clickLayerRow, isLayerRowSelected, LAYER_ROW_ICONS, layerRowLabel, layerRowMenu, layerRowsOf, type LayerRow, type LayerRowKind } from '../../layers/objectList';
@@ -35,8 +38,10 @@ closeOnOutsidePress(menuOpen);
 // Projected when opened, after the row under the pointer has been selected.
 const menuPart = ref<{ objectId: string; part: ObjectPart } | null>(null);
 const menuLayer = ref<LayerRow | null>(null);
+const menuPlate = ref<number | null>(null);
 const menuNuxt = computed(() => {
   if (!menuOpen.value) return [];
+  if (menuPlate.value !== null) return plateMenu(menuPlate.value, (i) => { renamingPlate.value = i; });
   if (menuLayer.value) return layerRowMenu(menuLayer.value, revealObjectSettings);
   return menuPart.value ? partMenu(menuPart.value.objectId, menuPart.value.part) : toNuxtItems(menuItems(OBJECT_CONTEXT_MENU));
 });
@@ -79,7 +84,23 @@ interface Row {
   ids?: string[];
   /** 'plate' rows: plate index (-1 = objects on no plate). */
   plate?: number;
+  /** 'object' rows: has parts / height ranges folded under it. */
+  fold?: boolean;
 }
+
+// ---- filter ----
+const filterOpen = ref(false);
+const filter = ref('');
+const filterEl = ref<{ inputRef?: HTMLInputElement } | null>(null);
+const needle = computed(() => filter.value.trim().toLowerCase());
+const matches = (o: ProjectObject) => !needle.value || o.name.toLowerCase().includes(needle.value);
+async function toggleFilter() {
+  filterOpen.value = !filterOpen.value;
+  if (!filterOpen.value) { filter.value = ''; return; }
+  await nextTick();
+  filterEl.value?.inputRef?.focus();
+}
+function closeFilter() { filterOpen.value = false; filter.value = ''; listEl.value?.focus(); }
 
 /** Instance groups (objects sharing a mesh) → rows at `depth`. */
 function objectRows(list: ProjectObject[], depth: number, scope: string): Row[] {
@@ -90,7 +111,9 @@ function objectRows(list: ProjectObject[], depth: number, scope: string): Row[] 
   }
   const out: Row[] = [];
   const withParts = (o: ProjectObject, d: number) => {
-    out.push({ kind: 'object', key: o.id, obj: o, depth: d });
+    const fold = !!(o.parts?.length || o.layerRanges?.length);
+    out.push({ kind: 'object', key: o.id, obj: o, depth: d, fold });
+    if (fold && collapsed.has(`o:${o.id}`)) { out.push(...layerRowsOf(o, d + 1, collapsed).filter((r) => r.kind === 'vlh')); return; }
     for (const p of o.parts ?? []) out.push({ kind: 'part', key: `${o.id}/${p.id}`, obj: o, part: p, depth: d + 1 });
     out.push(...layerRowsOf(o, d + 1, collapsed));
   };
@@ -98,17 +121,18 @@ function objectRows(list: ProjectObject[], depth: number, scope: string): Row[] 
     if (members.length === 1) { withParts(members[0], depth); continue; }
     const gkey = `${scope}:${meshId}`;
     out.push({ kind: 'group', key: `g:${gkey}`, obj: members[0], depth, count: members.length, ids: members.map((o) => o.id) });
-    if (!collapsed.has(gkey)) for (const o of members) withParts(o, depth + 1);
+    if (!collapsed.has(gkey) || needle.value) for (const o of members) withParts(o, depth + 1);
   }
   return out;
 }
 
 // With several plates (or objects off every plate), objects are listed under their plate like Orca's list.
 const byPlate = computed(() => plates.value.length > 1 || [...objectPlate.value.values()].some((p) => p < 0));
+const shown = computed(() => objects.value.filter(matches));
 const rows = computed<Row[]>(() => {
-  if (!byPlate.value) return objectRows(objects.value, 0, 'all');
+  if (!byPlate.value) return objectRows(shown.value, 0, 'all');
   const lists = new Map<number, ProjectObject[]>();
-  for (const o of objects.value) {
+  for (const o of shown.value) {
     const p = objectPlate.value.get(o.id) ?? -1;
     const l = lists.get(p);
     if (l) l.push(o); else lists.set(p, [o]);
@@ -117,9 +141,10 @@ const rows = computed<Row[]>(() => {
   const order = [...plates.value.keys(), ...(lists.has(-1) ? [-1] : [])];
   for (const p of order) {
     const list = lists.get(p) ?? [];
+    if (needle.value && !list.length) continue;
     const key = `p:${p}`;
     out.push({ kind: 'plate', key, obj: list[0] ?? objects.value[0], depth: 0, plate: p, count: list.length, ids: list.map((o) => o.id) });
-    if (!collapsed.has(key)) out.push(...objectRows(list, 1, key));
+    if (!collapsed.has(key) || needle.value) out.push(...objectRows(list, 1, key));
   }
   return out;
 });
@@ -132,6 +157,7 @@ function issuesOf(id: string): string {
   return l ? l.map((i) => ISSUE_LABELS[i]).join('\n') : '';
 }
 const blocking = (id: string) => !!objectIssues.value.get(id)?.some((i) => i !== 'overlap');
+const plateProblems = (r: Row) => r.ids!.filter(blocking).length;
 
 function clickRow(r: Row, e: MouseEvent) {
   if (ui.renamingId || renamingPart.value) return;
@@ -159,6 +185,8 @@ function clickRow(r: Row, e: MouseEvent) {
 
 /** Right-click: select the row (UContextMenu then opens at the pointer). */
 function selectForMenu(r: Row) {
+  menuPlate.value = r.kind === 'plate' && r.plate! >= 0 ? r.plate! : null;
+  if (menuPlate.value !== null) { menuPart.value = null; menuLayer.value = null; return; }
   menuPart.value = r.kind === 'part' ? { objectId: r.obj.id, part: r.part! } : null;
   menuLayer.value = r.kind === 'layers' || r.kind === 'range' || r.kind === 'vlh' ? (r as LayerRow) : null;
   if (menuLayer.value) { if (r.kind === 'range') clickLayerRow(r as LayerRow); else if (!sel.value.has(r.obj.id)) select([r.obj.id]); return; }
@@ -169,20 +197,43 @@ function selectForMenu(r: Row) {
 }
 
 function onKey(e: KeyboardEvent) {
-  if (ui.renamingId) return;
+  if (ui.renamingId || renamingPart.value || renamingPlate.value !== null) return;
   const ids = flatIds.value;
   if (!ids.length) return;
   const cur = selectedIds.value.at(-1);
   const i = cur ? ids.indexOf(cur) : -1;
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    e.preventDefault();
-    const n = ids[Math.max(0, Math.min(ids.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+  const go = (j: number) => {
+    const n = ids[Math.max(0, Math.min(ids.length - 1, j))];
     select([n], e.shiftKey ? 'add' : 'replace');
     anchor.value = n;
+  };
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); go(i + (e.key === 'ArrowDown' ? 1 : -1)); }
+  else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); go(e.key === 'Home' ? 0 : ids.length - 1); }
+  else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && cur) {
+    // Fold the selected object's parts and ranges.
+    const row = rows.value.find((r) => r.kind === 'object' && r.obj.id === cur);
+    if (!row?.fold) return;
+    e.preventDefault();
+    if (e.key === 'ArrowLeft') collapsed.add(`o:${cur}`); else collapsed.delete(`o:${cur}`);
   }
 }
 
 // ---- rename ----
+const renamingPlate = ref<number | null>(null);
+const plateDraft = ref('');
+watch(renamingPlate, async (i) => {
+  if (i === null) return;
+  plateDraft.value = plates.value[i]?.name ?? '';
+  await nextTick();
+  const input = listEl.value?.querySelector<HTMLInputElement>('.ol__rename input');
+  input?.focus(); input?.select();
+});
+function commitPlateRename() {
+  const i = renamingPlate.value;
+  renamingPlate.value = null;
+  if (i !== null) renamePlate(i, plateDraft.value);
+  listEl.value?.focus();
+}
 const renamingPart = ref<string | null>(null);
 const partDraft = ref('');
 watch(renamingPart, async (id) => {
@@ -215,8 +266,10 @@ function commitRename() {
 }
 function cancelRename() { ui.renamingId = null; listEl.value?.focus(); }
 
-/** Collapse key of a group / plate row. */
-const foldKey = (r: Row) => (r.kind === 'group' ? r.key.slice(2) : r.key);
+/** Collapse key of a group / plate / object row. */
+const foldKey = (r: Row) => (r.kind === 'group' ? r.key.slice(2) : r.kind === 'object' ? `o:${r.obj.id}` : r.key);
+/** Rows with something folded under them. */
+const folds = (r: Row) => r.kind === 'group' || r.kind === 'layers' || (r.kind === 'plate' && !!r.count) || !!r.fold;
 function toggleGroup(key: string) {
   if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
 }
@@ -244,13 +297,26 @@ watch(selectedIds, async (ids) => {
       <h2>Objects</h2>
       <UBadge v-if="objects.length" color="neutral" variant="subtle" size="sm" :label="String(objects.length)" />
       <span class="ol__spacer" />
+      <UTooltip v-if="objects.length > 1" text="Filter by name">
+        <UButton icon="i-lucide-list-filter" color="neutral" :variant="filterOpen ? 'soft' : 'ghost'" size="xs" aria-label="Filter objects"
+                 :aria-pressed="filterOpen" @click="toggleFilter" />
+      </UTooltip>
       <UTooltip text="Import model" :kbds="['Ctrl', 'I']">
         <UButton icon="i-lucide-file-input" color="neutral" variant="ghost" size="xs" aria-label="Import model…" @click="run('file.import')" />
       </UTooltip>
     </header>
 
+    <div v-if="filterOpen && objects.length" class="ol__filter">
+      <UInput ref="filterEl" v-model="filter" size="xs" icon="i-lucide-search" placeholder="Filter objects" aria-label="Filter objects by name" class="w-full"
+              @keydown.esc.prevent.stop="closeFilter" @keydown.down.prevent="listEl?.focus()" />
+    </div>
+
     <div v-if="!objects.length" class="ol__empty">
-      <p>Nothing on the plate yet. Import a model, or drop files on the plate.</p>
+      <p>Nothing on the plate yet. Drop model files on the plate, or:</p>
+      <div class="flex flex-wrap gap-1.5">
+        <UButton size="xs" color="neutral" variant="outline" icon="i-lucide-file-input" label="Import model" @click="run('file.import')" />
+        <UButton size="xs" color="neutral" variant="outline" icon="i-lucide-shapes" label="Add shape" @click="run('cad.palette')" />
+      </div>
     </div>
 
     <UContextMenu v-else v-model:open="menuOpen" :items="menuNuxt" :modal="false" :ui="{ content: 'min-w-52' }">
@@ -269,13 +335,15 @@ watch(selectedIds, async (ids) => {
              :style="{ paddingLeft: `${6 + r.depth * 18}px` }"
              :data-id="r.kind === 'object' ? r.obj.id : undefined"
              role="option" :aria-selected="r.kind === 'object' ? sel.has(r.obj.id) : undefined"
-             @click="clickRow(r, $event)" @dblclick="r.kind === 'object' && (ui.renamingId = r.obj.id)"
+             @click="clickRow(r, $event)"
+             @dblclick="r.kind === 'object' ? (ui.renamingId = r.obj.id) : r.kind === 'plate' && r.plate! >= 0 && (renamingPlate = r.plate!)"
              @contextmenu="selectForMenu(r)">
-          <button v-if="r.kind === 'group' || r.kind === 'plate' || r.kind === 'layers'" type="button" class="ol__twist" :aria-label="collapsed.has(foldKey(r)) ? 'Expand' : 'Collapse'"
-                  @click.stop="toggleGroup(foldKey(r))">
+          <button v-if="folds(r)" type="button" class="ol__twist" :aria-label="collapsed.has(foldKey(r)) ? 'Expand' : 'Collapse'"
+                  :aria-expanded="!collapsed.has(foldKey(r))" @click.stop="toggleGroup(foldKey(r))" @dblclick.stop>
             <UIcon :name="collapsed.has(foldKey(r)) ? 'i-lucide-chevron-right' : 'i-lucide-chevron-down'" class="size-3" />
           </button>
-          <UIcon :name="r.kind in LAYER_ROW_ICONS ? LAYER_ROW_ICONS[r.kind as LayerRowKind] : r.kind === 'plate' ? (r.plate! < 0 ? 'i-lucide-square-dashed' : 'i-lucide-square') : r.kind === 'group' ? 'i-lucide-boxes' : r.kind === 'part' ? PART_ICONS[r.part!.type] : objectIcon(r.obj)"
+          <span v-else class="ol__twist" aria-hidden="true" />
+          <UIcon :name="r.kind in LAYER_ROW_ICONS ? LAYER_ROW_ICONS[r.kind as LayerRowKind] : r.kind === 'plate' ? (r.plate! < 0 ? 'i-lucide-square-dashed' : 'i-lucide-grid-2x2') : r.kind === 'group' ? 'i-lucide-boxes' : r.kind === 'part' ? PART_ICONS[r.part!.type] : objectIcon(r.obj)"
                  class="ol__icon size-3.5" :class="r.kind === 'part' ? `ol__icon--${r.part!.type}` : ''" />
           <template v-if="r.kind === 'part'">
             <UInput v-if="renamingPart === r.part!.id" v-model="partDraft" class="ol__rename flex-1 min-w-0" size="xs" :maxlength="200"
@@ -294,8 +362,13 @@ watch(selectedIds, async (ids) => {
             </UTooltip>
           </template>
           <template v-else-if="r.kind === 'plate'">
-            <span class="ol__name">{{ r.plate! < 0 ? 'Outside the plates' : plateLabel(plates[r.plate!], r.plate!) }}
-              <span class="ol__mult">{{ r.count }}</span></span>
+            <UInput v-if="renamingPlate === r.plate" v-model="plateDraft" class="ol__rename flex-1 min-w-0" size="xs" :maxlength="80" :placeholder="`Plate ${r.plate! + 1}`"
+                    @click.stop @keydown.enter.prevent="commitPlateRename" @keydown.esc.prevent.stop="renamingPlate = null" @blur="commitPlateRename" />
+            <span v-else class="ol__name" :class="{ 'ol__name--empty': !r.count }">{{ r.plate! < 0 ? 'Outside the plates' : plateLabel(plates[r.plate!], r.plate!) }}
+              <span class="ol__mult">{{ r.count || 'empty' }}</span></span>
+            <UTooltip v-if="plateProblems(r)" :text="`${plateProblems(r)} object${plateProblems(r) > 1 ? 's' : ''} won't print as placed`">
+              <UIcon name="i-lucide-triangle-alert" class="size-3.5 text-warning" />
+            </UTooltip>
             <UIcon v-if="r.plate! >= 0 && plates[r.plate!]?.locked" name="i-lucide-lock" class="size-3 text-dimmed" />
           </template>
 
@@ -328,6 +401,7 @@ watch(selectedIds, async (ids) => {
             </UTooltip>
           </template>
         </div>
+        <p v-if="needle && !rows.length" class="ol__none">No objects match “{{ filter.trim() }}”.</p>
       </div>
     </UContextMenu>
   </section>
@@ -341,6 +415,9 @@ watch(selectedIds, async (ids) => {
 .ol__spacer { flex: 1; }
 .ol__empty { padding: 4px 10px 12px; color: var(--fg-2); font-size: var(--fs-sm); }
 .ol__empty p { margin: 0 0 8px; }
+.ol__filter { padding: 0 6px 6px; flex: none; }
+.ol__none { margin: 0; padding: 6px 10px; color: var(--fg-2); font-size: var(--fs-sm); }
+.ol__name--empty { color: var(--fg-2); font-weight: 400; }
 .ol__row--plate { font-weight: 600; color: var(--ui-text-highlighted); }
 .ol__row--part { font-size: 0.95em; }
 .ol__name--layer { font-size: 0.95em; }
