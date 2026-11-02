@@ -17,6 +17,7 @@ import type { ProjectObject } from '../../project/types';
 import type { DropdownMenuItem } from '@nuxt/ui';
 import { OBJECT_CONTEXT_MENU } from '../actions/layouts/menus';
 import { menuItems, run, toNuxtItems } from './useActions';
+import { closeOnOutsidePress } from './closeOnOutsidePress';
 import { revealObjectSettings, selectPlate } from './actions';
 import { ui } from './uiState';
 import { clickLayerRow, isLayerRowSelected, LAYER_ROW_ICONS, layerRowLabel, layerRowMenu, layerRowsOf, type LayerRow, type LayerRowKind } from '../../layers/objectList';
@@ -30,6 +31,7 @@ const objectIcon = (o: ProjectObject) => (o.cad ? (o.cad.node.contribution === '
 const anchor = ref<string | null>(null);
 const listEl = ref<HTMLElement | null>(null);
 const menuOpen = ref(false);
+closeOnOutsidePress(menuOpen);
 // Projected when opened, after the row under the pointer has been selected.
 const menuPart = ref<{ objectId: string; part: ObjectPart } | null>(null);
 const menuLayer = ref<LayerRow | null>(null);
@@ -251,7 +253,7 @@ watch(selectedIds, async (ids) => {
       <p>Nothing on the plate yet. Import a model, or drop files on the plate.</p>
     </div>
 
-    <UContextMenu v-else v-model:open="menuOpen" :items="menuNuxt" :ui="{ content: 'min-w-52' }">
+    <UContextMenu v-else v-model:open="menuOpen" :items="menuNuxt" :modal="false" :ui="{ content: 'min-w-52' }">
       <div ref="listEl" class="ol__list" data-own-menu role="listbox" aria-label="Plate objects" aria-multiselectable="true" tabindex="0" @keydown="onKey">
         <div v-for="r in rows" :key="r.key" class="ol__row"
              :class="{
