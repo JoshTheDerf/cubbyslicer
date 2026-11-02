@@ -11,7 +11,10 @@ export interface SearchHit extends KeyLocation {
   score: number;
 }
 
-interface Entry extends KeyLocation { key: string; label: string; l: string; k: string; t: string; pageTitle: string; groupTitle: string }
+interface Entry extends KeyLocation { key: string; label: string; l: string; k: string; t: string; pageTitle: string; groupTitle: string; common: number }
+
+/** Simple / Advanced settings first: they're the ones people look for ("infill" → Sparse infill density). */
+const MODE_BONUS: Record<string, number> = { simple: 30, advanced: 12 };
 
 export function buildSearchIndex(schema: ConfigSchema, layout: BuiltLayout): Entry[] {
   const loc = locateKeys(layout);
@@ -26,7 +29,7 @@ export function buildSearchIndex(schema: ConfigSchema, layout: BuiltLayout): Ent
     out.push({
       ...where, key, label,
       l: `${label} ${def.label}`.toLowerCase(), k: key.toLowerCase(), t: (def.tooltip || '').toLowerCase(),
-      pageTitle: t?.page ?? '', groupTitle: t?.group ?? '',
+      pageTitle: t?.page ?? '', groupTitle: t?.group ?? '', common: MODE_BONUS[def.mode] ?? 0,
     });
   }
   return out;
@@ -44,13 +47,14 @@ export function searchSettings(index: Entry[], query: string, limit = 50): Searc
       let s = 0;
       if (e.k === w || e.l === w) s = 100;
       else if (e.l.startsWith(w)) s = 60;
+      else if (e.l.includes(` ${w}`)) s = 55; // starts a later word ("sparse infill")
       else if (e.l.includes(w)) s = 40;
       else if (e.k.includes(w.replace(/\s+/g, '_'))) s = 30;
       else if (e.t.includes(w)) s = 10;
       if (!s) { all = false; break; }
       score += s;
     }
-    if (all) hits.push({ tab: e.tab, pageId: e.pageId, groupId: e.groupId, key: e.key, label: e.label, pageTitle: e.pageTitle, groupTitle: e.groupTitle, score });
+    if (all) hits.push({ tab: e.tab, pageId: e.pageId, groupId: e.groupId, key: e.key, label: e.label, pageTitle: e.pageTitle, groupTitle: e.groupTitle, score: score + e.common });
   }
   hits.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
   return hits.slice(0, limit);

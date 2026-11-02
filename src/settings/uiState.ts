@@ -51,7 +51,11 @@ export function requestPreset(type: PresetRequestType, kind: PresetKind, index =
 }
 
 /** Panel-level one-shot requests (counter bumps). `focusSearch` opens the settings search. */
-export const panelRequest = reactive({ focusSearch: 0, addPrinter: 0, importFiles: 0, setupWizard: 0, closeSetupWizard: 0 });
+export const panelRequest = reactive({
+  focusSearch: 0, addPrinter: 0, importFiles: 0, setupWizard: 0, closeSetupWizard: 0,
+  /** Text for the settings search to start with (the command palette's "Search all settings"). */
+  searchTerm: '',
+});
 /** Whether the first-run setup wizard is showing (mirrored by SettingsPanel). */
 export const setupWizardState = reactive({ open: false });
 

@@ -4,7 +4,9 @@
  * place of Fuse).
  *
  *  - Only available actions (`when` ≠ false) and not `paletteHidden`.
- *  - Label = dynamicTitle ?? title; toggles read "Turn on/off <title>".
+ *  - Label = dynamicTitle ?? title. Toggles say what choosing them does ("Hide travel
+ *    moves", "Turn off …"); views read "Go to …"; the selected choice of a set
+ *    (settings mode, camera, snap, gizmo mode) is marked `current`.
  *  - Empty query: recent commands first, then everything by category order.
  *  - Query: fuzzy over label (strongest), aliases, then category; ties break
  *    on earliest match, shorter label, recency.
@@ -21,20 +23,38 @@ export interface PaletteItem {
   kbds?: string[];
   keywords: string;
   action: Action;
+  /** The selected choice of a set (shown as "current"). */
+  current?: boolean;
 }
 
 export interface PaletteSection { id: string; label: string; items: PaletteItem[] }
 
 export const CATEGORY_ORDER = ['File', 'Edit', 'Object', 'Arrange', 'Plate', 'View', 'Slice', 'Export', 'Preview', 'Settings', 'Help'];
 
+const VIEW_IDS = new Set(['view.prepare', 'view.preview', 'view.assembly']);
+const isToggle = (a: Action) => a.id.startsWith('view.panel.') || a.id.includes('.toggle.');
+const lcFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
 export function paletteLabel(a: Action, ctx: AppContext): string {
   const st = a.state?.(ctx);
   if (st === 'on' || st === 'off') {
-    // Pure toggles (panels) read as "Turn on/off"; exclusive views (Prepare/Preview) read as "Go to".
-    if (a.id.startsWith('view.panel.')) return `${st === 'on' ? 'Hide' : 'Show'} ${a.title.toLowerCase()}`;
-    return `Go to ${a.title}`;
+    const on = st === 'on';
+    // Toggles say what choosing them does.
+    if (a.id.startsWith('view.panel.')) return `${on ? 'Hide' : 'Show'} ${a.title.toLowerCase()}`;
+    if (isToggle(a)) {
+      if (a.title.startsWith('Show ')) return on ? `Hide ${a.title.slice(5)}` : a.title;
+      return `Turn ${on ? 'off' : 'on'} ${lcFirst(a.title)}`;
+    }
+    // Views are places to go; other on/off actions are choices of a set (marked `current`).
+    if (VIEW_IDS.has(a.id)) return `Go to ${a.title}`;
   }
   return a.dynamicTitle?.(ctx) ?? a.title;
+}
+
+/** Selected choice of a set (not toggles: their label already says the state). */
+function isCurrent(a: Action, ctx: AppContext): boolean {
+  const st = a.state?.(ctx);
+  return st === 'active' || (st === 'on' && !isToggle(a));
 }
 
 export function projectPalette(actions: Action[], ctx: AppContext, platform?: Platform): PaletteItem[] {
@@ -51,6 +71,7 @@ export function projectPalette(actions: Action[], ctx: AppContext, platform?: Pl
       kbds: kbds.length ? kbds : undefined,
       keywords: (a.aliases ?? []).join(' '),
       action: a,
+      current: isCurrent(a, ctx) || undefined,
     });
   }
   return out;
@@ -112,7 +133,10 @@ export function rankPalette(items: PaletteItem[], query: string, recent: string[
     let s = l.score ? 20000 + l.score : 0;
     let idx = l.index >= 0 ? l.index : 999;
     if (!l.score) {
-      const k = q.length >= 2 ? fuzzyScore(q, it.keywords.toLowerCase()).score : 0;
+      // Aliases match as a substring or word initials only: a loose subsequence there
+      // turns "wall" into "sho(w all) settings".
+      const ks = q.length >= 2 ? fuzzyScore(q, it.keywords.toLowerCase()).score : 0;
+      const k = ks >= 700 ? ks : 0;
       const c = fuzzyScore(q, it.category.toLowerCase()).score;
       s = k ? 10000 + k : c;
       idx = 999;

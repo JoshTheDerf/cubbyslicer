@@ -5,10 +5,11 @@ import type { CommandPaletteGroup, CommandPaletteItem } from '@nuxt/ui';
 import { currentPresets } from '../presets/store';
 import { buildSearchIndex, searchSettings } from './search';
 import { jumpToSetting, settingsLayout } from './useLayout';
+import { panelRequest } from './uiState';
 
 const open = defineModel<boolean>('open', { default: false });
 const term = ref('');
-watch(open, (o) => { if (o) term.value = ''; });
+watch(open, (o) => { if (o) { term.value = panelRequest.searchTerm; panelRequest.searchTerm = ''; } });
 
 const TAB_LABEL = { process: 'Process', filament: 'Filament', printer: 'Printer' } as const;
 const TAB_ICON = { process: 'i-lucide-layers', filament: 'i-lucide-disc', printer: 'i-lucide-printer' } as const;

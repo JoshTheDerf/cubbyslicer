@@ -22,6 +22,14 @@ From left to right, the top bar has:
 
 After slicing, the bar shows the print time (and weight on wide screens). The slice button turns into "Sliced" and Export G-code becomes the main button. On a phone the bar keeps only the sidebar and menu buttons, the view switch and the slice controls.
 
+## Command palette
+
+Ctrl+K (⌘K on a Mac) opens the command palette.
+
+- **Empty search:** it lists your recent commands, then every command by menu.
+- **Typing:** it lists matching commands, then matching settings with where each one lives (for example "Process › Strength › Infill"). Pick a setting to go straight to it, highlighted. When more settings match than fit, "Search all settings" opens the full settings search with what you typed.
+- **Toggles:** they say what choosing them will do ("Hide travel moves", "Turn off dim layers below top"). The selected option of a set, such as the settings mode or the camera, is marked "current".
+
 ## Plate toolbar
 
 Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on face), transform, modify (cut, mesh boolean, text), print adjustments (painting, variable layer height, brim ears) and measure. The four paint tools share the brush button's menu; L, P, N and H still open them directly. In a narrow window the groups that don't fit move into the ⋯ menu at the end.

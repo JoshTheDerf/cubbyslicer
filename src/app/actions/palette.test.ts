@@ -26,6 +26,33 @@ describe('palette projection', () => {
   });
 });
 
+describe('palette labels for stateful actions', () => {
+  const ctx = fixtureContext({});
+  const mk = (id: string, title: string, on: boolean, aliases: string[] = []) =>
+    ({ id, title, category: 'Preview', aliases, state: () => (on ? 'on' : 'off'), run: () => {} }) as unknown as (typeof ACTIONS)[number];
+  const label = (a: (typeof ACTIONS)[number]) => projectPalette([a], ctx, 'other')[0];
+
+  it('says what a toggle will do', () => {
+    expect(label(mk('preview.toggle.travel', 'Show travel moves', true)).label).toBe('Hide travel moves');
+    expect(label(mk('preview.toggle.travel', 'Show travel moves', false)).label).toBe('Show travel moves');
+    expect(label(mk('preview.toggle.dimBelow', 'Dim layers below top', true)).label).toBe('Turn off dim layers below top');
+    expect(label(mk('preview.toggle.dimBelow', 'Dim layers below top', true)).current).toBeUndefined();
+  });
+
+  it('marks the selected choice of a set instead of "Go to"', () => {
+    const on = label(mk('settings.mode.simple', 'Simple settings mode', true));
+    expect(on.label).toBe('Simple settings mode');
+    expect(on.current).toBe(true);
+    expect(label(mk('settings.mode.expert', 'Expert settings mode', false)).current).toBeUndefined();
+  });
+
+  it('matches aliases only as a substring or initials', () => {
+    const items = projectPalette([mk('settings.mode.simple', 'Simple settings mode', false, ['show all settings'])], ctx, 'other');
+    expect(rankPalette(items, 'wall')).toEqual([]);
+    expect(rankPalette(items, 'show all').map((i) => i.id)).toEqual(['settings.mode.simple']);
+  });
+});
+
 describe('palette ranking', () => {
   const items = projectPalette(ACTIONS, fixtureContext({ slice: { available: true, busy: false, hasResult: true, stale: false } }), 'other');
   const top = (q: string, recent: string[] = []) => rankPalette(items, q, recent)[0]?.id;
