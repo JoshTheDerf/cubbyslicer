@@ -16,19 +16,34 @@
     </div>
 
     <template v-else>
-      <UTooltip v-if="status === 'error' && error" :text="error" :content="{ side: 'bottom' }">
-        <UBadge color="error" variant="subtle" icon="i-lucide-circle-x" :label="compact ? undefined : 'Slicing failed'" class="cursor-default" />
-      </UTooltip>
+      <!-- A popover, not a tooltip: the reason has to be readable on touch screens too. -->
+      <UPopover v-if="status === 'error' && error" :content="{ side: 'bottom', align: 'end' }">
+        <UButton color="error" variant="soft" size="sm" icon="i-lucide-circle-x" :label="compact ? undefined : 'Slicing failed'" aria-label="Slicing failed: show why" />
+        <template #content>
+          <div class="p-3 max-w-sm text-xs space-y-2">
+            <p class="font-semibold text-highlighted">Slicing failed</p>
+            <p class="text-toned whitespace-pre-wrap break-words max-h-48 overflow-auto">{{ error }}</p>
+            <div class="flex justify-end gap-1">
+              <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-copy" label="Copy" @click="copyError" />
+              <UButton size="xs" color="primary" variant="soft" icon="i-lucide-rotate-cw" label="Try again" :disabled="!canSlice" @click="slice()" />
+            </div>
+          </div>
+        </template>
+      </UPopover>
 
-      <UPopover v-if="problems.length" :content="{ side: 'bottom', align: 'end' }">
+      <UPopover v-if="problems.length" v-model:open="problemsOpen" :content="{ side: 'bottom', align: 'end' }">
         <UButton color="warning" variant="soft" size="sm" icon="i-lucide-triangle-alert"
                  :label="compact ? String(problems.length) : `${problems.length} setting${problems.length > 1 ? 's' : ''} to fix`" />
         <template #content>
-          <div class="p-3 max-w-sm text-xs space-y-1">
-            <p class="font-semibold text-highlighted">These settings block slicing</p>
-            <ul class="list-disc ps-4 text-warning space-y-0.5">
-              <li v-for="(p, i) in problems" :key="i">{{ p }}</li>
-            </ul>
+          <div class="p-2 max-w-sm text-xs">
+            <p class="px-1 pb-1 font-semibold text-highlighted">These settings block slicing</p>
+            <!-- Each one opens its setting (in the sidebar or the printer / filament settings). -->
+            <button v-for="(p, i) in problems" :key="i" type="button" class="problem" :title="`Go to ${p.label}`" @click="goTo(p.key)">
+              <UIcon name="i-lucide-triangle-alert" class="size-3.5 shrink-0 text-warning mt-px" />
+              <span class="min-w-0 flex-1"><span class="font-medium text-highlighted">{{ p.label }}{{ p.index !== undefined ? ` [${p.index + 1}]` : '' }}</span>
+                <span class="block text-toned">{{ p.message }}</span></span>
+              <UIcon name="i-lucide-arrow-right" class="size-3.5 shrink-0 text-dimmed mt-px" />
+            </button>
           </div>
         </template>
       </UPopover>
@@ -62,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { useSliceController } from './slice';
 import { lastSlice, resolvedConfig } from './state';
 import { getSliceObjects, objects, plates } from '../project/store';
@@ -71,6 +86,8 @@ import { bindingTokensOf } from './shell/useActions';
 import PrintHostButton from '../printhost/PrintHostButton.vue';
 import { hostReady } from '../printhost/store';
 import { compact, narrow, phone } from './shell/uiState';
+import { jumpToSetting } from '../settings/useLayout';
+import { toast } from '../ui';
 
 const { status, progress, message, error, isStale, slice, sliceAll, cancel, exportGcode, exportAllGcode, plateStates } = useSliceController();
 
@@ -87,8 +104,12 @@ const allProblems = computed<ConfigProblem[]>(() => {
   void resolvedConfig.value; // re-evaluate when config changes
   try { return getConfigProblems(); } catch { return []; }
 });
-const fmtProblem = (p: ConfigProblem) => `${p.label}${p.index !== undefined ? ` [${p.index + 1}]` : ''}: ${p.message}`;
-const problems = computed(() => allProblems.value.filter((p) => p.severity === 'error').map(fmtProblem));
+const problems = computed(() => allProblems.value.filter((p) => p.severity === 'error'));
+const problemsOpen = ref(false);
+function goTo(key: string): void { problemsOpen.value = false; void nextTick(() => jumpToSetting(key)); }
+function copyError(): void {
+  void navigator.clipboard?.writeText(error.value ?? '').then(() => toast.info('Copied the error.'), () => {});
+}
 /** The active plate's slice is current: nothing left to slice. */
 const sliced = computed(() => !!lastSlice.value && !isStale.value && status.value !== 'slicing' && status.value !== 'error');
 const hasObjects = computed(() => { void objects.value; return getSliceObjects().length > 0; });
@@ -107,5 +128,9 @@ function fmtTime(s: number): string {
 </script>
 
 <style scoped>
+.problem {
+  display: flex; gap: 6px; width: 100%; padding: 5px 4px; border-radius: 4px; text-align: start; cursor: pointer; line-height: 1.35;
+}
+.problem:hover, .problem:focus-visible { background: var(--ui-bg-elevated); outline: none; }
 @media (max-width: 760px) { .export-btn :deep(span:not(:first-child)) { display: none; } }
 </style>

@@ -40,6 +40,20 @@ const groups = computed<Array<[string, Row[]]>>(() => {
   ]]);
   return ordered;
 });
+/** Filter by command name, group or key ("ctrl", "shift+d"). */
+const scFilter = ref('');
+watch(() => ui.shortcutsOpen, (o) => { if (o) scFilter.value = ''; });
+const shownGroups = computed(() => {
+  const q = scFilter.value.trim().toLowerCase();
+  if (!q) return groups.value;
+  const out: Array<[string, Row[]]> = [];
+  for (const [g, list] of groups.value) {
+    const rows = g.toLowerCase().includes(q) ? list
+      : list.filter((r) => r.label.toLowerCase().includes(q) || r.keys.join('+').toLowerCase().includes(q.replace(/\s+/g, '')) || r.note?.toLowerCase().includes(q));
+    if (rows.length) out.push([g, rows]);
+  }
+  return out;
+});
 
 // Orca "Set number of instances": the total for each selected object's instance group.
 const instTarget = computed(() => {
@@ -71,8 +85,13 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
 <template>
   <UModal v-model:open="ui.shortcutsOpen" title="Keyboard shortcuts" :ui="{ content: 'sm:max-w-3xl' }">
     <template #body>
+      <UInput v-model="scFilter" icon="i-lucide-search" size="sm" placeholder="Find a command or key…" spellcheck="false" autofocus
+              aria-label="Find a shortcut" class="mb-3 w-full sm:w-72" />
+      <!-- A steady height, so the dialog doesn't jump while the list narrows. -->
+      <div class="sc__body">
+      <p v-if="!shownGroups.length" class="text-sm text-dimmed">No shortcut matches “{{ scFilter }}”.</p>
       <div class="sc">
-        <section v-for="[g, list] in groups" :key="g">
+        <section v-for="[g, list] in shownGroups" :key="g">
           <h3>{{ g }}</h3>
           <dl>
             <template v-for="r in list" :key="r.label">
@@ -81,6 +100,7 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
             </template>
           </dl>
         </section>
+      </div>
       </div>
     </template>
   </UModal>
@@ -136,6 +156,7 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
 </template>
 
 <style scoped>
+.sc__body { min-height: min(560px, 60vh); }
 .sc { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 28px; }
 .sc h3, .about h3 { margin: 12px 0 6px; font: 600 var(--fs-sm) var(--font); color: var(--fg-0); }
 .sc section:first-child h3, .sc section:nth-child(2) h3 { margin-top: 0; }

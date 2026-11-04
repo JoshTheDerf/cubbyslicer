@@ -1,22 +1,21 @@
 <script setup lang="ts">
-/** Bottom-left plate summary: object/triangle counts and placement problems. */
+/** Bottom-left plate summary: object/triangle counts and placement problems (click one to select those objects). */
 import { computed } from 'vue';
-import { objectIssues, objects, plateStats } from '../../project/store';
+import { objectIssues, objects, plateStats, select } from '../../project/store';
+
+const KINDS = [
+  { issue: 'outside', what: 'outside the plate', blocking: true },
+  { issue: 'height', what: 'too tall', blocking: true },
+  { issue: 'exclude', what: 'in an excluded area', blocking: true },
+  { issue: 'overlap', what: 'overlapping', blocking: false },
+] as const;
 
 const summary = computed(() => {
-  let outside = 0, height = 0, exclude = 0, overlap = 0;
-  for (const l of objectIssues.value.values()) {
-    if (l.includes('outside')) outside++;
-    if (l.includes('height')) height++;
-    if (l.includes('exclude')) exclude++;
-    if (l.includes('overlap')) overlap++;
+  const s: Array<{ text: string; blocking: boolean; ids: string[] }> = [];
+  for (const k of KINDS) {
+    const ids = [...objectIssues.value].filter(([, l]) => l.includes(k.issue)).map(([id]) => id);
+    if (ids.length) s.push({ text: `${ids.length} object${ids.length > 1 ? 's' : ''} ${k.what}`, blocking: k.blocking, ids });
   }
-  const s: Array<{ text: string; blocking: boolean }> = [];
-  const n = (k: number, what: string) => `${k} object${k > 1 ? 's' : ''} ${what}`;
-  if (outside) s.push({ text: n(outside, 'outside the plate'), blocking: true });
-  if (height) s.push({ text: n(height, 'too tall'), blocking: true });
-  if (exclude) s.push({ text: n(exclude, 'in an excluded area'), blocking: true });
-  if (overlap) s.push({ text: n(overlap, 'overlapping'), blocking: false });
   return s;
 });
 const tris = computed(() => {
@@ -30,7 +29,8 @@ const tris = computed(() => {
     <UBadge color="neutral" variant="subtle" size="sm" class="bg-default/80 text-muted font-normal">
       {{ objects.length }} object{{ objects.length > 1 ? 's' : '' }}, {{ tris }} triangles
     </UBadge>
-    <UBadge v-for="s in summary" :key="s.text" :color="s.blocking ? 'warning' : 'neutral'" variant="subtle" size="sm"
-            icon="i-lucide-triangle-alert" :label="s.text" class="font-normal" />
+    <UButton v-for="s in summary" :key="s.text" :color="s.blocking ? 'warning' : 'neutral'" variant="subtle" size="xs"
+             icon="i-lucide-triangle-alert" :label="s.text" class="pointer-events-auto font-normal"
+             :title="`Select ${s.ids.length > 1 ? 'them' : 'it'}`" @click="select(s.ids)" />
   </div>
 </template>

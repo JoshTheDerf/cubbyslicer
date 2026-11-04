@@ -32,6 +32,8 @@ From left to right, the top bar has:
 
 After slicing, the bar shows the print time (and weight on wide screens). The slice button turns into "Sliced" and Export G-code becomes the main button. On a phone the bar keeps only the sidebar and menu buttons, the view switch and the slice controls.
 
+When a setting has an invalid value, the slice controls show "N settings to fix" and slicing is blocked. Click it for the list, and click a setting there to go to it. When slicing fails, click "Slicing failed" for the reason, with Copy and Try again.
+
 ## Command palette
 
 Ctrl+K (⌘K on a Mac) opens the command palette.
@@ -40,13 +42,15 @@ Ctrl+K (⌘K on a Mac) opens the command palette.
 - **Typing:** it lists matching commands, then matching settings with where each one lives (for example "Process › Strength › Infill"). Pick a setting to go straight to it, highlighted. When more settings match than fit, "Search all settings" opens the full settings search with what you typed.
 - **Toggles:** they say what choosing them will do ("Hide travel moves", "Turn off dim layers below top"). The selected option of a set, such as the settings mode or the camera, is marked "current".
 
+Help → Keyboard shortcuts lists every shortcut; type in its search box to find one by name or by key ("ctrl+d").
+
 ## Plate toolbar
 
 Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on face), transform, modify (cut, mesh boolean, text), print adjustments (painting, variable layer height, brim ears) and measure. The four paint tools share the brush button's menu; L, P, N and H still open them directly. In a narrow window the groups that don't fit move into the ⋯ menu at the end.
 
 ## Plates
 
-The plate bar (bottom centre) has a tab per plate. Each tab shows its object count, a warning if something on it won't print as placed, a lock, a settings icon if it has plate settings, and its slice state. Click a tab to go to that plate, double-click it to rename it, or use the arrow keys when a tab has focus. The active tab's ⌃ button, or a right-click on any tab, opens that plate's menu, which lists only what applies: slice, export its G-code once sliced, arrange, auto orient, select its objects, move the selection there, rename, lock, plate settings and delete. With more tabs than fit, the bar scrolls and keeps the active plate and the + button in view.
+The plate bar (bottom centre) has a tab per plate. Each tab shows its object count, a warning if something on it won't print as placed, a lock, a settings icon if it has plate settings, and its slice state. Click a tab to go to that plate, double-click it to rename it, or use the arrow keys when a tab has focus. The active tab's ⌃ button, or a right-click on any tab, opens that plate's menu, which lists only what applies: slice, export its G-code once sliced, arrange, auto orient, select its objects, move the selection there, rename, lock, plate settings and delete. With more tabs than fit, the bar scrolls and keeps the active plate and the + button in view. Bottom left, the plate summary counts objects that are outside the plate, too tall, in an excluded area or overlapping; click one of those to select the objects it counts.
 
 ## Preview
 
