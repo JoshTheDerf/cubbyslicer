@@ -34,6 +34,10 @@ After slicing, the bar shows the print time (and weight on wide screens). The sl
 
 When a setting has an invalid value, the slice controls show "N settings to fix" and slicing is blocked. Click it for the list, and click a setting there to go to it. When slicing fails, click "Slicing failed" for the reason, with Copy and Try again.
 
+## Preferences
+
+Ctrl+, (⌘, on a Mac) opens Preferences. Its sections are General, Slicing, Behaviour, Camera and "Clear my choice on…". A preference you've changed gets a ↶ button that puts back its default. "Reset all to defaults" resets everything, and the toast it shows has an Undo. "Clear my choice on…" lists what the app remembers between visits, such as the first-run setup and folded panels, each with its own Clear button. Everything is saved in this browser.
+
 ## Command palette
 
 Ctrl+K (⌘K on a Mac) opens the command palette.
@@ -199,4 +203,4 @@ Chrome's Local Network Access: on `https://cubbycad.com` the browser asks once w
 
 ## Multi-threading
 
-The multi-threaded Orca engine needs a cross-origin isolated page. Force a thread count with `localStorage.setItem('cubby-slicer:engine-threads', 'N')` (`'1'` for single-threaded, `'0'` or unset for automatic).
+The multi-threaded Orca engine needs a cross-origin isolated page. Preferences ▸ Slicing threads sets how many threads it uses: Automatic, single-threaded, or a fixed count. Fewer threads keep the page more responsive while slicing. The next slice uses the new setting. The setting is stored as `cubby-slicer:engine-threads` in localStorage (`'1'` for single-threaded, `'0'` or unset for automatic).

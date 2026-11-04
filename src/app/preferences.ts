@@ -87,6 +87,8 @@ const REMEMBERED_KEYS: Array<{ key: string; label: string }> = [
   { key: 'cubby-slicer:recent-actions', label: 'Recently used commands in the command palette' },
   { key: 'cubby-slicer:layout', label: 'Sidebar width and visibility' },
   { key: 'cubby-slicer:transform-collapsed', label: 'Object manipulation panel collapsed state' },
+  { key: 'cubby.settings.collapsed', label: 'Folded sidebar sections and setting groups' },
+  { key: 'cubby-slicer:legend-folds', label: 'Folded Preview legend sections' },
 ];
 export function registerRememberedChoice(key: string, label: string): void {
   if (!REMEMBERED_KEYS.some((k) => k.key === key)) REMEMBERED_KEYS.push({ key, label });
@@ -97,6 +99,9 @@ export function rememberedChoices(): Array<{ key: string; label: string; set: bo
     try { set = localStorage.getItem(k.key) !== null; } catch { /* ignore */ }
     return { ...k, set };
   });
+}
+export function clearRememberedChoice(key: string): void {
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
 }
 export function resetRememberedChoices(): number {
   let n = 0;

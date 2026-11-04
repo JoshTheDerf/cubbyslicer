@@ -28,9 +28,15 @@ export class SliceCancelled extends Error {
   constructor() { super('Slice cancelled'); this.name = 'SliceCancelled'; }
 }
 
+const THREADS_KEY = 'cubby-slicer:engine-threads';
 /** Engine thread preference (localStorage `cubby-slicer:engine-threads`): 0 = auto, 1 = single-threaded, N = N threads. */
 export function engineThreadsPref(): number {
-  try { const n = Number(localStorage.getItem('cubby-slicer:engine-threads')); return Number.isFinite(n) && n >= 0 ? Math.min(64, Math.floor(n)) : 0; } catch { return 0; }
+  try { const n = Number(localStorage.getItem(THREADS_KEY)); return Number.isFinite(n) && n >= 0 ? Math.min(64, Math.floor(n)) : 0; } catch { return 0; }
+}
+/** Set the thread preference (Preferences); idle engines restart so the next slice uses it. */
+export function setEngineThreadsPref(n: number): void {
+  try { if (n > 0) localStorage.setItem(THREADS_KEY, String(Math.min(64, Math.floor(n)))); else localStorage.removeItem(THREADS_KEY); } catch { /* private mode */ }
+  for (const w of workers.values()) if (w.idle) w.reset(null);
 }
 
 export const ENGINE_LABELS: Record<EngineId, string> = {
@@ -87,6 +93,8 @@ class EngineWorker {
     this.worker = w;
     return w;
   }
+
+  get idle(): boolean { return this.pending.size === 0; }
 
   reset(reason: unknown): void {
     this.worker?.terminate();
