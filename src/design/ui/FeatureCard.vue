@@ -10,7 +10,7 @@ import { bindingTokensOf } from '../../app/shell/useActions';
 import { card, cardProblem, confirmCard, cancelCard, defaultName, runPreview, setCardValue } from '../create';
 import { designKernel } from '../session';
 import type { PickHit, PickValue } from '../pick';
-import { acceptFace, acceptPlaneFace, bodyOptions, datumOptions, planeOptions, sketchOptions, type CardRow, type KernelReads, type Option } from '../tools';
+import { acceptFace, acceptPlaneFace, bodyOptions, coordSysOptions, datumOptions, planeOptions, sketchOptions, type CardRow, type KernelReads, type Option } from '../tools';
 import { readDesign } from '../session';
 import RefField from './RefField.vue';
 import { toast } from '../../ui';
@@ -48,7 +48,8 @@ function optionsOf(r: CardRow): Array<{ value: string | number; label: string }>
   switch (r.kind) {
     case 'enum': return items((d.value[`${r.key}Options`] as Option[] | undefined) ?? r.options ?? []);
     case 'plane': return items(planeOptions(ctx, r.axes));
-    case 'body': return items(bodyOptions(ctx));
+    case 'body': return items(bodyOptions(ctx, r.sheet));
+    case 'coordsys': return items(coordSysOptions(ctx));
     case 'sketch': return items(sketchOptions(ctx, r.helix, r.key === 'sweep_path_ref' ? Number(d.value.sketch_ref) : -1));
     case 'datum': return items(datumOptions(ctx));
     case 'axisDir': return items([['X', 'X'], ['Y', 'Y'], ['Z', 'Z']]);
@@ -92,7 +93,7 @@ const previewIcon = computed(() => ({ ok: 'i-lucide-eye', invalid: 'i-lucide-cir
 
     <form class="fc__grid" @submit.prevent="ok">
       <template v-for="r in rows" :key="r.key">
-        <label class="fc__label" :class="{ 'fc__label--top': r.kind === 'sketches' || r.kind === 'pick' }" :for="`fc-${r.key}`">{{ r.label }}<span v-if="r.unit && r.kind !== 'bool'" class="fc__unit"> ({{ r.unit }})</span></label>
+        <label class="fc__label" :class="{ 'fc__label--top': r.kind === 'sketches' || r.kind === 'pick' }" :for="`fc-${r.key}`">{{ r.labelOf ? r.labelOf(d) : r.label }}<span v-if="r.unit && r.kind !== 'bool'" class="fc__unit"> ({{ r.unit }})</span></label>
         <div class="fc__ctl" :data-field="r.key">
           <UInput v-if="r.kind === 'number' || r.kind === 'int'" :id="`fc-${r.key}`" :model-value="numText(d[r.key])" type="number" size="sm" class="fc__in"
                   :step="r.kind === 'int' ? 1 : 'any'" :min="r.min" :max="r.max" inputmode="decimal" @update:model-value="setNum(r.key, $event, r.kind === 'int')" @keydown.enter.prevent="ok" />
@@ -124,9 +125,10 @@ const previewIcon = computed(() => ({ ok: 'i-lucide-eye', invalid: 'i-lucide-cir
           </div>
           <USelectMenu v-else-if="r.kind === 'standard'" :id="`fc-${r.key}`" :model-value="d[r.key] as string" :items="standardItems(r)" value-key="value" label-key="label"
                        size="sm" class="fc__in" :search-input="{ placeholder: 'M6, 1/4-20…' }" @update:model-value="set(r.key, $event)" />
-          <USelect v-else :id="`fc-${r.key}`" :model-value="d[r.key] as string | number" :items="optionsOf(r)" value-key="value" label-key="label" size="sm" class="fc__in"
+          <USelect v-else :id="`fc-${r.key}`" :model-value="d[r.key] as string | number" :items="optionsOf(r)" value-key="value" label-key="label" size="sm" class="fc__in w-full" :ui="{ value: 'truncate' }"
                    @update:model-value="set(r.key, $event)" />
         </div>
+        <p v-if="r.hint" class="fc__rowhint">{{ r.hint }}</p>
       </template>
     </form>
 
@@ -157,15 +159,16 @@ const previewIcon = computed(() => ({ ok: 'i-lucide-eye', invalid: 'i-lucide-cir
 .fc__type { font-size: var(--fs-xs); color: var(--fg-2); }
 .fc__hint { margin: 0; font-size: var(--fs-sm); color: var(--fg-1); line-height: 1.35; }
 .fc__grid { display: grid; grid-template-columns: minmax(84px, auto) minmax(0, 1fr); gap: 6px 10px; align-items: center; }
-.fc__label { font-size: var(--fs-sm); color: var(--fg-1); }
+.fc__label { font-size: var(--fs-sm); color: var(--fg-1); max-width: 116px; }
 .fc__label--top { align-self: start; padding-top: 4px; }
 .fc__unit { color: var(--fg-2); }
 .fc__ctl { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.fc__in { flex: 1; min-width: 0; }
+.fc__in { flex: 1; min-width: 0; max-width: 100%; overflow: hidden; }
 .fc__vec { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; flex: 1; min-width: 0; }
 .fc__plane { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .fc__plane--row { flex-direction: row; align-items: center; }
 .fc__bodypick { flex: none; }
+.fc__rowhint { grid-column: 1 / -1; margin: -2px 0 0; font-size: var(--fs-xs); color: var(--fg-2); line-height: 1.35; }
 .fc__checks { display: flex; flex-direction: column; gap: 4px; }
 .fc__error { display: flex; gap: 8px; padding: 8px; border-radius: var(--radius-sm); font-size: var(--fs-sm); line-height: 1.35;
   color: var(--fg-0); background: color-mix(in srgb, var(--danger) 14%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); }

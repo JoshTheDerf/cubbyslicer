@@ -19,6 +19,7 @@ import { designUi, pickEdges, toggleSetEdge } from './state';
 import { exactBuild, splitScale, addPrimitiveBody } from './primitives';
 import { importStepToDesign, meshBlob } from './io';
 import { CREATE_TOOLS, flipFrame, frameFromAxis, inFrame, nearestThread } from './tools';
+import { entity, line, loopEntityIndices, regionAt, regionLoops } from './sketch/model';
 import type { Mat4 } from '../project/math';
 
 let fake: FakeKernel;
@@ -244,6 +245,186 @@ describe('offer menu', () => {
     await openProject(FakeKernel.recipe([{ type: 'Sketch' }, box()]));
     const row = offerItems({ kind: 'body', body: 0 }, {}, noop).flat().flatMap((i) => [i, ...(i.children ?? []).flat()]).find((i) => /^Interference/.test(i.label));
     expect(row).toMatchObject({ label: 'Interference needs at least two bodies', disabled: true });
+  });
+});
+
+describe('coordinate systems and mates (Orca 2.5 Coordinate system / Mate cards)', () => {
+  const noop = { renameBody: () => {}, colorBody: () => {}, deleteBody: () => {}, zoom: () => {}, editFeature: () => {} };
+  const flatItems = (g: ReturnType<typeof offerItems>) => g.flat().flatMap((i) => [i, ...(i.children ?? []).flat()]);
+  const lastFeature = () => [...fake.docs.values()][0].features.at(-1)!;
+
+  it('Coordinate system: a world point by default; picking a face makes it face + direction (Orca), with the edge on the same body', async () => {
+    await openProject(twoBodies());
+    expect(await openCard('coordsys', { pick: null })).toBeNull();
+    expect(card.draft).toMatchObject({ coordsys_type: 'PointWorld', coordsys_point: [0, 0, 0], coordsys_x_hint: [1, 0, 0] });
+    expect(card.preview.text).toBe('Coordinate system ready');
+    await setCardValue('coordsys_point', [5, 6, 7]);
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'CoordSys', name: 'Coordinate system 5', coordsys_type: 'PointWorld', coordsys_point: [5, 6, 7], coordsys_face: -1 });
+    // A face pick switches the type; an edge on another body is refused.
+    await openCard('coordsys', { pick: null });
+    await setCardValue('face', { body: 1, ids: [1], generation: design.generation });
+    expect(card.draft.coordsys_type).toBe('FaceAndDirection');
+    await setCardValue('edge', { body: 0, ids: [2], generation: design.generation });
+    expect(cardProblem()).toBe('The face and the edge must be on the same body');
+    await setCardValue('edge', { body: 1, ids: [2], generation: design.generation });
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'CoordSys', coordsys_type: 'FaceAndDirection', coordsys_body: 1, coordsys_face: 1, coordsys_edge: 2, coordsys_x_hint: [1, 0, 0] });
+    // Face + direction with no face is refused on the card.
+    await openCard('coordsys', { pick: null, prefill: { coordsys_type: 'FaceAndDirection' } });
+    expect(cardProblem()).toBe('Pick the face for the coordinate system');
+  });
+
+  it('the offer on a flat face prefills the face; nothing picked offers it too', async () => {
+    await openProject(twoBodies());
+    const pick = { kind: 'face' as const, body: 0, face: 1, generation: design.generation };
+    const row = flatItems(offerItems(pick, { surface: 'plane' }, noop)).find((i) => i.label === 'Coordinate system');
+    expect(row?.kbds).toEqual(['shift', 'c']);
+    expect(flatItems(offerItems(null, {}, noop)).some((i) => i.label === 'Coordinate system')).toBe(true);
+    await openCard('coordsys', { pick });
+    expect(card.draft).toMatchObject({ coordsys_type: 'FaceAndDirection', face: { body: 0, ids: [1] } });
+  });
+
+  it('Mate: needs two coordinate systems, A and B must differ, the Offset row is retitled by kind', async () => {
+    const cs = (name: string, extra: Record<string, unknown> = {}) => ({ type: 'CoordSys' as const, name, coordsys_type: 'FaceAndDirection', coordsys_body: 0, coordsys_face: 1, ...extra });
+    await openProject(twoBodies());
+    expect(await openCard('mate')).toBe('Mate needs two coordinate systems — create them first');
+    const pick = { kind: 'face' as const, body: 0, face: 1, generation: design.generation };
+    expect(flatItems(offerItems(pick, { surface: 'plane' }, noop)).find((i) => /^Mate/.test(i.label))).toMatchObject({ label: 'Mate needs two coordinate systems — create them first', disabled: true });
+    await openProject(FakeKernel.recipe([{ type: 'Sketch', name: 'Sketch 1' }, { ...box(), name: 'Base' }, { type: 'Sketch', name: 'Sketch 3' }, { ...box({ sketch_ref: 2 }), name: 'Knob' }, cs('CS A'), cs('CS B', { coordsys_body: 1 })]));
+    expect(design.features.map((f) => f.type).slice(-2)).toEqual(['CoordSys', 'CoordSys']);
+    expect(flatItems(offerItems(pick, { surface: 'plane' }, noop)).find((i) => i.label === 'Mate')?.disabled).toBeFalsy();
+    expect(await openCard('mate')).toBeNull();
+    // Orca selects the first coordinate system in both pickers.
+    expect(card.draft).toMatchObject({ mate_kind: 0, mate_cs_a: 4, mate_cs_b: 4, mate_offset: 0, mate_angle: 0, mate_flip: false });
+    expect(cardProblem()).toBe('Mate: A and B must be different coordinate systems');
+    const offsetRow = card.tool!.rows.find((r) => r.key === 'mate_offset')!;
+    expect(offsetRow.labelOf!(card.draft)).toBe('Offset');
+    await setCardValue('mate_kind', 1);
+    expect(offsetRow.labelOf!(card.draft)).toBe('Plane distance');
+    await setCardValue('mate_kind', 2);
+    expect(offsetRow.labelOf!(card.draft)).toBe('Axial position');
+    await setCardValue('mate_cs_b', 5);
+    await setCardValue('mate_offset', 3);
+    await setCardValue('mate_flip', true);
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'Mate', name: 'Mate 7', mate_kind: 2, mate_cs_a: 4, mate_cs_b: 5, mate_offset: 3, mate_angle: 0, mate_flip: true });
+  });
+
+  it('a mate the kernel refuses keeps the card open with its reason', async () => {
+    await openProject(FakeKernel.recipe([{ type: 'Sketch' }, box(), { type: 'CoordSys', name: 'P', coordsys_type: 'PointWorld' }, { type: 'CoordSys', name: 'Q', coordsys_type: 'PointWorld' }]));
+    await openCard('mate');
+    await setCardValue('mate_cs_b', 3);
+    const r = await confirmCard();
+    expect(r.ok).toBe(false);
+    expect(card.error).toMatch(/mate_cs_b has no associated body/);
+    expect(design.features.length).toBe(4);
+  });
+});
+
+describe('extruding one region of a sketch (Orca’s loop pick)', () => {
+  // A 40 × 30 plate outline with a Ø10 hole, and a separate Ø8 circle beside it; one construction line.
+  const ents = [
+    line([0, 0], [40, 0]), line([40, 0], [40, 30]), line([40, 30], [0, 30]), line([0, 30], [0, 0]),
+    entity('circle', { center: [20, 15], radius: 5 }), entity('circle', { center: [60, 15], radius: 4 }), { ...line([0, 0], [60, 15]), construction: true },
+  ];
+  it('region_loops: chained outline, circles, a hole in the smallest loop around it; construction ignored', () => {
+    const loops = regionLoops(ents);
+    expect(loops.map((l) => l.ents)).toEqual([[4], [5], [0, 1, 2, 3]]);
+    expect(loops[2].holes).toEqual([0]);
+    expect(regionAt(loops, [5, 5])).toBe(2);
+    expect(regionAt(loops, [20, 15])).toBe(0);
+    expect(regionAt(loops, [60, 15])).toBe(1);
+    expect(regionAt(loops, [50, 0])).toBe(-1);
+    expect(loopEntityIndices(loops, 2)).toEqual([0, 1, 2, 3, 4]);
+    expect(loopEntityIndices(loops, 1)).toEqual([5]);
+  });
+
+  it('the Extrude card builds just the picked region on the sketch’s plane (sketch_ref -1), or the whole sketch when unticked', async () => {
+    const plane = { origin: [0, 0, 0], normal: [0, 0, 1], x_axis: [1, 0, 0], y_axis: [0, 1, 0] };
+    await openProject(FakeKernel.recipe([{ type: 'Sketch', name: 'Plate', entities: ents, plane } as never, { type: 'Sketch', name: 'Other' }]));
+    designUi.selected = [0];
+    designUi.region = { sketch: 0, region: 2 };
+    expect(await openCard('extrude')).toBeNull();
+    expect(card.draft).toMatchObject({ sketch_ref: 0, loop: { sketch: 0, region: 2 }, loopOnly: true });
+    expect(card.tool!.rows.find((r) => r.key === 'loopOnly')!.when!(card.draft)).toBe(true);
+    expect((await confirmCard()).ok).toBe(true);
+    const f = [...fake.docs.values()][0].features.at(-1)!;
+    expect(f).toMatchObject({ type: 'Extrude', sketch_ref: -1, plane });
+    expect((f.entities as unknown[]).length).toBe(5);
+    // Another sketch chosen: the region no longer applies; unticked: the whole sketch.
+    await openCard('extrude');
+    await setCardValue('sketch_ref', 1);
+    expect(card.tool!.rows.find((r) => r.key === 'loopOnly')!.when!(card.draft)).toBe(false);
+    await setCardValue('sketch_ref', 0);
+    await setCardValue('loopOnly', false);
+    expect((await confirmCard()).ok).toBe(true);
+    expect([...fake.docs.values()][0].features.at(-1)).toMatchObject({ type: 'Extrude', sketch_ref: 0 });
+    // No region picked: Extrude follows the sketch as before.
+    designUi.region = null;
+    await openCard('extrude');
+    expect(card.draft).toMatchObject({ loop: null, loopOnly: false });
+  });
+});
+
+describe('surface cards (Orca 2.5 Surface drawer)', () => {
+  const noop = { renameBody: () => {}, colorBody: () => {}, deleteBody: () => {}, zoom: () => {}, editFeature: () => {} };
+  const labels = (g: ReturnType<typeof offerItems>) => g.flat().flatMap((i) => [i.label, ...(i.children ?? []).flat().map((c) => c.label)]);
+  const lastFeature = () => [...fake.docs.values()][0].features.at(-1)!;
+
+  it('Surface Extrude makes a sheet body; Thicken Surface and Surface Offset list only sheet bodies', async () => {
+    await openProject(twoBodies());
+    expect(await openCard('thicken_surf')).toBe('No sheet body to thicken — create a surface feature first');
+    expect(await openCard('surf_offset')).toBe('No sheet body to offset — create a surface feature first');
+    expect(await openCard('surf_extrude')).toBeNull();
+    expect(card.draft).toMatchObject({ sketch_ref: 2, distance: 10 });
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'SurfaceExtrude', name: 'Surface Extrude 5', sketch_ref: 2, distance: 10 });
+    expect(design.bodies.at(-1)).toMatchObject({ index: 2, is_solid: false });
+    // The offer on the sheet body.
+    const l = labels(offerItems({ kind: 'body', body: 2 }, {}, noop));
+    expect(l).toContain('Thicken Surface');
+    expect(l).toContain('Surface Offset');
+    expect(labels(offerItems({ kind: 'body', body: 0 }, {}, noop))).not.toContain('Thicken Surface');
+    await openCard('surf_offset', { pick: null });
+    expect(card.draft).toMatchObject({ target_body: 2, plane_offset: 1 });
+    await setCardValue('plane_offset', -0.5);
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'SurfaceOffset', target_body: 2, plane_offset: -0.5 });
+    await openCard('thicken_surf', { pick: { kind: 'body', body: 2 } });
+    expect(card.draft).toMatchObject({ target_body: 2, thicken_thickness: 1, thicken_flip: false });
+    await setCardValue('target_body', 0);
+    expect(cardProblem()).toBe('Choose a sheet body to thicken');
+    await setCardValue('target_body', 2);
+    await setCardValue('thicken_thickness', 2);
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'ThickenSurface', target_body: 2, thicken_thickness: 2, thicken_flip: false });
+    expect(design.bodies[2].is_solid).toBe(true);
+  });
+
+  it('Surface Revolve (axis like Revolve), Surface Loft (2+ profiles), Surface Fill', async () => {
+    await openProject(twoBodies());
+    await openCard('surf_revolve');
+    expect(card.draft).toMatchObject({ sketch_ref: 2, revolve_angle: 360, axis: 'x', flip: false });
+    await setCardValue('axis', 'y');
+    await setCardValue('revolve_angle', 180);
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'SurfaceRevolve', sketch_ref: 2, revolve_angle: 180, revolve_axis: 1, revolve_axis_entity: -1, flip: false });
+    await openCard('surf_loft');
+    expect(cardProblem()).toBe('Check at least two profile sketches to loft');
+    await setCardValue('loft_profile_refs', [2, 0]);
+    await setCardValue('loft_ruled', true);
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'SurfaceLoft', loft_profile_refs: [0, 2], loft_ruled: true });
+    await openCard('surf_fill');
+    expect((await confirmCard()).ok).toBe(true);
+    expect(lastFeature()).toMatchObject({ type: 'SurfaceFill', sketch_ref: 2 });
+  });
+
+  it('the cards are in the Surface group with Orca’s keys', async () => {
+    const { TOOL_GROUPS } = await import('./tools');
+    expect(TOOL_GROUPS.map((g) => g.label)).toContain('Surface');
+    expect(CREATE_TOOLS.filter((t) => t.group === 'surface').map((t) => t.title)).toEqual(['Surface Extrude', 'Surface Revolve', 'Surface Loft', 'Surface Fill', 'Surface Offset', 'Thicken Surface']);
   });
 });
 

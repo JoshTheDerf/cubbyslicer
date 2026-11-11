@@ -36,12 +36,17 @@ const KEYS: Partial<Record<string, Omit<KeyBinding, 'scope'>>> = {
   extrude: { key: 'e', shift: true }, revolve: { key: 'r', shift: true }, sweep: { key: 'w', shift: true }, loft: { key: 'l', shift: true },
   fillet: { key: 'f', shift: true }, draft: { key: 'd', shift: true }, shell: { key: 'k', shift: true }, hole: { key: 'h', shift: true }, thread: { key: 't', shift: true },
   pattern: { key: 'n', shift: true }, mirror: { key: 'z', shift: true }, transform: { key: 'y', shift: true }, boolean: { key: 'b', shift: true }, cut: { key: 'x', shift: true },
-  plane: { key: 'p', shift: true }, axis: { key: 'a', shift: true },
+  plane: { key: 'p', shift: true }, axis: { key: 'a', shift: true }, coordsys: { key: 'c', shift: true },
+  surf_extrude: { key: 'g', shift: true }, surf_revolve: { key: 'j', shift: true }, surf_loft: { key: 'o', shift: true }, surf_fill: { key: 'q', shift: true },
+  surf_offset: { key: 'u', shift: true }, thicken_surf: { key: 'v', shift: true },
 };
 const ALIASES: Partial<Record<string, string[]>> = {
   fillet: ['round', 'chamfer', 'bevel', 'edge'], shell: ['hollow'], hole: ['drill', 'counterbore', 'countersink', 'bolt'], thread: ['screw', 'tap', 'metric'],
   pattern: ['array', 'repeat', 'circular', 'linear'], transform: ['move', 'rotate'], boolean: ['union', 'subtract', 'join', 'intersect', 'combine'],
   cut: ['split', 'slice'], plane: ['datum', 'reference plane'], axis: ['datum axis'], pushpull: ['press pull', 'extrude face', 'offset face'], deleteface: ['remove face', 'defeature'],
+  coordsys: ['csys', 'datum coordinate system', 'mate connector', 'frame'], mate: ['assembly', 'constrain bodies', 'fasten', 'joint'],
+  surf_extrude: ['sheet', 'surface'], surf_revolve: ['sheet', 'surface'], surf_loft: ['sheet', 'surface', 'skin'], surf_fill: ['sheet', 'surface', 'patch'],
+  surf_offset: ['sheet', 'surface'], thicken_surf: ['sheet', 'surface', 'solidify'],
 };
 
 /** Orca's Section View (DesignPanel::toggle_section_view): on at the model's mid-height, keeping the lower half. */

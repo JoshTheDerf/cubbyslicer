@@ -24,8 +24,9 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Mixed filaments:** Orca's lab-measured colours come from the engine; before the engine has loaded, swatches use the computed pigment blend.
 
 ### Design tab (experimental)
-- **Sketcher:** live measurement labels; snapping to body edges while drawing; per-entity free / constrained colouring; live expressions on constraint values.
-- **Features:** surface features, coordinate systems, mates, pattern along a curve, extruding one chosen region of a sketch with several, text / SVG on faces.
+- **Sketcher:** live measurement labels (Orca's non-driving quotes on the dragged or selected entity, click one to make it a dimension).
+- **Features:** text / SVG placed on a picked face (centred on it, the Extrude then defaulting to an inward Cut of that body).
+- **Datum planes, axes and coordinate systems** are not drawn in the Design view (they are listed in the feature tree and offered in the cards).
 - **Primitive bodies** (box, cylinder, cone, sphere, torus) are fixed-size, not parametric.
 - **Closed hollow shell** (no open face) is refused: Orca's own result for it is not a hollow body.
 - **Internal threads** follow Orca's behaviour, including its failure when the bore equals the thread's minor diameter.
@@ -41,6 +42,8 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Height ranges:** settings the engine doesn't know are kept and written back (desktop drops them).
 - **Filament renumbering:** two desktop slips are not copied (a part's renumbered support filament written onto its object; a stray custom G-code entry on replace).
 - **Section view and focus mode** controls sit in CubbySlicer's own toolbars.
+- **Extruding one region of a sketch** (Orca's loop pick) happens only when the sketch has more than one closed region; with a single profile the Extrude keeps following the sketch (Orca copies the loop into the Extrude whenever one was clicked).
+- **Coordinate system card:** Orca's "Body" filter (others go see-through while picking) is not there; the card refuses Face + direction without a face (Orca adds it and reports "face not found").
 
 ## Verification debts
 

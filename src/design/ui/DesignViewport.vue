@@ -18,7 +18,7 @@ import SketchOverlay from './SketchOverlay.vue';
 import SketchesLayer from './SketchesLayer.vue';
 import { cardSketchRows, hitSketch } from '../sketch/committed';
 import { beginSketch, sk } from '../sketch/session';
-import { bounds, toWorld } from '../sketch/model';
+import { bounds, regionAt, regionLoops, toWorld } from '../sketch/model';
 import type { FaceInfo } from '../kernel/types';
 
 const host = ref<HTMLElement | null>(null);
@@ -192,6 +192,21 @@ function sketchAt(x: number, y: number): number | null {
 }
 
 /**
+ * Orca's loop pick (DesignSketchTool::hit_display_sketch): the closed region of sketch `si` under
+ * the pointer — only when the sketch has more than one region (with a single profile the whole
+ * sketch is that region, and Extrude keeps following the sketch).
+ */
+function regionUnder(si: number, clientX: number, clientY: number): { sketch: number; region: number } | null {
+  const sk0 = layer.value?.shown.find((x) => x.index === si);
+  const p = sk0 && scene.value?.planePoint(clientX, clientY, sk0.plane);
+  if (!sk0 || !p) return null;
+  const loops = regionLoops(sk0.entities);
+  if (loops.length < 2) return null;
+  const r = regionAt(loops, p);
+  return r >= 0 ? { sketch: si, region: r } : null;
+}
+
+/**
  * Orca's edge set (DesignSketchTool::handle_solid_click): with an edge selected, Shift / Ctrl+click
  * on another edge of the same body adds it, on one already in the set removes it (the current one
  * leaving hands over to the previous; the last leaving clears the selection). Only edges, only one
@@ -223,16 +238,24 @@ function onClick(hit: DesignHit | null, mods: { shift: boolean; ctrl: boolean; c
   if (si !== null) {
     const rows = cardSketchRows();
     const name = design.features[si]?.name ?? `Sketch ${si + 1}`;
+    const region = regionUnder(si, mods.clientX, mods.clientY);
     if (rows.length) {
       const row = rows.find((r) => r.value < 0) ?? rows[0];
       void setCardValue(row.key, si);
+      // Orca: with the Extrude card open, a click in one region of a sketch with several picks that loop.
+      if (card.tool?.id === 'extrude' && row.key === 'sketch_ref') {
+        void setCardValue('loop', region); void setCardValue('loopOnly', !!region);
+        setStatus('info', region ? `${name}: region ${region.region + 1} — only it is extruded.` : `${row.label}: ${name}.`);
+        return;
+      }
       setStatus('info', `${row.label}: ${name}.`);
       return;
     }
     if (!card.tool) {
       designUi.pick = null;
       designUi.selected = mods.shift || mods.ctrl ? [...designUi.selected.filter((i) => i !== si), si] : [si];
-      setStatus('info', `${name} — double-click to edit it, Shift+E to extrude it.`);
+      designUi.region = mods.shift || mods.ctrl ? null : region;
+      setStatus('info', designUi.region ? `${name}: region ${designUi.region.region + 1} selected — Shift+E extrudes just this region (double-click edits the sketch).` : `${name} — double-click to edit it, Shift+E to extrude it.`);
       return;
     }
   }

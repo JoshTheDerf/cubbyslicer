@@ -43,7 +43,7 @@ export const ENUM_LABELS: Record<string, Record<string, string>> = {
   face_group: { Top: 'Top', Bottom: 'Bottom', Lateral: 'Lateral', All: 'All' },
   plane_type: { Offset: 'Offset', Angle: 'Angle', Midplane: 'Midplane', Tangent: 'Tangent', TwoEdges: 'Two edges', Coincident: 'Coincident' },
   axis_type: { TwoPoints: 'Two points', FaceNormal: 'Face normal', CylinderCenterline: 'Cylinder centreline', PlaneIntersection: 'Plane intersection', AlongEdge: 'Along edge' },
-  coordsys_type: { PointWorld: 'Point (world axes)', FaceAndDirection: 'Face and direction' },
+  coordsys_type: { PointWorld: 'Point (world)', FaceAndDirection: 'Face + direction' },
   shape: { Rectangle: 'Rectangle', Circle: 'Circle' },
 };
 
@@ -162,7 +162,13 @@ export const FEATURE_FIELDS: Record<FeatureType, FieldDef[]> = {
     { key: 'axis_p1', label: 'Point 1', unit: MM, vec3: true, when: (f) => f.axis_type === 'TwoPoints' },
     { key: 'axis_p2', label: 'Point 2', unit: MM, vec3: true, when: (f) => f.axis_type === 'TwoPoints' },
   ],
-  CoordSys: [{ key: 'coordsys_type', label: 'Type' }],
+  CoordSys: [
+    { key: 'coordsys_type', label: 'Type' },
+    { key: 'coordsys_point', label: 'Point', unit: MM, vec3: true, when: (f) => f.coordsys_type !== 'FaceAndDirection' },
+    { key: 'coordsys_face', label: 'Face', ref: 'face', bodyKey: 'coordsys_body', when: (f) => f.coordsys_type === 'FaceAndDirection' },
+    { key: 'coordsys_edge', label: 'Edge (sets in-plane direction)', ref: 'edge', bodyKey: 'coordsys_body', when: (f) => f.coordsys_type === 'FaceAndDirection' },
+    { key: 'coordsys_x_hint', label: 'X direction', vec3: true, when: (f) => f.coordsys_type === 'FaceAndDirection' },
+  ],
   Helix: [
     { key: 'helix_radius', label: 'Radius', unit: MM, min: 0 },
     { key: 'helix_pitch', label: 'Pitch', unit: MM, min: 0 },
@@ -183,16 +189,19 @@ export const FEATURE_FIELDS: Record<FeatureType, FieldDef[]> = {
   DeleteFace: [{ key: 'delete_faces', label: 'Faces', ref: 'faces', bodyKey: 'target_body' }, BODY],
   Rib: [{ key: 'rib_thickness', label: 'Thickness', unit: MM }, { key: 'rib_depth', label: 'Depth', unit: MM }, BODY],
   SurfaceExtrude: [SKETCH, { key: 'distance', label: 'Distance', unit: MM }],
-  SurfaceRevolve: [SKETCH, { key: 'revolve_angle', label: 'Angle', unit: DEG }, { key: 'revolve_axis', label: 'Axis', options: [[0, 'Sketch X'], [1, 'Sketch Y']] }],
-  ThickenSurface: [{ key: 'thicken_thickness', label: 'Thickness', unit: MM }, { key: 'thicken_flip', label: 'Flip' }, BODY],
-  SurfaceOffset: [{ key: 'thicken_thickness', label: 'Offset', unit: MM }, { key: 'thicken_flip', label: 'Flip' }, BODY],
+  SurfaceRevolve: [SKETCH, { key: 'revolve_angle', label: 'Angle', unit: DEG }, { key: 'revolve_axis', label: 'Axis', options: [[0, 'Sketch X'], [1, 'Sketch Y']] }, { key: 'flip', label: 'Flip direction' }],
+  ThickenSurface: [{ key: 'thicken_thickness', label: 'Thickness', unit: MM }, { key: 'thicken_flip', label: 'Flip direction' }, { ...BODY, label: 'Sheet body' }],
+  // Orca's Surface Offset reads `plane_offset` (DesignPanel build_candidate / CadDocument::apply_surface_offset).
+  SurfaceOffset: [{ key: 'plane_offset', label: 'Offset', unit: MM }, { ...BODY, label: 'Sheet body' }],
   SurfaceLoft: [{ key: 'loft_profile_refs', label: 'Profiles', ref: 'feature' }, { key: 'loft_ruled', label: 'Ruled' }],
   SurfaceFill: [SKETCH],
   Mate: [
     { key: 'mate_kind', label: 'Kind', options: [[0, 'Fastened'], [1, 'Planar'], [2, 'Revolute'], [3, 'Slider'], [4, 'Cylindrical']] },
+    { key: 'mate_cs_a', label: 'A (fixed)', ref: 'feature', featureTypes: ['CoordSys'] },
+    { key: 'mate_cs_b', label: 'B (moves)', ref: 'feature', featureTypes: ['CoordSys'] },
     { key: 'mate_offset', label: 'Offset', unit: MM },
     { key: 'mate_angle', label: 'Angle', unit: DEG },
-    { key: 'mate_flip', label: 'Flip' },
+    { key: 'mate_flip', label: 'Flip (oppose z axes)' },
   ],
 };
 

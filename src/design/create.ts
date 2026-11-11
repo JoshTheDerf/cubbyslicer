@@ -46,7 +46,10 @@ let threads: ThreadStandard[] | null = null;
 let holes: HoleStandard[] | null = null;
 let datumsCache: { generation: number; d: DatumsResult } | null = null;
 
-const TYPE_LABELS: Partial<Record<FeatureType, string>> = { DeleteFace: 'Delete Face', CoordSys: 'Coordinate System' };
+const TYPE_LABELS: Partial<Record<FeatureType, string>> = {
+  DeleteFace: 'Delete Face', CoordSys: 'Coordinate system', SurfaceExtrude: 'Surface Extrude', SurfaceRevolve: 'Surface Revolve', SurfaceLoft: 'Surface Loft',
+  SurfaceFill: 'Surface Fill', SurfaceOffset: 'Surface Offset', ThickenSurface: 'Thicken Surface',
+};
 
 /** Orca's default name: "<Type> <counter>" with one counter for every type (here: the next feature number). */
 export function defaultName(type: FeatureType): string { return `${TYPE_LABELS[type] ?? type} ${design.features.length + 1}`; }
@@ -326,7 +329,7 @@ export function offerItems(p: DesignPick | null, info: { surface?: string; curve
   const circle = edge && info.curve === 'circle';
   const nEdges = pickEdges(p).length;
   const head = !p ? 'Nothing selected'
-    : p.kind === 'body' ? `${bodyN} — solid body`
+    : p.kind === 'body' ? `${bodyN} — ${design.bodies[p.body]?.is_solid === false ? 'sheet' : 'solid'} body`
       : p.kind === 'edge' && nEdges > 1 ? `${nEdges} edges of ${bodyN}`
       : p.kind === 'face' ? `${flat ? 'Flat' : cyl ? 'Cylindrical' : 'Curved'} face ${p.face} of ${bodyN}`
         : `${circle ? 'Circular' : info.curve === 'line' ? 'Straight' : ''} edge ${p.edge} of ${bodyN}`.replace(/^ /, '');
@@ -359,10 +362,14 @@ export function offerItems(p: DesignPick | null, info: { surface?: string; curve
   };
   const icon = (id: string) => CREATE_TOOLS.find((t) => t.id === id)?.icon;
   const faceRef = p?.kind === 'face' ? { body: p.body, ids: [p.face], generation: p.generation } : null;
+  const sheet = p?.kind === 'body' && design.bodies[p.body]?.face_count > 0 && !design.bodies[p.body]?.is_solid;
+  const coordSystems = design.features.filter((f) => f.type === 'CoordSys').length;
 
   family('Add material', 'i-lucide-arrow-up-from-line', [
     ...(flat ? [{ label: 'Extrude (push/pull)', icon: icon('pushpull'), kbds: ['shift', 'e'], onSelect: run('pushpull') }, { label: 'Thicken', icon: icon('thicken'), onSelect: run('thicken') }] : []),
     ...(!p && design.features.some((f) => f.type === 'Sketch') ? [{ label: 'Extrude a sketch', icon: icon('extrude'), kbds: ['shift', 'e'], onSelect: run('extrude') }, { label: 'Revolve', icon: icon('revolve'), kbds: ['shift', 'r'], onSelect: run('revolve') }] : []),
+    // Orca's offer on a sheet body: Thicken Surface (Add material) and Surface Offset (Fillet / chamfer / draft).
+    ...(sheet ? [{ label: 'Thicken Surface', icon: icon('thicken_surf'), kbds: ['shift', 'v'], onSelect: run('thicken_surf') }] : []),
   ], 'pick a flat face');
   family('Remove', 'i-lucide-circle-dot', [
     ...(flat ? [{ label: 'Hole', icon: icon('hole'), kbds: ['shift', 'h'], onSelect: run('hole') }] : []),
@@ -378,6 +385,7 @@ export function offerItems(p: DesignPick | null, info: { surface?: string; curve
       { label: 'Chamfer', icon: 'i-lucide-scissors-line-dashed', onSelect: run('fillet', { kind: 'Chamfer', ...(flat && info.faceEdges ? { edges: { body: p!.body, ids: info.faceEdges, generation: p!.generation } } : {}) }) },
     ] : []),
     ...(flat ? [{ label: 'Draft', icon: icon('draft'), kbds: ['shift', 'd'], onSelect: run('draft') }] : []),
+    ...(sheet ? [{ label: 'Surface Offset', icon: icon('surf_offset'), kbds: ['shift', 'u'], onSelect: run('surf_offset') }] : []),
   ], 'pick an edge, a flat face or a body');
   family('Repeat', 'i-lucide-grid-3x3', [
     ...(p && !circle && !(edge && info.curve === 'line') && !cyl ? [
@@ -388,10 +396,14 @@ export function offerItems(p: DesignPick | null, info: { surface?: string; curve
     ...(p ? [{ label: 'Mirror', icon: icon('mirror'), kbds: ['shift', 'z'], onSelect: run('mirror', flat ? { plane: 'face', planeFace: faceRef } : undefined) }] : []),
   ], 'pick a body');
   family('Transform', 'i-lucide-move-3d', p ? [{ label: 'Move', icon: icon('transform'), kbds: ['shift', 'y'], onSelect: run('transform') },
-    ...(bodies >= 2 ? [{ label: 'Boolean with another body', icon: icon('boolean'), kbds: ['shift', 'b'], onSelect: run('boolean') }] : [])] : [], 'pick a body');
+    ...(bodies >= 2 ? [{ label: 'Boolean with another body', icon: icon('boolean'), kbds: ['shift', 'b'], onSelect: run('boolean') }] : []),
+    // Orca's Mate row (a flat face; Orca also offers it on two selected bodies, which this viewport can't select): greyed with its reason until there are two coordinate systems.
+    ...(bodies >= 2 && flat ? [coordSystems >= 2 ? { label: 'Mate', icon: icon('mate'), onSelect: run('mate') }
+      : { label: 'Mate needs two coordinate systems — create them first', icon: icon('mate'), disabled: true }] : [])] : [], 'pick a body');
   family('Reference', 'i-lucide-square-dashed', [
     { label: 'Plane', icon: icon('plane'), kbds: ['shift', 'p'], onSelect: run('plane', flat ? undefined : { faceA: null }) },
     { label: 'Axis', icon: icon('axis'), kbds: ['shift', 'a'], onSelect: run('axis') },
+    ...(!p || flat ? [{ label: 'Coordinate system', icon: icon('coordsys'), kbds: ['shift', 'c'], onSelect: run('coordsys') }] : []),
     ...(!p || cyl ? [{ label: 'Helix', icon: icon('helix'), onSelect: run('helix', cyl ? { plane: 'face', planeFace: faceRef } : undefined) }] : []),
     ...(p ? [{ label: 'Volume and area', icon: 'i-lucide-ruler', onSelect: () => { void bodyMass(p.body); } }] : []),
     // Orca's offer row "Interference" (whole solid body selected), greyed with its reason below two bodies.

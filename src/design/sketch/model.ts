@@ -315,3 +315,92 @@ export function entityName(list: readonly SkEntity[], i: number): string {
   const e = list[i];
   return e ? `${e.construction ? 'construction ' : ''}${TYPE_NAMES[e.type].toLowerCase()} ${i + 1}` : `entity ${i + 1}`;
 }
+
+// ---- regions (Orca's DesignSketchTool::region_loops / region_at / selected_loop_entities) ----------
+
+/** A closed loop of a sketch: its outline, the entities that make it, and the loops directly inside it (holes). */
+export interface RegionLoop { poly: V2[]; ents: number[]; holes: number[] }
+
+const JOIN_TOL = 1e-4;
+const polyArea = (q: readonly V2[]) => { let a2 = 0; for (let i = 0, j = q.length - 1; i < q.length; j = i++) a2 += (q[j][0] + q[i][0]) * (q[j][1] - q[i][1]); return Math.abs(a2) / 2; };
+function pointIn(pt: V2, q: readonly V2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = q.length - 1; i < q.length; j = i++) {
+    const A = q[i], B = q[j];
+    if ((A[1] > pt[1]) !== (B[1] > pt[1]) && pt[0] < ((B[0] - A[0]) * (pt[1] - A[1])) / (B[1] - A[1]) + A[0]) inside = !inside;
+  }
+  return inside;
+}
+/** A point strictly inside a simple polygon: off its lowest (convex) vertex along the bisector. */
+function interiorPoint(q: readonly V2[]): V2 {
+  let k = 0;
+  for (let i = 1; i < q.length; i++) if (q[i][1] < q[k][1] || (q[i][1] === q[k][1] && q[i][0] < q[k][0])) k = i;
+  const v = q[k], a = q[(k + q.length - 1) % q.length], b = q[(k + 1) % q.length];
+  const ax = a[0] - v[0], ay = a[1] - v[1], bx = b[0] - v[0], by = b[1] - v[1], la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+  if (la < 1e-12 || lb < 1e-12) return v;
+  const sx = ax / la + bx / lb, sy = ay / la + by / lb, ls = Math.hypot(sx, sy);
+  if (ls < 1e-12) return v;
+  const step = 1e-3 * Math.min(la, lb);
+  return [v[0] + (sx / ls) * step, v[1] + (sy / ls) * step];
+}
+
+/**
+ * Orca's region_loops: circles / ellipses are loops of their own; lines, arcs and splines are
+ * chained end to end into closed loops (open chains are dropped); a loop inside another is a hole
+ * of the smallest loop containing it. Construction geometry takes no part.
+ */
+export function regionLoops(entities: readonly SkEntity[]): RegionLoop[] {
+  const near = (a: V2, b: V2) => Math.hypot(a[0] - b[0], a[1] - b[1]) < JOIN_TOL;
+  const out: RegionLoop[] = [];
+  const segs: Array<{ pts: V2[]; ent: number; used: boolean }> = [];
+  entities.forEach((e, i) => {
+    if (e.construction) return;
+    if (e.type === 'circle' || e.type === 'ellipse') { const p = sample(e, 64); p.pop(); out.push({ poly: p, ents: [i], holes: [] }); }
+    else if (e.type === 'line' || e.type === 'arc' || e.type === 'ellipse_arc' || e.type === 'spline') { const p = sample(e, 64); if (p.length >= 2) segs.push({ pts: p, ent: i, used: false }); }
+  });
+  for (const s0 of segs) {
+    if (s0.used) continue;
+    s0.used = true;
+    const loop = s0.pts.slice(), ents = [s0.ent], start = loop[0];
+    let cur = loop[loop.length - 1], extended = true;
+    while (extended && !near(cur, start)) {
+      extended = false;
+      for (const t of segs) {
+        if (t.used) continue;
+        const q = t.pts;
+        if (near(q[0], cur)) { for (let k = 1; k < q.length; k++) loop.push(q[k]); cur = q[q.length - 1]; }
+        else if (near(q[q.length - 1], cur)) { for (let k = q.length - 2; k >= 0; k--) loop.push(q[k]); cur = q[0]; }
+        else continue;
+        t.used = true; ents.push(t.ent); extended = true;
+        break;
+      }
+    }
+    if (near(cur, start) && loop.length >= 4) { loop.pop(); out.push({ poly: loop, ents, holes: [] }); }
+  }
+  const probe = out.map((r) => (r.poly.length >= 3 ? interiorPoint(r.poly) : r.poly[0]));
+  out.forEach((r, i) => {
+    if (!r.poly.length) return;
+    let best = -1, bestArea = 0;
+    out.forEach((o, j) => {
+      if (i === j || o.poly.length < 3 || !pointIn(probe[i], o.poly)) return;
+      const a = polyArea(o.poly);
+      if (best < 0 || a < bestArea) { best = j; bestArea = a; }
+    });
+    if (best >= 0) out[best].holes.push(i);
+  });
+  return out;
+}
+
+/** The region a plane point is in: the smallest loop containing it (inside a hole, that hole's own loop), or -1. */
+export function regionAt(loops: readonly RegionLoop[], p: V2): number {
+  let best = -1, bestArea = Infinity;
+  loops.forEach((r, i) => { if (r.poly.length >= 3 && pointIn(p, r.poly)) { const a = polyArea(r.poly); if (a < bestArea) { best = i; bestArea = a; } } });
+  return best;
+}
+
+/** Orca's selected_loop_entities: the region's own boundary plus every loop directly inside it, in entity order. */
+export function loopEntityIndices(loops: readonly RegionLoop[], region: number): number[] {
+  const r = loops[region];
+  if (!r) return [];
+  return [...new Set([...r.ents, ...r.holes.flatMap((h) => loops[h]?.ents ?? [])])].sort((a, b) => a - b);
+}

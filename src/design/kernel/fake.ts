@@ -45,7 +45,7 @@ interface FakeDoc {
   dirty: boolean;
   original: Uint8Array | null;
 }
-interface FakeBody { source: number; x: number; w: number; h: number; d: number; revolve?: boolean }
+interface FakeBody { source: number; x: number; w: number; h: number; d: number; revolve?: boolean; sheet?: boolean }
 
 const DEFAULTS: Record<string, unknown> = { width: 20, height: 10, distance: 10, x: 0, dressup_size: 1, mode: 'New', extrude_end: 'Blind', flip: false, sketch_ref: -1, target_body: -1 };
 
@@ -147,6 +147,20 @@ export class FakeKernel implements KernelBackend {
           if (!b) throw new Error(`${f.type.toLowerCase()} needs a body`);
           const adds = f.type === 'Mirror' ? f.mode !== 'Add' : f.cut_keep_upper !== false && !!f.cut_keep_lower;
           if (adds) { bodies.push({ ...b, source: i, x }); x += b.w + 5; }
+        } else if (f.type === 'SurfaceExtrude' || f.type === 'SurfaceRevolve' || f.type === 'SurfaceFill' || f.type === 'SurfaceLoft') {
+          // A sheet body (no volume) from the sketch(es).
+          bodies.push({ source: i, x, w: num('width'), h: num('height'), d: f.type === 'SurfaceExtrude' ? num('distance') : 0, sheet: true });
+          x += num('width') + 5;
+        } else if (f.type === 'ThickenSurface' || f.type === 'SurfaceOffset') {
+          const b = bodies[Number(f.target_body ?? -1)];
+          if (!b?.sheet) throw new Error(`${f.type === 'ThickenSurface' ? 'thicken surface' : 'surface offset'} needs a sheet body`);
+          if (f.type === 'ThickenSurface') { if (num('thicken_thickness') <= 0) throw new Error('thickness must be positive'); b.sheet = false; }
+        } else if (f.type === 'Mate') {
+          // Orca: both connectors must be coordinate systems, and B must sit on a body.
+          const a = d.features[Number(f.mate_cs_a ?? -1)], b = d.features[Number(f.mate_cs_b ?? -1)];
+          if (a?.type !== 'CoordSys' || b?.type !== 'CoordSys') throw new Error('mate_cs_a / mate_cs_b must be coordinate systems');
+          if (f.mate_cs_a === f.mate_cs_b) throw new Error('a mate needs two different coordinate systems');
+          if (b.coordsys_type !== 'FaceAndDirection') throw new Error('mate_cs_b has no associated body');
         } else if (['Shell', 'Hole', 'Thread', 'Draft', 'Pattern', 'Transform', 'Thicken', 'DeleteFace'].includes(f.type)) {
           if (!bodies.length) throw new Error(`${f.type.toLowerCase()} needs a body`);
           if (f.type === 'Shell' && num('shell_thickness') <= 0) throw new Error('shell thickness must be positive');
@@ -182,7 +196,7 @@ export class FakeKernel implements KernelBackend {
       bodies: d.bodies.map((b, index) => ({
         index, name: d.bodyNames[index] ?? d.features[b.source].name, user_name: index in d.bodyNames, has_color: index in d.bodyColors,
         ...(index in d.bodyColors ? { color: d.bodyColors[index] } : {}),
-        source_feature: b.source, is_solid: true, face_count: 6, edge_count: 12,
+        source_feature: b.source, is_solid: !b.sheet, face_count: 6, edge_count: 12,
         bbox: { min: [b.x, 0, 0], max: [b.x + b.w, b.h, b.d] }, center: [b.x + b.w / 2, b.h / 2, b.d / 2],
       })),
       error: d.error, generation: d.generation, read_only: d.version > 6, dirty: d.dirty, can_undo: false, can_redo: false,
@@ -387,7 +401,8 @@ export class FakeKernel implements KernelBackend {
         return { result: {
           base_planes: [{ name: 'XY', plane: P([0, 0, 1], [1, 0, 0], [0, 1, 0]) }, { name: 'XZ', plane: P([0, 1, 0], [1, 0, 0], [0, 0, 1]) }, { name: 'YZ', plane: P([1, 0, 0], [0, 1, 0], [0, 0, 1]) }],
           planes: d.features.filter((f) => f.type === 'Plane' && f.enabled).map((f) => ({ name: f.name, plane: P([0, 0, 1], [1, 0, 0], [0, 1, 0]) })),
-          axes: d.features.filter((f) => f.type === 'Axis' && f.enabled).map((f) => ({ name: f.name, origin: o, direction: [0, 0, 1], error: '' })), coordsys: [],
+          axes: d.features.filter((f) => f.type === 'Axis' && f.enabled).map((f) => ({ name: f.name, origin: o, direction: [0, 0, 1], error: '' })),
+          coordsys: d.features.filter((f) => f.type === 'CoordSys' && f.enabled).map((f) => ({ name: f.name, origin: (f.coordsys_point as number[] | undefined) ?? [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], error: '' })),
         } };
       }
       case 'face_info': case 'plane_of_face': {

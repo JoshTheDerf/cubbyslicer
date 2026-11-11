@@ -290,6 +290,10 @@ export async function createFlow({ page, D, check, shot, settled, run, lap, out 
   await page.waitForTimeout(600);
   await shot('10-converted');
   }
+  await assemblySurfaceFlow({ page, D, check, shot, settled });
+  lap('coordinate systems, mate, surfaces checked');
+  await regionExtrudeFlow({ page, D, check, shot, settled });
+  lap('region extrude checked');
 }
 
 // ---- verification flow (FLOWS=verify): what the creation slice could not check ------------------
@@ -699,9 +703,11 @@ export async function bridgeDesignFlow({ call, check, log, out }) {
 async function analysisChecks({ page, D, check, shot, settled, run, screen, topo }) {
   const status = () => D(() => window.__cubbyDesign.design.status?.text ?? '');
   // Open an offer family's submenu (hover can miss while the menu settles): retry until `item` shows.
+  // (A hover can be missed by the menu here; the keyboard opens it too: focus the family, →.)
   const submenu = async (family, item) => {
     for (let i = 0; i < 6; i++) {
-      await page.getByRole('menuitem', { name: family }).hover();
+      const f = page.getByRole('menuitem', { name: family });
+      if (i % 2) { await f.focus(); await page.keyboard.press('ArrowRight'); } else await f.hover();
       try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); return; } catch { await page.mouse.move(5, 5); }
     }
   };
@@ -796,4 +802,235 @@ async function analysisChecks({ page, D, check, shot, settled, run, screen, topo
   await settled((d) => d.bodies.length === 1, 'peg undone');
   await page.click('[data-testid="design-interference"]');
   check((await status()) === 'Interference needs at least two bodies', `one body: ${await status()}`);
+}
+
+// ---- Orca's Coordinate system / Mate and Surface cards (FLOWS=create) ---------------------------
+// Two boxes; a coordinate system on each top face (Shift+C with the face picked, then the card's
+// own face pick); a Fastened mate from the offer, flipped, puts box B upside down on box A's top.
+// A rectangle sketch: Surface Extrude (an open sheet, no volume), Surface Fill (a flat sheet) and
+// Thicken Surface from the offer on that sheet (a solid of the sheet's area × thickness).
+export async function assemblySurfaceFlow({ page, D, check, shot, settled }) {
+  const screen = (p) => D((p) => window.__cubbyDesign.designViewport().screenPoint(p), p);
+  const topo = (body) => D(async (body) => { const W = window.__cubbyDesign; return W.readDesign(async (c, doc) => (await c.call('query_topology', { doc, body })).result); }, body);
+  const mass = (body) => D(async (body) => { const W = window.__cubbyDesign; return W.readDesign(async (c, doc) => (await c.call('mass_properties', { doc, body })).result); }, body);
+  const bodies = () => D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.design.bodies)));
+  const fit = async () => { await D(() => window.__cubbyDesign.designViewport().fitAll()); await page.waitForTimeout(700); };
+  const pickFace = async (centroid, kind = 'face') => {
+    const [x, y] = await screen(centroid);
+    for (let i = 0; i < 3 && (await D(() => window.__cubbyDesign.designUi.pick?.kind)) !== kind; i++) { await page.mouse.click(x, y); await page.waitForTimeout(350); }
+    return D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.designUi.pick)));
+  };
+  // (A hover can be missed by the menu here; the keyboard opens it too: focus the family, →.)
+  const submenu = async (family, item) => {
+    for (let i = 0; i < 6; i++) {
+      const f = page.getByRole('menuitem', { name: family });
+      if (i % 2) { await f.focus(); await page.keyboard.press('ArrowRight'); } else await f.hover();
+      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); return; } catch { await page.mouse.move(5, 5); }
+    }
+  };
+  const ok = async (what, pred) => { await page.click('[data-testid="design-card-ok"]'); await settled(pred, what); return D(() => ({ card: !!window.__cubbyDesign.card.tool, error: window.__cubbyDesign.card.error, ok: window.__cubbyDesign.design.ok })); };
+  shot = ((orig) => (n) => orig(`m${n}`))(shot);
+  console.log('create: coordinate systems, mate, surfaces');
+  await D(() => window.__cubbyProject.resetProject());
+  await settled((d) => d.phase === 'open' && !d.features.length, 'empty design');
+  await D(async () => {
+    const W = window.__cubbyDesign, o = W.design.modelingOrigin;
+    await W.runEdit('Add boxes', async (c, doc) => {
+      await c.call('extrude', { doc, width: 40, height: 30, distance: 20, name: 'Base' });
+      return (await c.call('extrude', { doc, width: 20, height: 20, distance: 10, name: 'Cap', plane: { origin: [o[0] + 60, o[1], o[2]], normal: [0, 0, 1], x_axis: [1, 0, 0], y_axis: [0, 1, 0] } })).result;
+    });
+  });
+  await settled((d) => d.bodies.length === 2, 'two boxes');
+  await fit();
+  // ---- Coordinate system on box A's top face: Shift+C with the face picked
+  const topOf = async (b) => (await topo(b)).faces.filter((f) => f.normal[2] > 0.99).sort((a, b) => b.centroid[2] - a.centroid[2])[0];
+  const topA = await topOf(0), topB = await topOf(1);
+  let p = await pickFace(topA.centroid);
+  check(p?.kind === 'face' && p.face === topA.id, `box A's top face picked (${JSON.stringify(p)})`);
+  await page.keyboard.press('Shift+C');
+  await page.waitForSelector('[data-testid="design-card"][data-tool="coordsys"]');
+  let c = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.card.draft)));
+  check(c.coordsys_type === 'FaceAndDirection' && c.face?.ids?.[0] === topA.id, `Shift+C: face + direction on the picked face (${c.coordsys_type}, ${JSON.stringify(c.face)})`);
+  await shot('01-coordsys-card');
+  let r = await ok('coordinate system A', (d) => d.features.some((f) => f.type === 'CoordSys'));
+  check(!r.card && r.ok, `coordinate system added (${r.error || 'ok'})`);
+  // ---- the second one from the menu, its face picked with the card's own Pick button
+  await page.mouse.click(5, 5);
+  await D(() => { window.__cubbyDesign.designUi.pick = null; });
+  await D(() => window.__cubbyDesign.openCard('coordsys', { pick: null }));
+  await page.waitForSelector('[data-testid="design-card"][data-tool="coordsys"]');
+  check((await D(() => window.__cubbyDesign.card.draft.coordsys_type)) === 'PointWorld', 'nothing picked: a world point (Orca’s default)');
+  await page.click('[data-testid="design-card"] [data-pick="card:face"] [data-testid="ref-pick"]');
+  const [bx, by] = await screen(topB.centroid);
+  await page.mouse.click(bx, by); await page.waitForTimeout(800);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !window.__cubbyDesign.card.resolving);
+  c = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.card.draft)));
+  check(c.coordsys_type === 'FaceAndDirection' && c.face?.body === 1 && c.face?.ids?.[0] === topB.id, `picking a face makes it face + direction (${c.coordsys_type}, ${JSON.stringify(c.face)})`);
+  await shot('02-coordsys-picked');
+  r = await ok('coordinate system B', (d) => d.features.filter((f) => f.type === 'CoordSys').length === 2);
+  const ds = await D(async () => window.__cubbyDesign.readDesign(async (c, doc) => (await c.call('datums', { doc })).result.coordsys));
+  check(ds.length === 2 && ds.every((x) => !x.error) && Math.abs(ds[0].origin[2] - topA.centroid[2]) < 1e-6 && Math.abs(ds[1].origin[2] - topB.centroid[2]) < 1e-6,
+    `both coordinate systems resolve on the top faces (${ds.map((x) => `${x.name} z=${x.origin[2].toFixed(2)}${x.error ? ' ' + x.error : ''}`)})`);
+  // ---- Mate from the offer on a flat face: B moves onto A, flipped (face to face)
+  await pickFace(topA.centroid);
+  const [ax, ay] = await screen(topA.centroid);
+  await page.mouse.click(ax, ay, { button: 'right' });
+  await page.waitForSelector('[role="menu"]');
+  await submenu(/^Transform/, /^Mate$/);
+  await shot('03-offer-mate');
+  await page.getByRole('menuitem', { name: /^Mate$/ }).click();
+  await page.waitForSelector('[data-testid="design-card"][data-tool="mate"]');
+  const csIdx = await D(() => window.__cubbyDesign.design.features.filter((f) => f.type === 'CoordSys').map((f) => f.index));
+  c = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.card.draft)));
+  check(c.mate_cs_a === csIdx[0] && c.mate_cs_b === csIdx[0] && /A and B must be different/.test(await page.locator('[data-testid="design-card-preview"]').innerText()),
+    'Mate opens with the first coordinate system in both pickers and says A and B must differ (Orca)');
+  await D((b) => window.__cubbyDesign.setCardValue('mate_cs_b', b), csIdx[1]);
+  await page.locator('[data-testid="design-card"] [data-field="mate_flip"] button').click();
+  await page.waitForFunction(() => ['ok', 'invalid'].includes(window.__cubbyDesign.card.preview.state), null, { timeout: 120000 });
+  const pv = await D(() => ({ ...window.__cubbyDesign.card.preview }));
+  check(pv.state === 'ok', `mate preview: ${pv.text}`);
+  await page.waitForTimeout(600);
+  await shot('04-mate-card');
+  r = await ok('mate', (d) => d.features.some((f) => f.type === 'Mate'));
+  let bs = await bodies();
+  const bbB = bs[1].bbox;
+  check(!r.card && r.ok && Math.abs(bbB.min[2] - 20) < 1e-3 && Math.abs(bbB.max[2] - 30) < 1e-3, `Fastened + flip: box B sits on box A's top, upside down (z ${bbB.min[2].toFixed(3)}..${bbB.max[2].toFixed(3)}; ${r.error || 'ok'})`);
+  const mc = await D(() => window.__cubbyDesign.design.mateConflicts.length);
+  check(mc === 0, `no mate conflicts (${mc})`);
+  await fit(); await shot('05-mated');
+  // ---- Surfaces on a rectangle sketch beside the boxes
+  await D(async () => {
+    const W = window.__cubbyDesign;
+    await W.runEdit('Add sketch', async (c, doc) => {
+      await c.call('sketch_begin', { doc, plane: 'XY' });
+      await c.call('sketch_add', { doc, rect: [100, -10, 130, 10] });
+      return (await c.call('sketch_commit', { doc, name: 'Rect' })).result;
+    });
+  });
+  await settled((d) => d.features.some((f) => f.name === 'Rect'), 'rectangle sketch');
+  await page.mouse.click(5, 5);
+  await page.keyboard.press('Shift+G');
+  await page.waitForSelector('[data-testid="design-card"][data-tool="surf_extrude"]');
+  const rectIdx = await D(() => window.__cubbyDesign.design.features.find((f) => f.name === 'Rect').index);
+  check((await D(() => window.__cubbyDesign.card.draft.sketch_ref)) === rectIdx, 'Shift+G: Surface Extrude of the last sketch');
+  await page.fill('[data-field="distance"] input', '15');
+  await page.waitForFunction(() => ['ok', 'invalid'].includes(window.__cubbyDesign.card.preview.state), null, { timeout: 120000 });
+  await shot('06-surface-extrude-card');
+  r = await ok('surface extrude', (d) => d.features.some((f) => f.type === 'SurfaceExtrude'));
+  bs = await bodies();
+  let m = await mass(bs.length - 1);
+  check(!r.card && bs.length === 3 && !bs[2].is_solid && m.volume < 1e-6 && Math.abs(m.surface_area - 2 * (30 + 20) * 15) < 0.5,
+    `Surface Extrude: an open sheet body (solid ${bs[2]?.is_solid}, volume ${m.volume}, area ${m.surface_area?.toFixed(2)}; ${r.error || 'ok'})`);
+  await page.keyboard.press('Shift+Q');
+  await page.waitForSelector('[data-testid="design-card"][data-tool="surf_fill"]');
+  await D((i) => window.__cubbyDesign.setCardValue('sketch_ref', i), rectIdx);
+  r = await ok('surface fill', (d) => d.features.some((f) => f.type === 'SurfaceFill'));
+  bs = await bodies();
+  m = await mass(3);
+  check(!r.card && bs.length === 4 && !bs[3].is_solid && Math.abs(m.surface_area - 600) < 0.5, `Surface Fill: a flat sheet of 600 mm² (${m.surface_area?.toFixed(2)}; ${r.error || 'ok'})`);
+  await fit(); await shot('07-sheets');
+  // Thicken Surface from the offer on the flat sheet (a sheet body is picked whole).
+  const fill = bs[3].bbox, fillMid = [0, 1, 2].map((k) => (fill.min[k] + fill.max[k]) / 2);
+  const [qx, qy] = await screen([fillMid[0], fillMid[1] - 6, fillMid[2]]);
+  // Hide the open sheet around it (view only), so the click lands on the flat one.
+  await D(() => { window.__cubbyDesign.designUi.hiddenBodies = [2]; });
+  await page.waitForTimeout(400);
+  await page.mouse.click(5, 5);
+  await page.mouse.click(qx, qy); await page.waitForTimeout(400);
+  p = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.designUi.pick)));
+  check(p?.body === 3, `the flat sheet picked (${JSON.stringify(p)})`);
+  if (p && p.kind !== 'body') { await D((b) => { window.__cubbyDesign.designUi.pick = { kind: 'body', body: b }; }, 3); }
+  await page.mouse.click(qx, qy, { button: 'right' });
+  await page.waitForSelector('[role="menu"]');
+  await page.getByRole('menuitem', { name: /^Thicken Surface/ }).waitFor();   // a family of one sits at the top level
+  const head = (await page.locator('[role="menu"]').innerText()).split('\n')[0];
+  check(/sheet body/.test(head), `offer header names a sheet body (${head})`);
+  await shot('08-offer-sheet');
+  await page.getByRole('menuitem', { name: /^Thicken Surface/ }).click();
+  await page.waitForSelector('[data-testid="design-card"][data-tool="thicken_surf"]');
+  c = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.card.draft)));
+  check(c.target_body === 3 && c.thicken_thickness === 1, `Thicken Surface prefilled with the sheet (${c.target_body}, ${c.thicken_thickness} mm)`);
+  await page.fill('[data-field="thicken_thickness"] input', '2');
+  await page.waitForFunction(() => ['ok', 'invalid'].includes(window.__cubbyDesign.card.preview.state), null, { timeout: 120000 });
+  await page.waitForTimeout(500);
+  await shot('09-thicken-surface-card');
+  r = await ok('thicken surface', (d) => d.features.some((f) => f.type === 'ThickenSurface'));
+  await D(() => { window.__cubbyDesign.designUi.hiddenBodies = []; });
+  bs = await bodies();
+  const solid = bs.findIndex((b, i) => i >= 3 && b.is_solid);
+  m = solid >= 0 ? await mass(solid) : { volume: 0 };
+  check(!r.card && solid >= 0 && Math.abs(m.volume - 1200) < 0.5, `Thicken Surface: a 30 × 20 × 2 solid (volume ${m.volume?.toFixed(2)}; ${r.error || 'ok'})`);
+  // Surface Offset on the open sheet (Shift+U), the distance in plane_offset.
+  await page.mouse.click(5, 5);
+  await D(() => { window.__cubbyDesign.designUi.pick = null; });
+  await page.keyboard.press('Shift+U');
+  await page.waitForSelector('[data-testid="design-card"][data-tool="surf_offset"]');
+  await D(() => window.__cubbyDesign.setCardValue('target_body', 2));
+  r = await ok('surface offset', (d) => d.features.some((f) => f.type === 'SurfaceOffset'));
+  const so = await D(async () => { const W = window.__cubbyDesign; const f = W.design.features.find((x) => x.type === 'SurfaceOffset'); return (await W.getFeature(f.index)).plane_offset; });
+  check(!r.card && r.ok && so === 1, `Surface Offset added, plane_offset ${so} (${r.error || 'ok'})`);
+  await fit(); await shot('10-surfaces');
+}
+
+// ---- Orca's loop pick: one region of a sketch with several, extruded alone (FLOWS=create) --------
+// A 40 × 30 plate outline with a Ø10 hole and a separate Ø8 circle in one sketch: a click inside
+// the plate selects that region (shaded), Shift+E extrudes just it (with its hole); a click in the
+// small circle then extrudes that one. Each Extrude carries its entities (sketch_ref -1).
+export async function regionExtrudeFlow({ page, D, check, shot, settled }) {
+  const screen = (p) => D((p) => window.__cubbyDesign.designViewport().screenPoint(p), p);
+  const mass = (body) => D(async (body) => { const W = window.__cubbyDesign; return W.readDesign(async (c, doc) => (await c.call('mass_properties', { doc, body })).result); }, body);
+  shot = ((orig) => (n) => orig(`r${n}`))(shot);
+  console.log('create: extrude one region of a sketch');
+  await D(() => window.__cubbyProject.resetProject());
+  await settled((d) => d.phase === 'open' && !d.features.length, 'empty design');
+  await D(async () => {
+    const W = window.__cubbyDesign;
+    await W.runEdit('Add sketch', async (c, doc) => {
+      await c.call('sketch_begin', { doc, plane: 'XY' });
+      await c.call('sketch_add', { doc, rect: [0, 0, 40, 30] });
+      await c.call('sketch_add', { doc, entities: [{ type: 'circle', center: [20, 15], radius: 5 }, { type: 'circle', center: [60, 15], radius: 4 }] });
+      return (await c.call('sketch_commit', { doc, name: 'Plate' })).result;
+    });
+  });
+  await settled((d) => d.features.length === 1, 'plate sketch');
+  const o = await D(() => window.__cubbyDesign.design.modelingOrigin.slice());
+  await D((o) => window.__cubbyDesign.designViewport().setView?.('top'), o);
+  await D(() => window.__cubbyDesign.designViewport().fitAll()); await page.waitForTimeout(800);
+  const at = async (x, y) => screen([o[0] + x, o[1] + y, o[2]]);
+  const extrude = async (what, n) => {
+    await page.keyboard.press('Shift+E');
+    await page.waitForSelector('[data-testid="design-card"][data-tool="extrude"]');
+    const c = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.card.draft)));
+    await page.waitForFunction(() => ['ok', 'invalid'].includes(window.__cubbyDesign.card.preview.state), null, { timeout: 120000 });
+    await shot(`${n}-card`);
+    await D((n) => { window.__e2eN = n; }, n);   // settled() predicates run in the page: no closures
+    await page.click('[data-testid="design-card-ok"]');
+    await settled((d) => d.bodies.length === window.__e2eN, what);
+    return c;
+  };
+  // Plate region: inside the outline, outside the hole.
+  let [x, y] = await at(5, 5);
+  await page.mouse.click(x, y); await page.waitForTimeout(500);
+  let reg = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.designUi.region)));
+  const shaded = await page.locator('[data-testid="design-sketch-region"]').count();
+  check(reg?.sketch === 0 && reg.region >= 0 && shaded === 1, `a click in the plate selects that region, shaded (${JSON.stringify(reg)}, ${shaded} shaded)`);
+  await shot('01-region-picked');
+  let c = await extrude('plate region extruded', 1);
+  check(c.loopOnly === true && c.loop?.region === reg.region, `Shift+E: Extrude of only the picked region (${JSON.stringify(c.loop)})`);
+  let f = await D(async () => { const W = window.__cubbyDesign; return W.getFeature(W.design.features.length - 1); });
+  let m = await mass(0);
+  const plate = (40 * 30 - Math.PI * 25) * 10;
+  check(f.sketch_ref === -1 && f.entities.length === 5 && Math.abs(m.volume - plate) < 1, `the plate with its hole only: ${f.entities.length} entities, volume ${m.volume.toFixed(1)} (want ${plate.toFixed(1)})`);
+  // The small circle, from the same sketch.
+  await page.click('[data-feature="0"]');
+  await page.waitForTimeout(400);
+  [x, y] = await at(60, 15);
+  await page.mouse.click(x, y); await page.waitForTimeout(500);
+  reg = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.designUi.region)));
+  c = await extrude('circle region extruded', 2);
+  m = await mass(1);
+  check(c.loopOnly && Math.abs(m.volume - Math.PI * 16 * 10) < 1, `the Ø8 circle alone: volume ${m.volume.toFixed(1)} (want ${(Math.PI * 160).toFixed(1)})`);
+  await D(() => window.__cubbyDesign.designViewport().fitAll()); await page.waitForTimeout(800);
+  await shot('03-two-regions');
 }

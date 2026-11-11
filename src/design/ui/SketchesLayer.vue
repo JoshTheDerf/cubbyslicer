@@ -9,6 +9,8 @@ import { computed, ref, watch } from 'vue';
 import type { DesignScene } from '../scene/DesignScene';
 import { cardSketchRows, committedSketches, sketchPolylines, type CommittedSketch } from '../sketch/committed';
 import { designUi } from '../state';
+import { card } from '../create';
+import { regionLoops, toWorld } from '../sketch/model';
 import { sk } from '../sketch/session';
 
 const props = defineProps<{ scene: DesignScene | null }>();
@@ -36,7 +38,17 @@ const paths = computed(() => {
       const seg = `M${pts.join('L')}`;
       if (pl.construction) dc += seg; else d += seg;
     }
-    return { index: sk.index, d, dc, cls: chosen.has(sk.index) ? 'ref' : designUi.selected.includes(sk.index) ? 'sel' : '' };
+    // The picked region (Orca paints the selected loop): its outline and holes, filled even-odd.
+    const loop = card.tool?.id === 'extrude' ? (card.draft.loopOnly ? card.draft.loop as typeof designUi.region : null) : card.tool ? null : designUi.region;
+    let dr = '';
+    if (loop && loop.sketch === sk.index) {
+      const loops = regionLoops(sk.entities), r = loops[loop.region];
+      for (const i of r ? [loop.region, ...r.holes] : []) {
+        const pts = loops[i].poly.map((q) => P(toWorld(sk.plane, q))).filter(Boolean);
+        if (pts.length > 2) dr += `M${pts.join('L')}Z`;
+      }
+    }
+    return { index: sk.index, d, dc, dr, cls: chosen.has(sk.index) ? 'ref' : designUi.selected.includes(sk.index) ? 'sel' : '' };
   });
 });
 </script>
@@ -44,7 +56,8 @@ const paths = computed(() => {
 <template>
   <svg v-if="paths.length" class="skl" aria-hidden="true" data-testid="design-sketches">
     <g v-for="p in paths" :key="p.index" :class="p.cls ? `is-${p.cls}` : ''" :data-sketch="p.index">
-      <path v-if="p.cls === 'ref'" :d="p.d" class="skl__fill" fill-rule="evenodd" />
+      <path v-if="p.cls === 'ref' && !p.dr" :d="p.d" class="skl__fill" fill-rule="evenodd" />
+      <path v-if="p.dr" :d="p.dr" class="skl__region" fill-rule="evenodd" data-testid="design-sketch-region" />
       <path :d="p.d" class="skl__line" />
       <path v-if="p.dc" :d="p.dc" class="skl__line skl__line--cons" />
     </g>
@@ -56,6 +69,7 @@ const paths = computed(() => {
 .skl__line { fill: none; stroke: var(--vp-sketch-committed); stroke-width: 1.6; stroke-linejoin: round; }
 .skl__line--cons { stroke-dasharray: 6 4; stroke-width: 1; opacity: 0.7; }
 .skl__fill { fill: color-mix(in srgb, var(--vp-cad-ref, #f2a33a) 16%, transparent); stroke: none; }
+.skl__region { fill: color-mix(in srgb, var(--vp-sketch-sel) 28%, transparent); stroke: var(--vp-sketch-sel); stroke-width: 2.4; }
 .is-sel .skl__line { stroke: var(--vp-sketch-sel); stroke-width: 2.2; }
 .is-ref .skl__line { stroke: var(--vp-cad-ref, #f2a33a); stroke-width: 2.4; }
 </style>

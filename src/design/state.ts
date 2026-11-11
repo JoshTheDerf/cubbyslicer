@@ -33,6 +33,8 @@ export const designUi = reactive({
   selected: [] as number[],
   /** The viewport / Bodies list pick (one at a time, Orca's single selection). */
   pick: null as DesignPick | null,
+  /** Orca's loop pick: one closed region of a finished sketch that has several (Extrude builds just it). */
+  region: null as { sketch: number; region: number } | null,
   /** Bodies hidden in the Design view (display only, like Orca's body eye). */
   hiddenBodies: [] as number[],
   /** Orca's pinned rows: reference planes at the modeling origin, the printer bed. */
@@ -61,5 +63,6 @@ export function editedFeature(): number | null {
 export function clearDesignSelection(): void {
   designUi.selected = [];
   designUi.pick = null;
+  designUi.region = null;
   designUi.renaming = null;
 }
