@@ -5,6 +5,7 @@ import { composeTRS, quatFromEuler, transformPoint, decomposeTRS, type Vec3 } fr
 import { weldVertices, recenter } from './mesh';
 import { cubeSoup } from './testutil';
 import type { ParsedObject } from './types';
+import type { ArrangeResult } from '../engine/types';
 
 function cube(name = 'Cube', size = 20): ParsedObject {
   const w = weldVertices(cubeSoup(size), null);
@@ -153,13 +154,6 @@ describe('project store', () => {
     expect(S.objectIssues.value.get(b)).toContain('height');
   });
 
-  it('arranges all objects inside the bed', () => {
-    S.addParsedObjects(Array.from({ length: 6 }, (_, i) => cube(`C${i}`, 30)));
-    for (const o of S.objects.value) S.setTransforms([{ id: o.id, position: [110, 110, 10] }]);
-    expect(S.arrangeObjects()).toBe(0);
-    expect(S.objectIssues.value.size).toBe(0);
-  });
-
   it('lay on face rotates the chosen normal to face down', () => {
     const [id] = S.addParsedObjects([cube()]);
     S.layOnFace(id, [1, 0, 0]);
@@ -248,14 +242,6 @@ describe('multiple plates', () => {
     expect(S.plateOf(b)).toBe(1);
   });
 
-  it('arrange all spills what does not fit onto new plates', () => {
-    S.addParsedObjects(Array.from({ length: 6 }, (_, i) => cube(`Big${i}`, 100)));
-    const unplaced = S.arrangeObjects();
-    expect(unplaced).toBe(0);
-    expect(S.plates.value.length).toBeGreaterThan(1);
-    expect(S.objectIssues.value.size).toBe(0);
-  });
-
   it('moves objects to another plate', () => {
     const [a] = S.addParsedObjects([cube('A')]);
     S.addPlate();
@@ -291,5 +277,86 @@ describe('instances and split', () => {
     const xs = parts.map((o) => S.objectInfo.value.get(o.id)!).flatMap((i) => [i.min[0], i.max[0]]);
     expect(Math.min(...xs)).toBeCloseTo(before.min[0], 3);
     expect(Math.max(...xs)).toBeCloseTo(before.max[0], 3);
+  });
+});
+
+describe('Orca arrange I/O', () => {
+  const moved = (plate: number, x: number, y: number, dRot = 0) => ({ moved: true as const, plate, x, y, dRot });
+  const result = (r: Partial<ArrangeResult> & Pick<ArrangeResult, 'items'>): ArrangeResult => ({
+    plates: S.plates.value.length, unplaced: [], warnings: [], order: [], seqPrint: false, ...r,
+  });
+
+  it('gives plate-local, dropped transforms and the per-object / per-plate facts', () => {
+    const [a] = S.addParsedObjects([cube('A')]);
+    S.addPlate();
+    const [b] = S.addParsedObjects([cube('B')]);
+    S.setTransforms([{ id: b, position: [S.getObject(b)!.position[0], 100, 30] }], 'Lift', { drop: false });
+    S.setPrintable([b], false);
+    S.setPlateLocked(1, true);
+    S.mutate('Plate settings', () => { S.plates.value[0].config = { print_sequence: 'by object', imex_parallel_mode: 'mirror' }; });
+    const inp = S.arrangeInputs([b]);
+    expect(inp.ids).toEqual([a, b]);
+    expect(inp.objects.map((o) => o.id)).toEqual([a, b]);
+    // Plate 1's object is given relative to its own plate, dropped to z = 0.
+    expect(inp.objects[1].transform[12]).toBeCloseTo(110);
+    expect(inp.objects[1].transform[13]).toBeCloseTo(100);
+    expect(inp.objects[1].transform[14]).toBeCloseTo(10);
+    expect(inp.items).toEqual([
+      { plate: 0, printable: true, selected: false },
+      { plate: 1, printable: false, selected: true },
+    ]);
+    expect(inp.plates).toEqual([
+      // The plate's own IDEX/IQEX mode; '' = the process preset's applies.
+      { locked: false, seq: 'by object', toolChanges: [], imexMode: 'mirror' },
+      { locked: true, seq: '', toolChanges: [], imexMode: '' },
+    ]);
+  });
+
+  it('counts imported objects on no plate as on the active plate', () => {
+    const [a] = S.addParsedObjects([cube('A')]);
+    S.setTransforms([{ id: a, position: [-500, 110, 10] }]);
+    expect(S.arrangeInputs().items[0].plate).toBe(-1);
+    expect(S.arrangeInputs([], [a]).items[0].plate).toBe(0);
+  });
+
+  it('applies a result in one undo step, appending plates and rotating about Z', () => {
+    const [a, b] = S.addParsedObjects([cube('A'), cube('B')]);
+    const [x0, , z] = S.getObject(a)!.position;
+    const inp = S.arrangeInputs();
+    const out = S.applyArrange(inp.ids, result({ plates: 2, items: [moved(0, 40, 50, Math.PI / 2), moved(1, 60, 70)] }), 'all');
+    expect(out).toEqual({ moved: 2, unplaced: 0, imex: false });
+    expect(S.applyArrange(inp.ids, result({ items: [{ moved: false }, { moved: false }], unplaced: ['B'], imex: true }), 'plate')).toEqual({ moved: 0, unplaced: 1, imex: true });
+    expect(S.plates.value).toHaveLength(2);
+    expect(S.getObject(a)!.position).toEqual([40, 50, z]);
+    expect(S.plateOf(b)).toBe(1);
+    expect(S.getSliceObjects(1)[0].transform[12]).toBeCloseTo(60);
+    // 90° about Z: local +X now points along +Y.
+    const r = transformPoint(composeTRS([0, 0, 0], S.getObject(a)!.rotation, [1, 1, 1]), [1, 0, 0]);
+    expect(r[1]).toBeCloseTo(1);
+    expect(S.historyState.value.undo).toBe('Arrange');
+    S.undo();
+    expect(S.plates.value).toHaveLength(1);
+    expect(S.getObject(a)!.position[0]).toBeCloseTo(x0);
+  });
+
+  it('after "Arrange all", drops trailing plates left empty or with nothing printable', () => {
+    S.addParsedObjects([cube('A')]);
+    S.addPlate(); const [b] = S.addParsedObjects([cube('B')]);
+    S.addPlate();
+    S.setPrintable([b], false);
+    const inp = S.arrangeInputs();
+    S.applyArrange(inp.ids, result({ items: [{ moved: false }, { moved: false }] }), 'all');
+    expect(S.plates.value).toHaveLength(1);
+    // Not for "Arrange plate".
+    S.undo();
+    S.applyArrange(inp.ids, result({ items: [{ moved: false }, { moved: false }] }), 'plate');
+    expect(S.plates.value).toHaveLength(3);
+  });
+
+  it('takes the arrange order as the object order for by-object printing', () => {
+    const [a, b, c] = S.addParsedObjects([cube('A'), cube('B'), cube('C')]);
+    const inp = S.arrangeInputs();
+    S.applyArrange(inp.ids, result({ items: inp.ids.map(() => ({ moved: false })), order: [2, 0, 1], seqPrint: true }), 'plate');
+    expect(S.objects.value.map((o) => o.id)).toEqual([c, a, b]);
   });
 });

@@ -5,8 +5,7 @@ import * as projectStore from './project/store';
 import * as actions from './app/actions';
 import * as presetStore from './presets/store';
 import * as cadCommands from './cad/commands';
-import { registerPreviewActions } from './preview/actions';
-import { registerSettingsActions } from './settings/actions';
+import * as designDebug from './design/debug';
 import { installViewportVars } from './ui/mobileDialog';
 import './ui/theme.css';
 import './style.css';
@@ -14,13 +13,8 @@ import './style.css';
 installViewportVars();
 createApp(App).use(ui).mount('#app');
 
-// Register every area's commands up front so the palette / shortcuts dialog
-// list them even before the lazily-mounted panels have been opened.
-registerPreviewActions();
-void registerSettingsActions();
-
 // Debug handle for browser automation (dev, or ?cubby-debug in a build).
 if (import.meta.env.DEV || new URLSearchParams(location.search).has('cubby-debug')) {
-  Object.assign(window, { __cubbyProject: projectStore, __cubbyActions: actions, __cubbyPresets: presetStore, __cubbyCad: cadCommands });
+  Object.assign(window, { __cubbyProject: projectStore, __cubbyActions: actions, __cubbyPresets: presetStore, __cubbyCad: cadCommands, __cubbyDesign: designDebug });
   void import('./app/debugUi').then((m) => Object.assign(window, { __cubbyUi: m }));
 }

@@ -136,6 +136,19 @@ describe('invalid enum values', () => {
   it('falls back to cubic for an unknown sparse infill pattern (vendor typo)', () => {
     expect(shapeValues(enumSchema, { sparse_infill_pattern: 'zig-zag' }).sparse_infill_pattern).toBe('cubic');
   });
+  it('reads Orca\'s legacy spellings like the engine (handle_legacy)', () => {
+    const schema: ConfigSchema = {
+      engine: 'orca', version: 'test',
+      options: {
+        enable_arc_fitting: { ...opt('enum', 'print', 'disabled'), enumValues: ['disabled', 'enabled', 'sparse_infill'] },
+        sparse_infill_pattern: { ...opt('enum', 'print', 'grid'), enumValues: ['rectilinear', 'grid', 'cubic'] },
+        tree_support_wall_count: opt('int', 'print', '0'),
+        nozzle_volume_type: opt('strings', 'other', 'Standard'),
+      },
+    };
+    const v = shapeValues(schema, { enable_arc_fitting: '1', sparse_infill_pattern: 'zig-zag', tree_support_wall_count: '-1', nozzle_volume_type: ['Normal', 'Big Traffic'] });
+    expect(v).toEqual({ enable_arc_fitting: 'enabled', sparse_infill_pattern: 'rectilinear', tree_support_wall_count: '0', nozzle_volume_type: ['Standard', 'High Flow'] });
+  });
   it('keeps valid values and uses the schema default elsewhere', () => {
     const v = shapeValues(enumSchema, { sparse_infill_pattern: 'gyroid', top_surface_pattern: 'bogus' });
     expect(v.sparse_infill_pattern).toBe('gyroid');

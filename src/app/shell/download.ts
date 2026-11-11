@@ -37,14 +37,21 @@ export function pickFiles(accept: string, multiple = true): Promise<File[]> {
 /**
  * Save bytes: the native save dialog (File System Access API) where the
  * browser has it, else a download. Resolves false when the user cancels.
+ * `bytes` may be a producer, called after the file is picked (G-code
+ * post-processing runs then, as in Orca); it returns null to abort.
  */
-export async function saveBytes(bytes: Uint8Array | ArrayBuffer | Blob, name: string, type: string,
+export async function saveBytes(bytes: Uint8Array | ArrayBuffer | Blob | (() => Promise<Uint8Array | ArrayBuffer | Blob | null>), name: string, type: string,
   opts: { types: FilePickerAcceptType[]; id: string }): Promise<boolean> {
   const { fsAccessSupported, pickSave, writeHandle } = await import('../../localfs/store');
-  const blob = bytes instanceof Blob ? bytes : new Blob([bytes as BlobPart], { type });
-  if (!fsAccessSupported) { downloadBytes(blob, name, type); return true; }
+  const produce = async () => {
+    const b = typeof bytes === 'function' ? await bytes() : bytes;
+    return b === null ? null : b instanceof Blob ? b : new Blob([b as BlobPart], { type });
+  };
+  if (!fsAccessSupported) { const blob = await produce(); if (!blob) return false; downloadBytes(blob, name, type); return true; }
   const h = await pickSave(name, opts.types, opts.id);
   if (!h) return false;
+  const blob = await produce();
+  if (!blob) return false;
   await writeHandle(h, blob);
   return true;
 }

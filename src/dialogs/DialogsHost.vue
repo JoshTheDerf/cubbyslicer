@@ -12,13 +12,18 @@ import { setActiveEngine } from '../presets/store';
 import CalibrationDialogs from '../calibration/CalibrationDialogs.vue';
 import FlushingVolumesDialog from './flush/FlushingVolumesDialog.vue';
 import FilamentMapDialog from './FilamentMapDialog.vue';
+import NozzleCountDialog from './NozzleCountDialog.vue';
 import ObjectTableDialog from './ObjectTableDialog.vue';
 import CreatePresetDialog from './presets/CreatePresetDialog.vue';
 import ExportBundleDialog from './presets/ExportBundleDialog.vue';
 import BedShapeDialog from './bed/BedShapeDialog.vue';
+import CollisionVolumesDialog from './bed/CollisionVolumesDialog.vue';
 import PreferencesDialog from './PreferencesDialog.vue';
 import ArrangeOptionsDialog from './ArrangeOptionsDialog.vue';
 import { installAutoFlush } from './flush/flushStore';
+import { defineAsyncComponent } from 'vue';
+// OrcaSlicer Python plugins: dialog, plugin windows, prompts; loads enabled plugins at startup.
+const PluginsHost = defineAsyncComponent(() => import('../plugins/ui/PluginsHost.vue'));
 
 // Preferences → Default engine (once per page load).
 if (preferences.defaultEngine !== 'last' && activeEngine.value !== preferences.defaultEngine) setActiveEngine(preferences.defaultEngine);
@@ -37,13 +42,16 @@ onBeforeUnmount(() => { stopKbd(); stopFlush(); });
   <CalibrationDialogs />
   <FlushingVolumesDialog />
   <FilamentMapDialog />
+  <NozzleCountDialog />
   <ObjectTableDialog />
   <CreatePresetDialog kind="printer" />
   <CreatePresetDialog kind="filament" />
   <ExportBundleDialog />
   <BedShapeDialog />
+  <CollisionVolumesDialog />
   <PreferencesDialog />
   <ArrangeOptionsDialog />
+  <PluginsHost />
 </template>
 
 <style>

@@ -7,17 +7,17 @@
  * rotate are kept per print sequence, as in Orca.
  */
 import { computed } from 'vue';
-import { mobileDialog } from '../ui/mobileDialog';
+import AppDialog from '../ui/AppDialog.vue';
 import { resolvedConfig } from '../app/state';
 import { ARRANGE_SPACING_MAX, activeArrangeSet, arrangeSettings, resetArrangeSettings } from '../app/arrangeSettings';
 import { arrangeSeqPrint, isBblPrinter, runArrange } from '../app/shell/arrange';
 import { objects } from '../project/store';
 import { dialogs } from './state';
+import { SCALAR, cfgString } from '../lib/configValue';
 
-const scalar = (v: unknown): string => String(Array.isArray(v) ? v[0] ?? '' : v ?? '');
 const seqPrint = computed(() => arrangeSeqPrint(resolvedConfig.value));
 const set = computed(() => activeArrangeSet(seqPrint.value));
-const showCaliRegion = computed(() => isBblPrinter() && scalar(resolvedConfig.value.scan_first_layer) === '1');
+const showCaliRegion = computed(() => isBblPrinter() && cfgString(resolvedConfig.value, 'scan_first_layer', SCALAR) === '1');
 
 const spacing = computed({
   get: () => set.value.distance,
@@ -28,7 +28,7 @@ const rotation = computed({
   set: (v: boolean) => { set.value.enableRotation = v; if (v) arrangeSettings.alignToYAxis = false; },
 });
 
-function reset(): void { resetArrangeSettings(seqPrint.value, scalar(resolvedConfig.value.printer_structure) === 'i3'); }
+function reset(): void { resetArrangeSettings(seqPrint.value, cfgString(resolvedConfig.value, 'printer_structure', SCALAR) === 'i3'); }
 function arrangeNow(): void {
   dialogs.arrange = false;
   void runArrange('all');
@@ -36,9 +36,9 @@ function arrangeNow(): void {
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.arrange" title="Arrange options" :description="seqPrint ? 'For printing by object.' : undefined" :fullscreen="mobileDialog"
-          :ui="{ content: 'sm:max-w-md', body: 'flex flex-col gap-4' }">
-    <template #body>
+  <AppDialog v-model:open="dialogs.arrange" title="Arrange options" :description="seqPrint ? 'For printing by object.' : undefined" size="md" fullscreen
+             body-class="flex flex-col gap-4" cancel-label="" confirm-label="Arrange" confirm-icon="i-lucide-layout-grid" :confirm-disabled="!objects.length"
+             @confirm="arrangeNow">
       <div class="ar__row">
         <span class="ar__lbl">Spacing</span>
         <div class="flex flex-1 items-center gap-3">
@@ -53,17 +53,13 @@ function arrangeNow(): void {
       <UCheckbox v-model="arrangeSettings.allowMultiMaterials" label="Allow multiple materials on same plate" />
       <UCheckbox v-if="showCaliRegion" v-model="arrangeSettings.avoidCaliRegion" label="Avoid extrusion calibration region" />
       <UCheckbox v-model="arrangeSettings.alignToYAxis" label="Align to Y axis" :disabled="rotation" />
+    <template #footer-start>
+      <UButton variant="ghost" color="neutral" icon="i-lucide-rotate-ccw" label="Reset" @click="reset" />
     </template>
-    <template #footer>
-      <div class="flex w-full items-center justify-between gap-2">
-        <UButton variant="ghost" color="neutral" icon="i-lucide-rotate-ccw" label="Reset" @click="reset" />
-        <div class="flex gap-2">
-          <UButton variant="outline" color="neutral" label="Close" @click="dialogs.arrange = false" />
-          <UButton color="primary" icon="i-lucide-layout-grid" label="Arrange" :disabled="!objects.length" @click="arrangeNow" />
-        </div>
-      </div>
+    <template #footer-end>
+      <UButton variant="outline" color="neutral" label="Close" @click="dialogs.arrange = false" />
     </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

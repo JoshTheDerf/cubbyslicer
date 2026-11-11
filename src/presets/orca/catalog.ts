@@ -9,12 +9,17 @@
  * names a preset of the same vendor and collection; filaments that don't find
  * their parent in the vendor fall back to the OrcaFilamentLibrary vendor
  * (PresetBundle::ORCA_FILAMENT_LIBRARY, loaded first as the base bundle).
+ * Orca 2.5 `include` templates (variant tables of BBL filaments, BBL printers'
+ * start / end / change-filament G-code) are layered between the parent and the
+ * preset's own keys (see resolveRaw).
  * Preset files are fetched lazily and cached per URL.
  */
 import type { EngineId } from '../../engine/types';
-import { flattenInherits, infoMetaFrom, toPresetValues, type RawPreset } from '../inherit';
+import { includesOf, infoMetaFrom, isTemplate, toPresetValues, type RawPreset } from '../inherit';
 import type { BedAssets, MachineModel, PresetCatalog, PresetInfo, PresetKind, PresetValues, VendorInfo } from '../types';
 import { encodePath, fetchJson, isRecord, mapLimit, profileBase, str, type JsonFetcher } from '../util';
+import { unescapeStrings } from '../values';
+import { normalizeVariantLengths } from '../variants';
 
 /** Orca's shared filament library vendor (PresetBundle::ORCA_FILAMENT_LIBRARY). */
 export const ORCA_FILAMENT_LIBRARY = 'OrcaFilamentLibrary';
@@ -23,6 +28,8 @@ type ListKey = 'machine_list' | 'process_list' | 'filament_list';
 const LIST_OF: Record<PresetKind, ListKey> = { printer: 'machine_list', process: 'process_list', filament: 'filament_list' };
 
 interface VendorIndexEntry { name: string; sub_path: string }
+/** A resolved system preset: padded to its variant columns (`values`), as included (`unpadded`). */
+interface ResolvedRaw { values: PresetValues; unpadded: PresetValues; leaf: RawPreset; filamentId?: string }
 interface VendorIndex {
   id: string;
   name: string;
@@ -49,7 +56,7 @@ export interface OrcaCatalogOptions {
 }
 
 export function sysId(vendor: string, name: string): string { return `sys:${vendor}/${name}`; }
-export function parseSysId(id: string): { vendor: string; name: string } | null {
+function parseSysId(id: string): { vendor: string; name: string } | null {
   if (!id.startsWith('sys:')) return null;
   const rest = id.slice(4);
   const slash = rest.indexOf('/');
@@ -73,8 +80,9 @@ export class OrcaCatalog implements PresetCatalog {
   private readonly fileCache = new Map<string, Promise<RawPreset | null>>();
   private readonly bundleCache = new Map<string, Promise<Map<string, RawPreset> | null>>();
   private readonly useBundles: boolean;
-  private readonly resolvedCache = new Map<string, Promise<{ values: Record<string, unknown>; leaf: RawPreset } | null>>();
+  private readonly resolvedCache = new Map<string, Promise<ResolvedRaw | null>>();
   private readonly infoCache = new Map<string, Promise<PresetInfo | null>>();
+  private readonly renameCache = new Map<string, Promise<Map<string, string>>>();
 
   constructor(opts: OrcaCatalogOptions = {}) {
     this.engine = opts.engine ?? 'orca';
@@ -163,19 +171,71 @@ export class OrcaCatalog implements PresetCatalog {
     return sub ? this.file(vendor, sub) : null;
   }
 
-  /** Locate an inherits parent: same vendor/collection, then the filament library. */
-  private async parent(vendor: string, kind: PresetKind, ref: string): Promise<{ vendor: string; raw: RawPreset } | null> {
-    const own = await this.raw(vendor, kind, ref);
-    if (own) return { vendor, raw: own };
-    if (kind === 'filament' && vendor !== this.library) {
-      const lib = await this.raw(this.library, kind, ref);
-      if (lib) return { vendor: this.library, raw: lib };
+  /**
+   * Old name → current name of a vendor's presets (PresetCollection::update_map_system_profile_renamed):
+   * each preset's `renamed_from` list, or — a preset with an '@' in its name and no explicit
+   * list — its name with the '@' dropped (PresetBundle: "Generic PLA @BBL X1C" was "Generic PLA BBL X1C").
+   */
+  private renames(vendor: string, kind: PresetKind): Promise<Map<string, string>> {
+    const key = `${vendor}|${kind}`;
+    let p = this.renameCache.get(key);
+    if (!p) {
+      p = (async () => {
+        const map = new Map<string, string>();
+        const v = await this.vendor(vendor);
+        if (!v) return map;
+        const leaves = await mapLimit(v[LIST_OF[kind]], this.concurrency, async (e) => ({ name: e.name, raw: await this.file(vendor, e.sub_path) }));
+        for (const { name, raw } of leaves) {
+          for (const old of renamedFrom(name, raw)) if (old !== name && !map.has(old)) map.set(old, name);
+        }
+        return map;
+      })();
+      this.renameCache.set(key, p);
+    }
+    return p;
+  }
+
+  /** The current name of a preset that may have been renamed (follows chains, Preset.cpp find_preset); null when unknown. */
+  async currentName(vendor: string, kind: PresetKind, name: string): Promise<string | null> {
+    const v = await this.vendor(vendor);
+    if (!v) return null;
+    const names = v.byName[LIST_OF[kind]];
+    let cur = name;
+    for (let i = 0; i < 8; i++) {
+      if (names.has(cur)) return cur;
+      const next = (await this.renames(vendor, kind)).get(cur);
+      if (!next) return null;
+      cur = next;
     }
     return null;
   }
 
-  private resolveRaw(id: string, kind: PresetKind): Promise<{ values: Record<string, unknown>; leaf: RawPreset } | null> {
+  /** Locate an inherits parent: same vendor/collection, then the filament library. */
+  private async parent(vendor: string, kind: PresetKind, ref: string): Promise<{ vendor: string; name: string } | null> {
+    if (await this.raw(vendor, kind, ref)) return { vendor, name: ref };
+    if (kind === 'filament' && vendor !== this.library && (await this.raw(this.library, kind, ref))) return { vendor: this.library, name: ref };
+    // Preset::normalize_inherits / find_preset2: a parent that was renamed since.
+    for (const vid of kind === 'filament' && vendor !== this.library ? [vendor, this.library] : [vendor]) {
+      const name = await this.currentName(vid, kind, ref);
+      if (name && name !== ref && (await this.raw(vid, kind, name))) return { vendor: vid, name };
+    }
+    return null;
+  }
+
+  /**
+   * PresetBundle::resolve_vendor_preset: the resolved `inherits` parent (same vendor, then the
+   * filament library), then each preset named in `include` — looked up in the preset's own vendor
+   * and collection only (`install.include_maps`), contributing its resolved values as they were
+   * before padding — then the preset's own keys. The result is then sized to the preset's variant
+   * columns (extend_default_config_length), which is also what a child inherits.
+   *
+   * Desktop layers an include's diff against the collection default; every template Orca 2.5
+   * ships states only non-default values, so its resolved keys are that diff.
+   */
+  private resolveRaw(id: string, kind: PresetKind, path: readonly string[] = []): Promise<ResolvedRaw | null> {
     const key = `${kind}|${id}`;
+    // A cycle (malformed profile) resolves the repeated preset as missing instead of awaiting itself.
+    if (path.includes(key)) return Promise.resolve(null);
     let p = this.resolvedCache.get(key);
     if (!p) {
       p = (async () => {
@@ -183,13 +243,22 @@ export class OrcaCatalog implements PresetCatalog {
         if (!sid) return null;
         const leaf = await this.raw(sid.vendor, kind, sid.name);
         if (!leaf) return null;
-        let curVendor = sid.vendor;
-        const res = await flattenInherits(leaf, async (ref) => {
-          const found = await this.parent(curVendor, kind, ref);
-          if (found) curVendor = found.vendor;
-          return found?.raw ?? null;
-        }, sid.name);
-        return { values: res.values, leaf };
+        const next = [...path, key];
+        let merged: PresetValues = {};
+        // filament_id: the preset's own, else its parent's (install.filament_id_maps).
+        let filamentId = str(leaf.filament_id) || undefined;
+        const ref = typeof leaf.inherits === 'string' ? leaf.inherits.trim() : '';
+        if (ref) {
+          const found = await this.parent(sid.vendor, kind, ref);
+          const r = found ? await this.resolveRaw(sysId(found.vendor, found.name), kind, next) : null;
+          if (r) { merged = { ...r.values }; filamentId ??= r.filamentId; }
+        }
+        for (const name of includesOf(leaf)) {
+          const r = await this.resolveRaw(sysId(sid.vendor, name), kind, next);
+          if (r) Object.assign(merged, r.unpadded);
+        }
+        Object.assign(merged, toPresetValues(leaf));
+        return { values: normalizeVariantLengths(merged, null), unpadded: merged, leaf, filamentId };
       })();
       this.resolvedCache.set(key, p);
     }
@@ -212,7 +281,7 @@ export class OrcaCatalog implements PresetCatalog {
     if (!v) return [];
     const printers = await mapLimit(v.machine_list, this.concurrency, async (e) => {
       const leaf = await this.file(vendorId, e.sub_path);
-      if (!leaf || str(leaf.instantiation) === 'false') return null;
+      if (!leaf || isTemplate(leaf)) return null;
       return this.info(sysId(vendorId, e.name), 'printer');
     });
     const models = await mapLimit(v.machine_model_list, this.concurrency, async (e) => {
@@ -247,6 +316,13 @@ export class OrcaCatalog implements PresetCatalog {
     return str(raw?.default_bed_type) || null;
   }
 
+  async modelId(vendorId: string, model: string): Promise<string | null> {
+    const v = await this.vendor(vendorId);
+    const e = v?.machine_model_list.find((m) => m.name === model);
+    const raw = e ? await this.file(vendorId, e.sub_path) : null;
+    return str(raw?.model_id) || null;
+  }
+
   async modelBedAssets(vendorId: string, model: string): Promise<BedAssets | null> {
     const v = await this.vendor(vendorId);
     const e = v?.machine_model_list.find((m) => m.name === model);
@@ -268,10 +344,15 @@ export class OrcaCatalog implements PresetCatalog {
         const sid = parseSysId(id);
         if (!sid) return null;
         const r = await this.resolveRaw(id, kind);
-        if (!r) return null;
+        if (!r) {
+          // A project / selection naming a preset that has been renamed since: the current preset.
+          const name = await this.currentName(sid.vendor, kind, sid.name);
+          return name && name !== sid.name ? this.info(sysId(sid.vendor, name), kind) : null;
+        }
         return {
           id, kind, name: sid.name, source: 'system', vendor: sid.vendor,
           fromLibrary: sid.vendor === this.library,
+          ...(kind === 'filament' && r.filamentId ? { filamentId: r.filamentId } : {}),
           ...infoMetaFrom(r.values, sid.name, r.leaf),
         } as PresetInfo;
       })();
@@ -287,7 +368,7 @@ export class OrcaCatalog implements PresetCatalog {
       if (!v) return [];
       const infos = await mapLimit(v[LIST_OF[kind]], this.concurrency, async (e) => {
         const leaf = await this.file(vid, e.sub_path);
-        if (!leaf || str(leaf.instantiation) === 'false') return null;
+        if (!leaf || isTemplate(leaf)) return null;
         return this.info(sysId(vid, e.name), kind);
       });
       return infos.filter((x): x is PresetInfo => !!x);
@@ -296,9 +377,10 @@ export class OrcaCatalog implements PresetCatalog {
     if (kind !== 'filament') return own;
     const lib = await load(this.library);
     // PresetCollection::update_library_profile_excluded_from: a library preset with
-    // empty compatible_printers is hidden for printers that a same-alias vendor preset targets.
+    // empty compatible_printers is hidden for printers that a same-alias printer-specific
+    // preset targets — in the vendor bundle or (Orca 2.5) in the library itself.
     const byAlias = new Map<string, Set<string>>();
-    for (const p of own) {
+    for (const p of [...own, ...lib]) {
       if (!p.alias || !p.compatiblePrinters?.length) continue;
       let s = byAlias.get(p.alias);
       if (!s) byAlias.set(p.alias, (s = new Set()));
@@ -313,19 +395,32 @@ export class OrcaCatalog implements PresetCatalog {
 
   async resolve(id: string, kind: PresetKind): Promise<PresetValues | null> {
     const r = await this.resolveRaw(id, kind);
-    return r ? toPresetValues(r.values) : null;
+    if (r) return r.values;
+    const info = await this.info(id, kind);
+    return info && info.id !== id ? this.resolve(info.id, kind) : null;
   }
 
-  async findByName(kind: PresetKind, name: string, vendorHint?: string): Promise<PresetInfo | null> {
-    const tryVendor = async (vid: string) => {
+  /**
+   * PresetCollection::find_preset2: by name, then by an old name (`renamed_from`), then — for a
+   * missing "… Generic <material> @…" — the library's "Generic <material> @System".
+   */
+  async findByName(kind: PresetKind, name: string, vendorHint?: string, autoMatch = true): Promise<PresetInfo | null> {
+    const tryVendor = async (vid: string, renamed: boolean) => {
       const v = await this.vendor(vid);
-      return v?.byName[LIST_OF[kind]].has(name) ? this.info(sysId(vid, name), kind) : null;
+      if (!v) return null;
+      if (v.byName[LIST_OF[kind]].has(name)) return this.info(sysId(vid, name), kind);
+      const cur = renamed ? await this.currentName(vid, kind, name) : null;
+      return cur ? this.info(sysId(vid, cur), kind) : null;
     };
-    if (vendorHint) { const r = await tryVendor(vendorHint); if (r) return r; }
-    if (kind === 'filament') { const r = await tryVendor(this.library); if (r) return r; }
+    const first = [...(vendorHint ? [vendorHint] : []), ...(kind === 'filament' ? [this.library] : [])];
+    for (const vid of first) { const r = await tryVendor(vid, true); if (r) return r; }
     const ids = await this.listVendorIds();
     const idx = await mapLimit(ids, this.concurrency, (id) => this.vendor(id));
     for (const v of idx) if (v?.byName[LIST_OF[kind]].has(name)) return this.info(sysId(v.id, name), kind);
+    if (autoMatch && kind === 'filament' && /Generic/.test(name)) {
+      const alt = genericLibraryName(name);
+      if (alt && alt !== name) return this.findByName(kind, alt, this.library, false);
+    }
     return null;
   }
 
@@ -335,4 +430,20 @@ export class OrcaCatalog implements PresetCatalog {
     return sid ? this.raw(sid.vendor, kind, sid.name) : null;
   }
 
+}
+
+/** A preset's old names (`renamed_from`, C-style string list; implicit: the name without its '@'). */
+export function renamedFrom(name: string, raw: RawPreset | null): string[] {
+  const r = raw?.renamed_from;
+  const list = Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : typeof r === 'string' && r ? unescapeStrings(r) : [];
+  if (list.length) return list;
+  const at = name.indexOf('@');
+  if (at < 0 || (typeof raw?.alias === 'string' && raw.alias)) return [];
+  return [name.slice(0, at) + name.slice(at + 1)];
+}
+
+/** find_preset2's fallback: "<prefix_>Generic <material> @<anything>" → "Generic <material> @System". */
+export function genericLibraryName(name: string): string | null {
+  const m = /^(?:.*?\b(?:\w+_)?)(Generic)\b\s+([^@]+?)\s*(?:@.*)?$/.exec(name);
+  return m ? `Generic ${m[2]} @System` : null;
 }

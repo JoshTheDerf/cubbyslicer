@@ -33,7 +33,12 @@ page.setDefaultTimeout(300000);
 const problems = [];
 page.on('pageerror', (e) => { problems.push(`pageerror: ${e.message}`); console.log('[pageerror]', e.message); });
 page.on('response', (r) => { if (r.status() >= 400) console.log(`[http ${r.status()}] ${r.url()}`); });
-page.on('console', (m) => { if (m.type() === 'error') { problems.push(m.text()); console.log('[console.error]', m.text()); } });
+// Against a production build the dev-only /slicer/src/ imports below 404 by design (the script falls back to the UI).
+page.on('console', (m) => {
+  if (m.type() !== 'error') return;
+  if (/\/slicer\/src\//.test(m.location()?.url ?? '') && /404/.test(m.text())) { console.log('[console.error ignored: dev-only module]', m.location().url); return; }
+  problems.push(m.text()); console.log('[console.error]', m.text());
+});
 
 const t0 = Date.now();
 const lap = (s) => console.log(`${((Date.now() - t0) / 1000).toFixed(1)}s  ${s}`);
@@ -86,6 +91,16 @@ const result = await page.evaluate(async () => {
   return r ? { engine: r.engine, bytes: r.gcode.byteLength, stats: r.report.stats, warnings: r.report.warnings } : null;
 });
 lap(`result: ${JSON.stringify(result)}`);
+
+// SAVE_GCODE=<file>: keep the G-code (e.g. a real engine fixture for src/preview/__fixtures__/).
+if (process.env.SAVE_GCODE) {
+  const text = await page.evaluate(async () => {
+    const st = await import('/slicer/src/app/state.ts');
+    const r = st.lastSlice.value;
+    return r ? new TextDecoder().decode(r.gcode) : null;
+  }).catch(() => null);
+  if (text) { writeFileSync(resolve(process.env.SAVE_GCODE), text); lap(`G-code saved to ${process.env.SAVE_GCODE}`); }
+}
 
 // Slice again (fresh instance per slice) to make sure nothing leaks between runs.
 await page.keyboard.press('Control+1');

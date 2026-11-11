@@ -5,8 +5,9 @@
  */
 import type { Action } from '../app/actions/types';
 import type { AppContext } from '../app/actions/context';
-import { registerActions } from '../app/actions/registry';
-import { openWebUi } from './send';
+import { describeError, openWebUi } from './send';
+import { syncFilamentsFromPrinter } from './filamentSync';
+import { toast } from '../ui';
 import { hostReady, openPhysicalPrinterDialog, openSendDialog, physicalPrinter, printhostUi } from './store';
 
 const canSend = (c: AppContext) => c.slice.available && c.slice.hasResult && !c.slice.busy && hostReady.value && !printhostUi.uploading;
@@ -32,11 +33,22 @@ export const printhostActions: Action[] = [
     aliases: ['device', 'mainsail', 'fluidd', 'octoprint', 'dashboard'],
     when: () => !!physicalPrinter.value, run: () => openWebUi(),
   },
+  {
+    id: 'printer.sync-filaments', title: 'Sync filaments from printer', icon: 'i-lucide-refresh-cw', category: 'Settings',
+    aliases: ['ams', 'afc', 'happy hare', 'mmu', 'lanes', 'spools', 'filament slots', 'moonraker'],
+    description: 'Sets the filament slots from the printer’s lanes (AFC / Happy Hare on Moonraker): one slot per lane, with its colour and a matching preset.',
+    when: () => physicalPrinter.value?.config.type === 'moonraker', run: syncFilaments,
+  },
 ];
 
-let dispose: (() => void) | null = null;
-/** Register with the app registry (idempotent). */
-export function registerPrinthostActions(): () => void {
-  if (!dispose) dispose = registerActions(printhostActions);
-  return () => { dispose?.(); dispose = null; };
+async function syncFilaments(): Promise<void> {
+  try {
+    const r = await syncFilamentsFromPrinter();
+    toast.success(`Synced ${r.lanes.length} filament${r.lanes.length === 1 ? '' : 's'} from the printer.`, {
+      detail: r.matched.map((m) => `T${m.lane}: ${m.preset ?? 'no matching preset (colour only)'}`).join('\n'),
+    });
+  } catch (e) {
+    const d = describeError(e);
+    toast.error(d.message, { detail: d.detail });
+  }
 }

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { mixedEnabled, mixedFilaments, mixedLabel } from '../mixed/store';
 /**
  * Orca's paint gizmo panel (support / seam / color / fuzzy skin painting):
  * brush type, size, smart-fill angle, overhang limit, filament swatches,
@@ -9,7 +8,8 @@ import { computed } from 'vue';
 import { currentPresets } from '../presets/store';
 import { phone, touch } from '../app/shell/uiState';
 import { closePaint, eraseAllPaint } from './controller';
-import { PAINT_TITLES, PAINT_TOOLS, TOOL_LABELS, paintUi, type PaintTool } from './state';
+import { mixedFilaments, mixedLabel } from '../mixed/store';
+import { MAX_COLOR_STATE, PAINT_TITLES, PAINT_TOOLS, TOOL_LABELS, paintUi, type PaintTool } from './state';
 
 const TOOL_ICONS: Record<PaintTool, string> = {
   circle: 'i-lucide-circle', sphere: 'i-lucide-globe', fill: 'i-lucide-paint-bucket', bucket: 'i-lucide-paint-roller',
@@ -22,9 +22,9 @@ const filaments = computed(() => [
   ...currentPresets.value.selection.filaments.map((_, i) => ({
     n: i + 1, colour: currentPresets.value.filamentColour(i), name: currentPresets.value.infos.value.filaments[i]?.name ?? `Filament ${i + 1}`,
   })),
-  // Full Spectrum mixed filaments paint like physical ones (virtual filament numbers).
-  ...(mixedEnabled.value ? mixedFilaments.value.map((m) => ({ n: m.id, colour: m.color, name: `Mixed ${mixedLabel(m)}` })) : []),
-]);
+  // Mixed filaments paint like physical ones (their slot numbers follow the physical ones).
+  ...mixedFilaments.value.map((m) => ({ n: m.id, colour: m.color, name: `Mixed ${mixedLabel(m)}` })),
+].slice(0, MAX_COLOR_STATE));
 const brush = computed(() => paintUi.tool === 'circle' || paintUi.tool === 'sphere');
 const legend = computed(() => {
   const l = layer.value;

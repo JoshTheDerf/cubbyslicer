@@ -4,7 +4,8 @@
  * Loaded lazily from main.ts so it adds nothing to the normal startup.
  */
 export { dialogs, openDialog, closeDialog } from '../dialogs/state';
-export { ui, confirmRequest, confirmAction, drawerOpen, phone, compact } from './shell/uiState';
+export { ui, confirmRequest, confirmDialog, confirmAction, askConfirm, drawerOpen, phone, compact } from './shell/uiState';
+export { primitiveSizeDialog } from './shell/commands/parts';
 export { calibUi } from '../calibration/state';
 export { printhostUi } from '../printhost/store';
 export { bridgeUi } from '../bridge/store';

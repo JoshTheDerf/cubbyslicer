@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * First-run setup (UModal + UStepper): Printer → Filament → Ready.
+ * First-run setup (AppDialog + UStepper): Printer → Filament → Ready.
  * Shown automatically on a user's first visit (SettingsPanel, SETUP_DONE_KEY)
  * and reopenable via the `settings.setup` action (Help menu / palette).
  */
@@ -14,6 +14,7 @@ import { activeEngine } from '../app/state';
 import { run } from '../app/shell/useActions';
 import { mobileDialog, shortScreen } from '../ui/mobileDialog';
 import PrinterBrowser from './PrinterBrowser.vue';
+import AppDialog from '../ui/AppDialog.vue';
 
 const emit = defineEmits<{ (e: 'close', completed: boolean): void }>();
 const open = ref(true);
@@ -93,9 +94,8 @@ function onStep(v: unknown): void {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="dialogTitle" :description="mobileDialog ? undefined : 'Pick your printer and filament — you can change them any time in the sidebar.'"
-          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-5xl', body: 'flex flex-col gap-3 phone:gap-2 overflow-hidden' }" @after:leave="emit('close', completed)">
-    <template #body>
+  <AppDialog v-model:open="open" :title="dialogTitle" :description="mobileDialog ? undefined : 'Pick your printer and filament — you can change them any time in the sidebar.'"
+             size="5xl" fullscreen body-class="flex flex-col gap-3 phone:gap-2 overflow-hidden" @after:leave="emit('close', completed)">
       <!-- Landscape phones: the step shows in the title instead of the stepper. -->
       <UStepper v-if="!shortScreen" :model-value="step" :items="stepItems" size="sm" class="setup-steps" :ui="mobileDialog ? { description: 'hidden', title: 'text-xs' } : undefined" @update:model-value="onStep" />
 
@@ -106,7 +106,6 @@ function onStep(v: unknown): void {
           <span v-if="shortScreen" class="ms-auto min-w-0 truncate">Current: <strong class="text-highlighted">{{ printerName }}</strong></span>
           <template v-if="!mobileDialog">
             <small v-if="engine === 'orca'" class="text-dimmed">Large printer library (Bambu, Prusa, Creality, Voron, …).</small>
-            <small v-else-if="engine === 'fullspectrum'" class="text-dimmed">Snapmaker Orca fork: mixed filaments blend colours by alternating thin layers (Snapmaker U1 and other multi-tool printers).</small>
             <small v-else class="text-dimmed">PrusaSlicer-based. Uses OrcaSlicer's printer library, converted to preFlight settings.</small>
           </template>
         </div>
@@ -164,7 +163,6 @@ function onStep(v: unknown): void {
         <p class="text-sm text-dimmed">Drop a model on the plate (or import one) and press <strong>Slice plate</strong>.
           You can change any of this later in the sidebar, or rerun this setup from Help.</p>
       </section>
-    </template>
 
     <template #footer>
       <div class="flex w-full items-center gap-2">
@@ -179,7 +177,7 @@ function onStep(v: unknown): void {
         </template>
       </div>
     </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

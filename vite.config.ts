@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
+import { fileURLToPath } from 'node:url'
 
 // Cross-origin isolation (SharedArrayBuffer) for the multi-threaded engine
 // build. Production sends the same two headers from Caddy for /slicer/*.
@@ -14,10 +15,13 @@ const crossOriginIsolation = {
 // Standalone slicer app. Built to a `/slicer/` base path so the reverse proxy
 // can serve it at cubbycad.com/slicer (mirrors the editor's `/editor/` base).
 //
-// This app carries the AGPL-3.0 slicer engines (CuraEngine / OrcaSlicer /
-// PrusaSlicer WASM) that were extracted out of the closed-source editor
-// bundle. See LICENSE + README.md.
+// This app runs the AGPL-3.0 slicer engines (OrcaSlicer and preFlight, a
+// PrusaSlicer fork, built to WASM; see src/engine/ and scripts/fetch-*-wasm.sh).
+// See LICENSE + README.md.
 export default defineConfig({
+  // Pinned: vitest run from a subdirectory would otherwise make that the root, and Nuxt UI
+  // would write auto-imports.d.ts / components.d.ts and node_modules/.nuxt-ui there.
+  root: fileURLToPath(new URL('.', import.meta.url)),
   base: '/slicer/',
   plugins: [
     vue(),

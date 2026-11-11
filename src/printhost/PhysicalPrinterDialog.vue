@@ -14,7 +14,12 @@ import { boundPrinter, deviceById, deviceStore, hostContext, physicalPrinter, pr
 import { browserEnv, lnaAddressSpace } from './transport';
 import type { PhysicalPrinterConfig } from './types';
 import { webUiUrl } from './url';
+import { requestUltimakerCredentials } from './hosts/ultimaker';
+import { syncFilamentsFromPrinter } from './filamentSync';
+import { toast } from '../ui';
 import { mobileDialog, shortScreen } from '../ui/mobileDialog';
+import AppDialog from '../ui/AppDialog.vue';
+import { dialogs } from '../dialogs/state';
 
 const draft = reactive<PhysicalPrinterConfig>(emptyConfig());
 const name = ref('');
@@ -31,7 +36,7 @@ const printers = ref<string[] | null>(null);
 const printersBusy = ref(false);
 let testAbort: AbortController | null = null;
 
-watch(() => printhostUi.setupOpen, (open) => {
+watch(() => dialogs.physicalPrinter, (open) => {
   if (!open) { testAbort?.abort(); return; }
   const t = printhostUi.setupTarget;
   const cur = physicalPrinter.value;
@@ -95,6 +100,35 @@ async function runTest() {
   }
 }
 
+const credsBusy = ref(false);
+/** UltiMaker: ask the printer for an ID / key, then the user approves it on the printer. */
+async function requestCredentials() {
+  credsBusy.value = true;
+  try {
+    const c = await requestUltimakerCredentials(hostContext(normalizeConfig(draft)), browserEnv());
+    draft.user = c.id; draft.password = c.key;
+    test.value = { state: 'ok', message: 'Credentials created.', detail: 'Approve access on the printer’s screen, then Test. Save to keep them.' };
+  } catch (e) {
+    const d = describeError(e);
+    test.value = { state: 'error', message: d.message, detail: d.detail };
+  } finally { credsBusy.value = false; }
+}
+
+const syncBusy = ref(false);
+/** Moonraker: filament slots from the printer's lanes (AFC / Happy Hare lane_data). */
+async function syncFilaments() {
+  syncBusy.value = true;
+  try {
+    const r = await syncFilamentsFromPrinter(normalizeConfig(draft));
+    toast.success(`Synced ${r.lanes.length} filament${r.lanes.length === 1 ? '' : 's'} from the printer.`, {
+      detail: r.matched.map((m) => `T${m.lane}: ${m.preset ?? 'no matching preset (colour only)'}`).join('\n'),
+    });
+  } catch (e) {
+    const d = describeError(e);
+    test.value = { state: 'error', message: d.message, detail: d.detail };
+  } finally { syncBusy.value = false; }
+}
+
 async function browsePrinters() {
   const m = meta.value;
   if (!m?.driver?.listPrinters) return;
@@ -110,11 +144,11 @@ async function browsePrinters() {
 
 function save() {
   savePhysicalPrinter(normalizeConfig(draft), { id: editingId.value, name: name.value, presets: presetRefs() });
-  printhostUi.setupOpen = false;
+  dialogs.physicalPrinter = false;
 }
 function remove() {
   removePhysicalPrinter(editingId.value ?? physicalPrinter.value?.id);
-  printhostUi.setupOpen = false;
+  dialogs.physicalPrinter = false;
 }
 async function copy(text: string) {
   try { await navigator.clipboard.writeText(text); } catch { /* clipboard blocked */ }
@@ -122,10 +156,9 @@ async function copy(text: string) {
 </script>
 
 <template>
-  <UModal v-model:open="printhostUi.setupOpen" :title="printhostUi.setupTarget === 'new' ? 'Add physical printer' : 'Physical printer'"
-          :description="shortScreen ? undefined : 'Send G-code from CubbySlicer to a printer on your network. Add one per machine: two printers of the same model share the printer preset but each has its own address.'"
-          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl' }">
-    <template #body>
+  <AppDialog v-model:open="dialogs.physicalPrinter" :title="printhostUi.setupTarget === 'new' ? 'Add physical printer' : 'Physical printer'"
+             :description="shortScreen ? undefined : 'Send G-code from CubbySlicer to a printer on your network. Add one per machine: two printers of the same model share the printer preset but each has its own address.'"
+             size="2xl" fullscreen confirm-label="Save" :confirm-disabled="!valid" @confirm="save">
       <div class="pp dlg-flow space-y-4 text-sm phone:space-y-3">
         <UTabs v-if="mobileDialog" class="dlg-span" v-model="tab" :items="[{ value: 'conn', label: 'Connection' }, { value: 'help', label: hints.length ? 'Setup help •' : 'Help' }]" :content="false" size="sm" />
         <div v-show="conn" class="grid grid-cols-2 gap-3 phone:grid-cols-1">
@@ -164,9 +197,9 @@ async function copy(text: string) {
           </UInput>
         </UFormField>
 
-        <div v-if="meta?.authTypes && draft.authType === 'user'" v-show="conn" class="grid grid-cols-2 gap-3">
-          <UFormField label="User"><UInput v-model="draft.user" class="w-full" autocomplete="off" /></UFormField>
-          <UFormField label="Password"><UInput v-model="draft.password" type="password" class="w-full" autocomplete="off" /></UFormField>
+        <div v-if="(meta?.authTypes && draft.authType === 'user') || meta?.userPassword" v-show="conn" class="grid grid-cols-2 gap-3">
+          <UFormField :label="meta?.userPassword?.user ?? 'User'"><UInput v-model="draft.user" class="w-full" autocomplete="off" spellcheck="false" /></UFormField>
+          <UFormField :label="meta?.userPassword?.password ?? 'Password'"><UInput v-model="draft.password" type="password" class="w-full" autocomplete="off" /></UFormField>
         </div>
 
         <UFormField v-if="meta?.printerSlug" v-show="conn" label="Printer" hint="Repetier printer slug">
@@ -192,6 +225,8 @@ async function copy(text: string) {
 
         <div v-show="conn" class="dlg-span flex items-center gap-2 flex-wrap">
           <UButton icon="i-lucide-plug-zap" label="Test" variant="outline" :loading="test.state === 'running'" :disabled="!valid" @click="runTest" />
+          <UButton v-if="meta?.userPassword?.credentials" icon="i-lucide-key-round" label="Request credentials" variant="outline" :loading="credsBusy" :disabled="!draft.host.trim()" @click="requestCredentials" />
+          <UButton v-if="meta?.filamentSync" icon="i-lucide-refresh-cw" label="Sync filaments" variant="outline" :loading="syncBusy" :disabled="!draft.host.trim()" @click="syncFilaments" />
           <UButton v-if="webUi" icon="i-lucide-external-link" label="Open web UI" variant="ghost" @click="openWebUi(normalizeConfig(draft))" />
           <UBadge v-if="meta" :color="meta.support === 'full' && canPrint ? 'success' : meta.support === 'none' ? 'error' : 'warning'" variant="subtle"
                   :label="meta.support === 'none' ? 'Not available in a browser' : canPrint ? 'Upload & print' : 'Upload only'" />
@@ -230,18 +265,10 @@ async function copy(text: string) {
           <span>Settings and credentials are stored only in this browser (localStorage) and shared by its CubbySlicer tabs. They are sent only to the printer address above.</span>
         </p>
       </div>
+    <template v-if="existing" #footer-start>
+      <UButton color="error" variant="ghost" icon="i-lucide-trash-2" label="Remove" @click="remove" />
     </template>
-    <template #footer>
-      <div class="flex justify-between gap-2 w-full">
-        <UButton v-if="existing" color="error" variant="ghost" icon="i-lucide-trash-2" label="Remove" @click="remove" />
-        <span v-else />
-        <div class="flex gap-2">
-          <UButton color="neutral" variant="ghost" label="Cancel" @click="printhostUi.setupOpen = false" />
-          <UButton color="primary" label="Save" :disabled="!valid" @click="save" />
-        </div>
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

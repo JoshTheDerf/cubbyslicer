@@ -10,17 +10,23 @@
  */
 import { computed, ref, shallowRef, watch } from 'vue';
 import { getSchema, SliceCancelled, SliceError, sliceJob } from '../engine/client';
-import type { FlatConfig, SliceJob, SliceReport, SliceResult } from '../engine/types';
-import { splitOrcaCompat } from '../presets/preflight/convert';
-import { activePlate, getSliceObjects, plates, plateSliceSignature, projectLoads, setActivePlate } from '../project/store';
+import { engineCaps, type FlatConfig, type SliceJob, type SliceReport, type SliceResult } from '../engine/types';
+import { ORCA_COMPAT_PREFIX, splitOrcaCompat } from '../presets/preflight/convert';
+import { activePlate, getSliceObjects, objectIssues, objectsOnPlate, plates, plateSliceSignature, projectLoads, setActivePlate } from '../project/store';
 import { activeEngine, activeView, lastSlice, resolvedConfig } from './state';
 import { applyPlateConfig } from '../plates/store';
-import { presetsSettled } from '../presets/store';
+import { currentPresets, presetsSettled } from '../presets/store';
+import { asList } from '../lib/configValue';
 import { calibJobOptions, calibSignature } from '../calibration/state';
 import { saveBytes } from './shell/download';
 import { toast } from '../ui';
 import { GCODE_TYPES, fileInFolder, folderAccessSupported, writeHandle } from '../localfs/store';
 import { withGcodeThumbnails } from '../project/thumbnails';
+import { gcodeForOutput } from '../plugins/gcode';
+import { fireEngineEvents } from '../plugins/host/lifecycle';
+import { finishNozzleMaps } from '../presets/nozzleMaps';
+import { anchorOf, placeTower, setAnchor, withTowerAnchor, type PlacedTower } from './wipeTower';
+import { engineTool } from '../engine/client';
 
 export type SliceStatus = 'idle' | 'slicing' | 'done' | 'error';
 
@@ -78,15 +84,22 @@ watch(() => plates.value.map((p) => p), (next, prev) => {
 });
 
 /** preFlight running converted Orca presets gets their Orca-only values as placeholder variables. */
-async function buildJob(objects: SliceJob['objects'], plate = activePlate.value): Promise<SliceJob> {
+async function buildJob(objects: SliceJob['objects'], plate = activePlate.value, opts: { anchor?: boolean } = {}): Promise<SliceJob> {
   const job = await buildBaseJob(objects);
   // Per-plate settings (Orca PlateSettingsDialog) override the config; slider custom G-codes ride along.
   const meta = plates.value[plate];
   if (meta?.config) {
     const schema = await getSchema(job.engine).catch(() => null);
     job.config = applyPlateConfig(job.config, meta.config, schema ? (k) => k in schema.options : null);
+    // The plate's own filament_map / volume map: re-size the nozzle maps over them.
+    if (engineCaps(job.engine).orcaConfig && schema) job.config = finishNozzleMaps(job.config, schema);
   }
   if (meta?.customGcodes?.length) job.options = { ...job.options, customGcodes: meta.customGcodes.map((g) => ({ ...g })) };
+  // The plate's prime tower anchor (placed by placePlateTower) where the engine reads it.
+  if (engineCaps(job.engine).orcaConfig && opts.anchor !== false) {
+    const a = anchorOf(job.config, plate);
+    if (a) job.config = withTowerAnchor(job.config, a[0], a[1]);
+  }
   // Calibration print (Calibration menu): Orca's Calib_Params.
   const calib = calibJobOptions();
   if (calib.calib) job.options = { ...job.options, ...calib };
@@ -96,11 +109,47 @@ async function buildJob(objects: SliceJob['objects'], plate = activePlate.value)
 async function buildBaseJob(objects: SliceJob['objects']): Promise<SliceJob> {
   const engine = activeEngine.value;
   const config = resolvedConfig.value;
-  if (engine !== 'preflight') return { engine, config, objects };
-  const orcaSchema = Object.keys(config).some((k) => k.startsWith('orca:')) ? await getSchema('orca').catch(() => null) : null;
+  if (!engineCaps(engine).orcaCompat) return { engine, config, objects };
+  const orcaSchema = Object.keys(config).some((k) => k.startsWith(ORCA_COMPAT_PREFIX)) ? await getSchema('orca').catch(() => null) : null;
   const split = splitOrcaCompat(config, orcaSchema);
   return { engine, config: split.config, objects, options: Object.keys(split.vars).length ? { placeholderVars: split.vars } : undefined };
 }
+
+/**
+ * Desktop's prime tower placement for the plate (app/wipeTower.ts): a new plate gets desktop's
+ * default spot, a saved anchor the footprint doesn't fit at is clamped / moved inside the
+ * printable area, and one far off the plate goes to the clear spot nearest it (GLCanvas3D::reload_scene).
+ * Written back to the project's wipe_tower_x / wipe_tower_y; the Prepare view's tower
+ * (towerPreview.ts) and the slice (before its signature is taken) both go through here.
+ */
+export async function placePlateTower(plate: number, objects: SliceJob['objects'] = getSliceObjects(plate)): Promise<{ result: PlacedTower; job: SliceJob } | null> {
+  if (!engineCaps(activeEngine.value).orcaConfig || !objects.length) return null;
+  const p = currentPresets.value;
+  try {
+    const base = await buildJob(objects, plate, { anchor: false });
+    const own = anchorOf(resolvedConfig.value, plate);
+    const r = await placeTower(base, own, async (args) => (await engineTool('wipe_tower_footprint', args)).result, await p.printerModelId());
+    if (!r) return null;
+    const { x, y } = r.placement;
+    if (own && Math.abs(own[0] - x) < 1e-3 && Math.abs(own[1] - y) < 1e-3) return { result: r, job: base };
+    p.project.wipe_tower_x = setAnchor(asList(resolvedConfig.value.wipe_tower_x), plate, x);
+    p.project.wipe_tower_y = setAnchor(asList(resolvedConfig.value.wipe_tower_y), plate, y);
+    // The stored position changes once, so this is shown once per move.
+    if (r.relocation?.overlapsObjects) {
+      toast.warn(`The prime tower on plate ${plate + 1} no longer fits where it was placed. There is no free space left on the plate for it, so it was moved onto an object.`);
+    } else if (r.relocation) {
+      toast.info(`The prime tower on plate ${plate + 1} no longer fits where it was placed, so it was moved to free space on the plate.`);
+    }
+    await presetsSettled(); // resolvedConfig (and with it the slice signature) carries the new anchor
+    return { result: r, job: base };
+  } catch (e) {
+    // The slice's own validation reports a tower that doesn't fit.
+    console.warn('prime tower placement:', e);
+    return null;
+  }
+}
+
+const prefix0 = (label: string) => (plates.value.length > 1 ? `${label}: ` : '');
 
 async function slicePlate(plate: number, label: string): Promise<boolean> {
   const objects = getSliceObjects(plate);
@@ -109,8 +158,17 @@ async function slicePlate(plate: number, label: string): Promise<boolean> {
     status.value = 'error';
     return false;
   }
-  const sig = signature(plate);
+  // IDEX/IQEX parallel mode: Orca won't slice a plate with a part outside T0's zone.
+  const misplaced = objectsOnPlate(plate).filter((o) => objectIssues.value.get(o.id)?.includes('zone'));
+  if (misplaced.length) {
+    error.value = `${prefix0(label)}${misplaced.length === 1 ? `“${misplaced[0].name}” is` : `${misplaced.length} objects are`} outside T0’s zone. Move ${misplaced.length === 1 ? 'it' : 'them'} into the clear area of the bed, or set the plate back to Primary mode.`;
+    status.value = 'error';
+    return false;
+  }
   progress.value = 0;
+  message.value = 'Placing the prime tower';
+  await placePlateTower(plate, objects);
+  const sig = signature(plate);
   message.value = 'Starting engine';
   const prefix = plates.value.length > 1 ? `${label}: ` : '';
   const job = await buildJob(objects, plate);
@@ -126,6 +184,7 @@ async function slicePlate(plate: number, label: string): Promise<boolean> {
     },
     abort!.signal,
   );
+  fireEngineEvents(sliced.report.events);
   // The printer's G-code thumbnails, rendered once here from the objects that
   // were sliced: every export / upload of this result reuses them.
   message.value = prefix + 'Rendering thumbnails';
@@ -241,8 +300,10 @@ export function activeGcode(): { bytes: Uint8Array; name: string } | null {
 function exportGcode(): boolean {
   const r = lastSlice.value;
   if (!r) return false;
+  const name = gcodeFilename();
   // Native save dialog where the File System Access API exists (else a download).
-  void saveBytes(r.gcode, gcodeFilename(), 'text/x-gcode', { types: GCODE_TYPES, id: 'cubby-gcode' })
+  // Post-processing plugins run on a copy once the file is picked (Orca: every export).
+  void saveBytes(() => gcodeForOutput(r.gcode, 'File', name), name, 'text/x-gcode', { types: GCODE_TYPES, id: 'cubby-gcode' })
     .catch((e) => { toast.error("Couldn't export G-code.", { detail: (e as Error)?.message }); });
   return true;
 }
@@ -255,13 +316,23 @@ function exportAllGcode(): number {
     void (async () => {
       try {
         const dir = await window.showDirectoryPicker!({ id: 'cubby-gcode', mode: 'readwrite' });
-        for (const { r, name } of all) await writeHandle(await fileInFolder(dir, name), r.gcode);
+        for (const { r, name } of all) {
+          const out = await gcodeForOutput(r.gcode, 'File', name);
+          if (!out) return;
+          await writeHandle(await fileInFolder(dir, name), out);
+        }
         toast.success(`Exported ${all.length} plates to ${dir.name}.`, { timeout: 2200 });
       } catch (e) { if ((e as Error)?.name !== 'AbortError') toast.error("Couldn't export G-code.", { detail: (e as Error)?.message }); }
     })();
     return all.length;
   }
-  for (const { r, name } of all) download(r, name);
+  void (async () => {
+    for (const { r, name } of all) {
+      const out = await gcodeForOutput(r.gcode, 'File', name);
+      if (!out) return;
+      download({ ...r, gcode: out }, name);
+    }
+  })();
   return all.length;
 }
 

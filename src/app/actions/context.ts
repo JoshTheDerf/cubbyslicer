@@ -80,12 +80,22 @@ export interface ActionDispatch {
   autoOrient(scope: 'auto' | 'all'): void | Promise<void>;
   splitToObjects(): void;
   splitToParts(): void;
+  /** Desktop "Fix model" (selection), "Fix All" (active plate), "Fix All Plates": CGAL mesh repair, one undo step. */
+  repairMeshes(scope: 'selection' | 'plate' | 'all'): void | Promise<void>;
   /** Orca "Add part / negative part / modifier / support blocker / enforcer" on the selected object. */
-  addSubObject(type: 'part' | 'negative' | 'modifier' | 'support_blocker' | 'support_enforcer', source: 'box' | 'cylinder' | 'sphere' | 'slab' | 'file'): void | Promise<void>;
+  addSubObject(type: 'part' | 'negative' | 'modifier' | 'support_blocker' | 'support_enforcer' | 'precise_seam', source: 'box' | 'cylinder' | 'sphere' | 'slab' | 'file'): void | Promise<void>;
   // arrange
   arrangeAll(): void;
   arrangeSelection(): void;
   arrangePlate(): void;
+  /** Orca 2.5 Align: line the selection up along X (0) or Y (1) by its joint box's min / centre / max. */
+  align(axis: 0 | 1, edge: 'min' | 'center' | 'max'): void;
+  /** Orca 2.5 Distribute: space 3+ selected objects' centres evenly along X / Y. */
+  distribute(axis: 0 | 1): void;
+  /** Orca 2.5 Order By: sort the active plate's (or every plate's) objects; again = reversed. */
+  orderObjects(order: 'name' | 'filament' | 'height' | 'size', allPlates: boolean): void;
+  /** Orca 2.5 "Show options when adding a primitive". */
+  setAskPrimitiveSize(on: boolean): void;
   // plates
   addPlate(): void;
   deletePlate(): void | Promise<void>;
@@ -102,7 +112,7 @@ export interface ActionDispatch {
   setCameraType(t: CameraType): void;
   /** Grid snap for gizmo drags and arrow nudges, mm (0 = off). */
   setSnapIncrement(v: number): void;
-  setActiveView(v: 'prepare' | 'preview'): void;
+  setActiveView(v: 'design' | 'prepare' | 'preview'): void;
   toggleSidebar(): void;
   // slice
   slice(): void | Promise<void>;
@@ -117,7 +127,7 @@ export interface ActionDispatch {
 }
 
 export interface AppContext {
-  readonly view: 'prepare' | 'preview';
+  readonly view: 'design' | 'prepare' | 'preview';
   readonly objectCount: number;
   readonly selection: SelectionSlice;
   readonly canUndo: boolean;
@@ -135,6 +145,8 @@ export interface AppContext {
   readonly clipboard: boolean;
   /** An Auto Orient run is in progress. */
   readonly orienting: boolean;
+  /** Adding a primitive part asks for its size first. */
+  readonly askPrimitiveSize: boolean;
   readonly slice: SliceSlice;
   readonly plates: PlatesSlice;
   /** A modal dialog or the palette is open. */

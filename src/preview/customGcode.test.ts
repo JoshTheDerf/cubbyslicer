@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { colorPrintSlots, layerOfZ, sliderTicks, zOfLayer } from './customGcode';
 import { parseGcode } from './parser/parse';
+import { solidColour } from './render/colors';
 import type { ParsedGcode } from './parser/types';
 
 const Z = new Float32Array([0.2, 0.4, 0.6, 0.8]);
@@ -20,8 +21,10 @@ describe('slider ticks', () => {
       { z: 0.4, type: 'pause', extra: 'magnets' },
       { z: 0.8, type: 'tool_change', extruder: 2 },
       { z: 9, type: 'custom', extra: 'M117' },
-    ], Z, [0x112233, 0x445566]);
-    expect(t.map((x) => [x.layer, x.color])).toEqual([[1, '#f5b041'], [2, '#ff0000'], [3, '#445566']]);
+    ], Z, [solidColour(0x112233), { colours: [{ r: 0x44, g: 0x55, b: 0x66, a: 0x80 }], gradient: false }]);
+    expect(t.map((x) => [x.layer, x.color]).slice(0, 2)).toEqual([[1, '#f5b041'], [2, '#ff0000']]);
+    // A translucent filament's marker is its swatch over the checkerboard.
+    expect(t[2].color).toMatch(/^linear-gradient\(#44556680, #44556680\), repeating-conic-gradient/);
     expect(t[0].title).toContain('magnets');
   });
 });
@@ -36,8 +39,8 @@ describe('colour print', () => {
     const p = parseGcode(new TextEncoder().encode(g)) as ParsedGcode;
     expect(p.colorChanges?.length).toBe(2);
     expect(p.colorChanges![0].color).toBe(0xff0000);
-    const r = colorPrintSlots(p, [0x00ff00])!;
-    expect(r.colors.slice(0, 2)).toEqual([0x00ff00, 0xff0000]);
+    const r = colorPrintSlots(p, [solidColour(0x00ff00)])!;
+    expect(r.colors.slice(0, 2)).toEqual([solidColour(0x00ff00), solidColour(0xff0000)]);
     expect(r.colors.length).toBe(3);
     const firstSlot = r.tool[p.layerStart[0] + 1];
     const lastSlot = r.tool[p.segmentCount - 1];

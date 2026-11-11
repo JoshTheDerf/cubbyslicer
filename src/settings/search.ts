@@ -1,7 +1,8 @@
 /** Global settings search over label / key / tooltip, returning jump targets. */
 import type { ConfigSchema } from '../engine/types';
 import { locateKeys, type KeyLocation } from './layout/build';
-import type { BuiltLayout } from './layout/types';
+import type { BuiltLayout, SettingsTabId } from './layout/types';
+import type { RowState } from './rules';
 
 export interface SearchHit extends KeyLocation {
   key: string;
@@ -9,14 +10,19 @@ export interface SearchHit extends KeyLocation {
   pageTitle: string;
   groupTitle: string;
   score: number;
+  /** Hidden by an enable / show rule: why (the row still opens, flagged). */
+  hidden?: string;
+  /** Disabled by a rule: why. */
+  disabled?: string;
 }
 
-interface Entry extends KeyLocation { key: string; label: string; l: string; k: string; t: string; pageTitle: string; groupTitle: string; common: number }
+interface Entry extends KeyLocation { key: string; label: string; l: string; k: string; t: string; pageTitle: string; groupTitle: string; common: number; state?: RowState }
 
 /** Simple / Advanced settings first: they're the ones people look for ("infill" → Sparse infill density). */
 const MODE_BONUS: Record<string, number> = { simple: 30, advanced: 12 };
 
-export function buildSearchIndex(schema: ConfigSchema, layout: BuiltLayout): Entry[] {
+/** `stateOf`: the rule state of a key in its tab (hidden rows rank last and say why). */
+export function buildSearchIndex(schema: ConfigSchema, layout: BuiltLayout, stateOf?: (key: string, tab: SettingsTabId) => RowState | undefined): Entry[] {
   const loc = locateKeys(layout);
   const titles = new Map<string, { page: string; group: string }>();
   for (const tab of Object.values(layout)) for (const p of tab.pages) for (const g of p.groups) titles.set(g.id, { page: p.title, group: g.title });
@@ -24,12 +30,13 @@ export function buildSearchIndex(schema: ConfigSchema, layout: BuiltLayout): Ent
   for (const [key, where] of loc) {
     const def = schema.options[key];
     if (!def) continue;
-    const label = def.fullLabel || def.label || key;
+    const state = stateOf?.(key, where.tab);
+    const label = state?.label || def.fullLabel || def.label || key;
     const t = titles.get(where.groupId);
     out.push({
       ...where, key, label,
       l: `${label} ${def.label}`.toLowerCase(), k: key.toLowerCase(), t: (def.tooltip || '').toLowerCase(),
-      pageTitle: t?.page ?? '', groupTitle: t?.group ?? '', common: MODE_BONUS[def.mode] ?? 0,
+      pageTitle: t?.page ?? '', groupTitle: t?.group ?? '', common: (MODE_BONUS[def.mode] ?? 0) - (state?.hidden ? 80 : 0), state,
     });
   }
   return out;
@@ -54,7 +61,8 @@ export function searchSettings(index: Entry[], query: string, limit = 50): Searc
       if (!s) { all = false; break; }
       score += s;
     }
-    if (all) hits.push({ tab: e.tab, pageId: e.pageId, groupId: e.groupId, key: e.key, label: e.label, pageTitle: e.pageTitle, groupTitle: e.groupTitle, score: score + e.common });
+    if (all) hits.push({ tab: e.tab, pageId: e.pageId, groupId: e.groupId, key: e.key, label: e.label, pageTitle: e.pageTitle, groupTitle: e.groupTitle, score: score + e.common,
+      ...(e.state?.hidden ? { hidden: e.state.reason ?? '' } : e.state?.disabled ? { disabled: e.state.reason ?? '' } : {}) });
   }
   hits.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
   return hits.slice(0, limit);

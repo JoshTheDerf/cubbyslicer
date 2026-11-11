@@ -11,11 +11,13 @@ import { filamentColourOf, mixedEnabled, mixedFilaments } from '../mixed/store';
 import { computed, ref, watch } from 'vue';
 import type { ConfigOptionDef, ConfigValue } from '../engine/types';
 import { mobileDialog } from '../ui/mobileDialog';
+import AppDialog from '../ui/AppDialog.vue';
 import { currentPresets } from '../presets/store';
-import { asArray, normalizeValue, valuesEqual } from '../presets/values';
+import { normalizeValue, valuesEqual } from '../presets/values';
 import { objects, plateOf, renameObject, select, setPrintable } from '../project/store';
 import { getObjectOverrides, setObjectOverride } from '../settings/projectAdapter';
 import ScalarControl from '../settings/controls/ScalarControl.vue';
+import { SCALAR, valueAt } from '../lib/configValue';
 import { dialogs } from './state';
 
 const p = computed(() => currentPresets.value);
@@ -64,11 +66,11 @@ const targets = (id: string) => (ticked.value.has(id) ? [...ticked.value] : [id]
 
 const globalValue = (key: string): string => {
   const v = p.value.value('process', key);
-  return (Array.isArray(v) ? v[0] : v) ?? schema.value?.options[key]?.default ?? '';
+  return valueAt(v, SCALAR) ?? schema.value?.options[key]?.default ?? '';
 };
 const cellValue = (ov: Readonly<Record<string, ConfigValue>>, key: string): string => {
   const v = ov[key];
-  return v === undefined ? globalValue(key) : Array.isArray(v) ? v[0] ?? '' : v;
+  return v === undefined ? globalValue(key) : valueAt(v, SCALAR) ?? '';
 };
 
 function setCell(id: string, key: string, raw: string): void {
@@ -83,14 +85,13 @@ function setCell(id: string, key: string, raw: string): void {
 function revert(id: string, key: string): void { for (const t of targets(id)) setObjectOverride(t, key, undefined); }
 function setFilament(id: string, v: string): void { for (const t of targets(id)) setObjectOverride(t, 'extruder', v === '1' ? undefined : v); }
 function setRowPrintable(id: string, v: boolean): void { setPrintable(targets(id), v); }
-const filamentOf = (ov: Readonly<Record<string, ConfigValue>>) => asArray(ov.extruder)[0] || '1';
+const filamentOf = (ov: Readonly<Record<string, ConfigValue>>) => valueAt(ov.extruder, SCALAR) || '1';
 function locate(id: string): void { select([id]); }
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.objectTable" title="Object table" :description="mobileDialog ? undefined : 'Per-object settings of every object. Tick rows to edit them together.'"
-          :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-[min(1200px,96vw)]', body: 'flex flex-col gap-2 phone:overflow-hidden' }">
-    <template #body>
+  <AppDialog v-model:open="dialogs.objectTable" title="Object table" :description="mobileDialog ? undefined : 'Per-object settings of every object. Tick rows to edit them together.'"
+             size="wide" fullscreen body-class="flex flex-col gap-2 phone:overflow-hidden">
       <div class="flex items-center gap-2">
         <UCheckbox v-if="mobileDialog" :model-value="allTicked" aria-label="Tick all" @update:model-value="(v: boolean | 'indeterminate') => tickAll(v === true)" />
         <UInput v-model="filter" icon="i-lucide-search" placeholder="Filter objects" size="sm" class="w-60 phone:w-auto phone:min-w-0 phone:flex-1" />
@@ -179,11 +180,10 @@ function locate(id: string): void { select([id]); }
           </tbody>
         </table>
       </div>
-    </template>
     <template #footer>
       <div class="flex w-full justify-end"><UButton color="primary" label="Close" @click="dialogs.objectTable = false" /></div>
     </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

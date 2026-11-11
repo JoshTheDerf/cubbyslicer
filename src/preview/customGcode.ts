@@ -5,6 +5,9 @@
  */
 import type { CustomGcodeItem } from '../engine/types';
 import type { ParsedGcode } from './parser/types';
+import { fromInt } from '../lib/colour';
+import { TOOL_SLOTS, solidColour, toolSwatch } from './render/colors';
+import type { ToolColour } from './render/colors';
 
 /** Default colours Orca's GCodeProcessor cycles through for untagged colour changes. */
 const DEFAULT_CHANGE_COLORS = [0x0b2c7a, 0x1c8891, 0xaaf200, 0xf5ce0a, 0xd16830, 0x942616];
@@ -13,7 +16,7 @@ export interface SliderTick {
   /** 0-based layer index the code runs before. */
   layer: number;
   item: CustomGcodeItem;
-  /** CSS colour of the marker. */
+  /** CSS background of the marker (a colour, or a swatch for a translucent / multi-colour filament). */
   color: string;
   /** Tooltip text (Orca IMSlider tooltips). */
   title: string;
@@ -49,14 +52,14 @@ export function tickTitle(g: CustomGcodeItem): string {
 }
 
 /** Slider markers for a plate's items against the parsed layers (items off the layer range are dropped). */
-export function sliderTicks(items: readonly CustomGcodeItem[], layerZ: ArrayLike<number>, toolColors: readonly number[]): SliderTick[] {
+export function sliderTicks(items: readonly CustomGcodeItem[], layerZ: ArrayLike<number>, toolColors: readonly ToolColour[]): SliderTick[] {
   const out: SliderTick[] = [];
   for (const item of items) {
     const layer = layerOfZ(layerZ, item.z);
     if (layer < 0) continue;
     let color = '#9aa0a6';
     if (item.type === 'color_change' && item.color) color = item.color;
-    else if (item.type === 'tool_change') color = `#${(toolColors[(item.extruder ?? 1) - 1] ?? 0x999999).toString(16).padStart(6, '0')}`;
+    else if (item.type === 'tool_change') color = toolSwatch(toolColors[(item.extruder ?? 1) - 1]);
     else if (item.type === 'pause') color = '#f5b041';
     else if (item.type === 'custom' || item.type === 'template') color = '#4ea1ff';
     out.push({ layer, item, color, title: tickTitle(item) });
@@ -68,16 +71,16 @@ export function sliderTicks(items: readonly CustomGcodeItem[], layerZ: ArrayLike
  * Orca's colour print: after a colour change, an extruder prints in the new
  * colour. Returns a per-segment colour slot array (for the renderer's `tool`
  * attribute) and the slot colours: slots 0..tools-1 = filament colours, then
- * one slot per colour change (max 16 slots, the renderer's palette size).
+ * one slot per colour change (max TOOL_SLOTS, the renderer's palette size).
  * Null when the G-code has no colour changes.
  */
-export function colorPrintSlots(p: ParsedGcode, toolColors: readonly number[]): { tool: Uint8Array; colors: number[]; base: number } | null {
+export function colorPrintSlots(p: ParsedGcode, toolColors: readonly ToolColour[]): { tool: Uint8Array; colors: ToolColour[]; base: number } | null {
   const ev = p.colorChanges;
   if (!ev?.length) return null;
-  const MAX = 16;
+  const MAX = TOOL_SLOTS;
   const base = Math.min(MAX - 1, Math.max(1, maxOf(p.tool) + 1));
   const colors = toolColors.slice(0, base);
-  while (colors.length < base) colors.push(0x999999);
+  while (colors.length < base) colors.push(solidColour(0x999999));
   const slotOf = Array.from({ length: 256 }, (_, t) => Math.min(t, base - 1));
   const out = new Uint8Array(p.segmentCount);
   let seg = 0, di = 0;
@@ -87,7 +90,7 @@ export function colorPrintSlots(p: ParsedGcode, toolColors: readonly number[]): 
     for (; seg < end; seg++) out[seg] = slotOf[p.tool[seg]];
     if (k < events.length && colors.length < MAX) {
       const e = events[k];
-      colors.push(e.color ?? DEFAULT_CHANGE_COLORS[di++ % DEFAULT_CHANGE_COLORS.length]);
+      colors.push({ colours: [fromInt(e.color ?? DEFAULT_CHANGE_COLORS[di++ % DEFAULT_CHANGE_COLORS.length])], gradient: false });
       slotOf[e.extruder] = colors.length - 1;
     }
   }

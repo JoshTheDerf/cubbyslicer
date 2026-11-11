@@ -8,7 +8,7 @@ import { activeEngine } from '../app/state';
 import type { ConfigMode } from '../engine/types';
 import { currentPresets } from '../presets/store';
 import type { PresetKind } from '../presets/types';
-import { asArray } from '../presets/values';
+import { asList } from '../lib/configValue';
 import { buildLayout, locateKeys, type KeyLocation } from './layout/build';
 import type { BuiltPage, SettingsTabId } from './layout/types';
 import { revealSetting, settingsUi } from './uiState';
@@ -17,16 +17,16 @@ export const MODES: readonly ConfigMode[] = ['simple', 'advanced', 'expert'];
 export const MODE_LABELS: Record<ConfigMode, string> = { simple: 'Simple', advanced: 'Advanced', expert: 'Expert' };
 export const MODE_RANK: Record<ConfigMode, number> = { simple: 0, advanced: 1, expert: 2 };
 
-export const extruderCount = computed(() => Math.max(1, asArray(currentPresets.value.value('printer', 'nozzle_diameter')).length));
+export const extruderCount = computed(() => Math.max(1, asList(currentPresets.value.value('printer', 'nozzle_diameter')).length));
 export const settingsLayout = computed(() => {
   const schema = currentPresets.value.schema.value;
-  return schema ? buildLayout(schema, activeEngine.value, extruderCount.value) : null;
+  return schema ? buildLayout(schema, activeEngine.value) : null;
 });
 export const keyLocations = computed(() => (settingsLayout.value ? locateKeys(settingsLayout.value) : new Map<string, KeyLocation>()));
 /** Printer keys edited per extruder (resized with the extruder count). */
 export const perExtruderKeys = computed(() => {
   const s = new Set<string>();
-  for (const pg of settingsLayout.value?.printer.pages ?? []) if (pg.extruder !== undefined) for (const g of pg.groups) for (const k of g.keys) s.add(k);
+  for (const pg of settingsLayout.value?.printer.pages ?? []) if (pg.perExtruder) for (const g of pg.groups) for (const k of g.keys) s.add(k);
   return s;
 });
 

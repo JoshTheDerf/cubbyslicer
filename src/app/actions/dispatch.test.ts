@@ -134,4 +134,24 @@ describe('dispatchActionKey', () => {
     await dispatchActionKey(key('s', { ctrl: true }), ACTIONS, ctx, { textInputFocused: false });
     expect(ctx.calls).toEqual(['saveProject']);
   });
+
+  it('Space opens the command palette (Orca 2.5 Speed Dial) only while focus is idle', async () => {
+    const ctx = fixtureContext();
+    expect(await dispatchActionKey(key(' '), ACTIONS, ctx, { textInputFocused: false })).toBe(true);
+    expect(ctx.calls).toEqual(['openPalette']);
+    const busy = fixtureContext({ focusIdle: false });
+    const e = key(' ');
+    expect(await dispatchActionKey(e, ACTIONS, busy, { textInputFocused: false })).toBe(false);
+    expect(e.prevented).toBe(false);
+  });
+
+  it('runs the A29 align / order actions through the dispatch', async () => {
+    const ctx = fixtureContext({ selection: { count: 3, ids: ['a', 'b', 'c'], single: null, allHidden: false, allNotPrintable: false } });
+    for (const id of ['object.align.x-min', 'object.distribute.y', 'plate.order.height']) {
+      const a = ACTIONS.find((x) => x.id === id)!;
+      expect(a.when!(ctx), id).toBe(true);
+      await a.run(ctx);
+    }
+    expect(ctx.calls).toEqual(['align(0,min)', 'distribute(1)', 'orderObjects(height,false)']);
+  });
 });

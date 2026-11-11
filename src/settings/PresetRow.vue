@@ -11,6 +11,7 @@ import type { PresetInfo, PresetKind } from '../presets/types';
 import PresetSelect from './controls/PresetSelect.vue';
 import PromptDialog from './controls/PromptDialog.vue';
 import { presetRequest } from './uiState';
+import { afterPresetSelect } from './applyAutoChanges';
 
 const props = defineProps<{
   presets: EnginePresets;
@@ -43,6 +44,7 @@ async function doSelect(id: string, keep: boolean): Promise<void> {
   if (props.kind === 'printer') await props.presets.selectPrinter(id, { keepOverrides: keep });
   else if (props.kind === 'process') await props.presets.selectProcess(id, { keepOverrides: keep });
   else await props.presets.selectFilament(idx.value, id, { keepOverrides: keep });
+  void afterPresetSelect(props.kind, idx.value);
 }
 function onSelect(id: string): void {
   if (dirty.value) dialog.value = { type: 'switch', target: id };

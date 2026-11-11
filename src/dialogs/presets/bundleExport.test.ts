@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { unzipSync, strFromU8 } from 'fflate';
 import { readPresetFile } from '../../presets/bundleImport';
 import type { UserPreset } from '../../presets/userPresets';
-import { filamentBaseName, filamentBundle, ORCA_PRESET_VERSION, presetJson, presetsZip, printerBundle } from './bundleExport';
+import { filamentBaseName, filamentBundle, ORCA_PRESET_VERSION, presetJson, presetsZip, presetVersionTag, printerBundle } from './bundleExport';
 
 const mk = (kind: UserPreset['kind'], name: string, values: UserPreset['values'], inherits?: string): UserPreset => ({
   id: `user:${name}`, engine: 'orca', kind, name, inherits, parentId: inherits ? `sys:X/${inherits}` : undefined, values, createdAt: 0, updatedAt: 0,
@@ -54,5 +54,13 @@ describe('preset bundle export (Orca ExportConfigsDialog)', () => {
     const r = await readPresetFile(b.filename, b.data);
     expect(r.presets.map((p) => p.name).sort()).toEqual(['Acme PLA @My Voron', 'Other PETG']);
     expect(filamentBaseName('Acme PLA @My Voron')).toBe('Acme PLA');
+  });
+});
+
+describe('preset version tag (A33)', () => {
+  it('follows the engine version, four numbers', () => {
+    expect(presetVersionTag('2.5.0')).toBe('2.5.0.0');
+    expect(presetVersionTag('2.5.1-rc')).toBe('2.5.1.0');
+    expect(presetVersionTag(undefined)).toBe('2.5.0.0');
   });
 });

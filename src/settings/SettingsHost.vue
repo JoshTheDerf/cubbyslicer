@@ -9,18 +9,16 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useToast } from '@nuxt/ui/composables';
 import { currentPresets, startPresets } from '../presets/store';
-import { lsGet, lsSet } from '../presets/kv';
+import { readJson, writeJson } from '../lib/storage';
 import AddPrinterDialog from './AddPrinterDialog.vue';
 import PresetSettingsModal from './PresetSettingsModal.vue';
 import SettingsSearch from './SettingsSearch.vue';
 import SetupWizard from './SetupWizard.vue';
 import { registerPresetsSection } from './projectAdapter';
-import { registerSettingsActions } from './actions';
 import { panelRequest, settingsUi, setupWizardState, SETUP_DONE_KEY } from './uiState';
 
 startPresets();
 registerPresetsSection();
-void registerSettingsActions();
 onMounted(() => { settingsUi.hosts++; });
 onBeforeUnmount(() => { settingsUi.hosts--; });
 
@@ -36,8 +34,8 @@ watch(() => panelRequest.closeSetupWizard, () => { if (setupOpen.value) closeSet
 watch(setupOpen, (o) => { setupWizardState.open = o; }, { immediate: true });
 watch(() => panelRequest.importFiles, () => fileInput.value?.click());
 // First visit: walk the user through picking their printer and filament.
-if (!lsGet<boolean>(SETUP_DONE_KEY)) void currentPresets.value.ready.then(() => { if (!lsGet<boolean>(SETUP_DONE_KEY)) setupOpen.value = true; });
-function closeSetup(): void { setupOpen.value = false; lsSet(SETUP_DONE_KEY, true); }
+if (!readJson<boolean>(SETUP_DONE_KEY)) void currentPresets.value.ready.then(() => { if (!readJson<boolean>(SETUP_DONE_KEY)) setupOpen.value = true; });
+function closeSetup(): void { setupOpen.value = false; writeJson(SETUP_DONE_KEY, true); }
 
 // ---- import presets ------------------------------------------------------------------
 const fileInput = ref<HTMLInputElement | null>(null);

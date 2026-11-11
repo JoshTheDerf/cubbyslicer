@@ -7,6 +7,7 @@ const KINDS = [
   { issue: 'outside', what: 'outside the plate', blocking: true },
   { issue: 'height', what: 'too tall', blocking: true },
   { issue: 'exclude', what: 'in an excluded area', blocking: true },
+  { issue: 'zone', what: 'outside T0’s zone', blocking: true },
   { issue: 'overlap', what: 'overlapping', blocking: false },
 ] as const;
 

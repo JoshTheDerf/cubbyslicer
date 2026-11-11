@@ -4,6 +4,8 @@
  * wired to real behaviour by its consumer; see PreferencesDialog.vue.
  */
 import { reactive, watch } from 'vue';
+import { hasKey, readJson, removeKey, writeJson } from '../lib/storage';
+import { toEngineId } from '../engine/capabilities';
 import type { EngineId } from '../engine/types';
 
 export type Units = 'metric' | 'imperial';
@@ -30,6 +32,12 @@ export interface Preferences {
   autoFlush: AutoFlush;
   /** Show keyboard shortcut chips in menus and tooltips. */
   keyboardHints: boolean;
+  /** Orca 2.5 "Show options when adding a primitive": adding a box / cylinder / sphere / slab part asks for its size. */
+  askPrimitiveSize: boolean;
+  /** Orca 2.5 "CAD feature (experimental)": show the Design tab (no restart needed here). */
+  designTab: boolean;
+  /** Orca 2.5 design_commit_mode: Commit to Plate makes one assembly object (a part per body) or one object per body. */
+  designCommitMode: 'assembly' | 'bodies';
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -43,6 +51,9 @@ export const DEFAULT_PREFERENCES: Preferences = {
   autoArrangeImport: false,
   autoFlush: 'all',
   keyboardHints: true,
+  askPrimitiveSize: true,
+  designTab: true,
+  designCommitMode: 'assembly',
 };
 
 const LS_KEY = 'cubby-slicer:preferences';
@@ -52,21 +63,30 @@ export function sanitizePreferences(raw: unknown): Preferences {
   if (!raw || typeof raw !== 'object') return out;
   const r = raw as Record<string, unknown>;
   if (r.units === 'metric' || r.units === 'imperial') out.units = r.units;
-  if (r.defaultEngine === 'orca' || r.defaultEngine === 'preflight' || r.defaultEngine === 'fullspectrum' || r.defaultEngine === 'last') out.defaultEngine = r.defaultEngine;
-  for (const k of ['zoomToCursor', 'reverseZoom', 'orbitAroundCursor', 'swapPanRotate', 'autoArrangeImport', 'keyboardHints'] as const) {
+  // An engine this build doesn't have maps to the default engine.
+  if (r.defaultEngine === 'last') out.defaultEngine = 'last';
+  else { const e = toEngineId(r.defaultEngine); if (e) out.defaultEngine = e; }
+  for (const k of ['zoomToCursor', 'reverseZoom', 'orbitAroundCursor', 'swapPanRotate', 'autoArrangeImport', 'keyboardHints', 'askPrimitiveSize', 'designTab'] as const) {
     if (typeof r[k] === 'boolean') out[k] = r[k] as boolean;
   }
   if (typeof r.orbitSpeed === 'number' && Number.isFinite(r.orbitSpeed)) out.orbitSpeed = Math.min(5, Math.max(0.1, r.orbitSpeed));
+  if (r.designCommitMode === 'assembly' || r.designCommitMode === 'bodies') out.designCommitMode = r.designCommitMode;
   if (r.autoFlush === 'all' || r.autoFlush === 'color' || r.autoFlush === 'off') out.autoFlush = r.autoFlush;
   return out;
 }
 
+/** Where the primitive size dialog kept its "don't ask" choice before it became a preference. */
+const OLD_PRIMITIVE_KEY = 'cubby-slicer:primitive-options';
+
 function load(): Preferences {
-  try { return sanitizePreferences(JSON.parse(localStorage.getItem(LS_KEY) ?? 'null')); } catch { return { ...DEFAULT_PREFERENCES }; }
+  const raw = readJson<Record<string, unknown>>(LS_KEY);
+  const out = sanitizePreferences(raw);
+  if (typeof raw?.askPrimitiveSize !== 'boolean' && readJson<{ ask?: unknown }>(OLD_PRIMITIVE_KEY)?.ask === false) out.askPrimitiveSize = false;
+  return out;
 }
 
 export const preferences = reactive<Preferences>(load());
-watch(preferences, (p) => { try { localStorage.setItem(LS_KEY, JSON.stringify(p)); } catch { /* private mode */ } }, { deep: true });
+watch(preferences, (p) => { writeJson(LS_KEY, p); }, { deep: true });
 
 export function resetPreferences(): void { Object.assign(preferences, DEFAULT_PREFERENCES); }
 
@@ -95,18 +115,16 @@ export function registerRememberedChoice(key: string, label: string): void {
 }
 export function rememberedChoices(): Array<{ key: string; label: string; set: boolean }> {
   return REMEMBERED_KEYS.map((k) => {
-    let set = false;
-    try { set = localStorage.getItem(k.key) !== null; } catch { /* ignore */ }
-    return { ...k, set };
+    return { ...k, set: hasKey(k.key) };
   });
 }
 export function clearRememberedChoice(key: string): void {
-  try { localStorage.removeItem(key); } catch { /* ignore */ }
+  removeKey(key);
 }
 export function resetRememberedChoices(): number {
   let n = 0;
   for (const k of REMEMBERED_KEYS) {
-    try { if (localStorage.getItem(k.key) !== null) { localStorage.removeItem(k.key); n++; } } catch { /* ignore */ }
+    if (removeKey(k.key)) n++;
   }
   return n;
 }

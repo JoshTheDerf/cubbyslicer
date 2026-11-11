@@ -59,6 +59,25 @@ export function sphereMesh(r: number, rings = 24, segments = 48): PrimitiveMesh 
 }
 
 /**
+ * Orca 2.5 primitive_angle_step: the angle step that keeps a circle of this
+ * radius within 0.002 mm of its facets, between 16 and 720 segments.
+ */
+export function primitiveAngleStep(radius: number): number {
+  const step = 2 * Math.acos(1 - Math.min(1, 0.002 / Math.max(radius, 1e-9)));
+  return Math.min(Math.max(step, (2 * Math.PI) / 720), (2 * Math.PI) / 16);
+}
+
+/**
+ * Segments around a circle of `radius` (its_make_cylinder / its_make_sphere:
+ * ceil(2π / step)), rounded up to a multiple of 4 so the shape reaches its
+ * bounding box on X and Y.
+ */
+export function primitiveSegments(radius: number): number { return Math.ceil(Math.ceil((2 * Math.PI) / primitiveAngleStep(radius)) / 4) * 4; }
+
+/** Rings of a sphere of `radius` (its_make_sphere's stack count: ceil(π / step)), even so there is an equator. */
+function sphereRings(radius: number): number { return Math.ceil(Math.ceil(Math.PI / primitiveAngleStep(radius)) / 2) * 2; }
+
+/**
  * A shape sized for an object whose local bounding box is `size` (Orca sizes
  * generic sub-objects from the instance bounding box): half its footprint;
  * a slab is a thin full-footprint plate (e.g. a modifier for a layer range).
@@ -68,8 +87,8 @@ export function primitiveFor(kind: PrimitiveKind, size: [number, number, number]
   const side = Math.max(2, Math.min(sx, sy, sz) * 0.5);
   switch (kind) {
     case 'box': return boxMesh(side, side, side);
-    case 'cylinder': return cylinderMesh(side / 2, side);
-    case 'sphere': return sphereMesh(side / 2);
+    case 'cylinder': return cylinderMesh(side / 2, side, primitiveSegments(side / 2));
+    case 'sphere': return sphereMesh(side / 2, sphereRings(side / 2), primitiveSegments(side / 2));
     case 'slab': return boxMesh(sx * 1.2, sy * 1.2, Math.max(0.5, Math.min(5, sz * 0.1)));
   }
 }
@@ -78,7 +97,9 @@ export function primitiveFor(kind: PrimitiveKind, size: [number, number, number]
 export function primitiveOfSize(kind: PrimitiveKind, size: [number, number, number]): PrimitiveMesh {
   const [sx, sy, sz] = size.map((v) => Math.max(0.01, v));
   if (kind === 'box' || kind === 'slab') return boxMesh(sx, sy, sz);
-  const m = kind === 'cylinder' ? cylinderMesh(0.5, 1) : sphereMesh(0.5);
+  // Detail follows the largest radius (an ellipse's flatter side only gets finer).
+  const r = Math.max(sx, sy, kind === 'sphere' ? sz : 0) / 2;
+  const m = kind === 'cylinder' ? cylinderMesh(0.5, 1, primitiveSegments(r)) : sphereMesh(0.5, sphereRings(r), primitiveSegments(r));
   const p = m.positions;
   for (let i = 0; i < p.length; i += 3) { p[i] *= sx; p[i + 1] *= sy; p[i + 2] *= sz; }
   return m;

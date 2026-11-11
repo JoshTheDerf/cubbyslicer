@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { GcodeChunks, chunkDrawCount, createSharedUniforms, planChunks } from './chunks';
-import { fillValues, rampColor, schemeRange, toolColorsFromConfig } from './colors';
+import { fillValues, rampColor, schemeRange, solidColour, toolColorsFromConfig, toolPrimary, toolSwatch } from './colors';
 import { parseGcode } from '../parser/parse';
 import { Feature } from '../parser/features';
 import { buildFeatureRows, buildSummary, featureVolumeShare, formatDuration } from '../summary';
@@ -88,9 +88,42 @@ describe('colour schemes', () => {
   it('ramp endpoints and config colours', () => {
     expect(rampColor(0)).toBe(0x0b2c7a);
     expect(rampColor(1)).toBe(0x94250d);
-    const c = toolColorsFromConfig({ filament_colour: ['#FF0000', '#00ff00'], extruder_colour: ['', '#0000FF'] });
-    expect(c[0]).toBe(0xff0000);
-    expect(c[1]).toBe(0x0000ff);
+    const cfg = { filament_colour: ['#FF0000', '#00ff00'], extruder_colour: ['', '#0000FF', '#FCE94F'] };
+    const c = toolColorsFromConfig(cfg, 'preflight');
+    expect(c[0]).toEqual(solidColour(0xff0000));
+    expect(c[1]).toEqual(solidColour(0x0000ff));
+    // Orca: filament colours win; extruder_colour only fills slots without one.
+    const o = toolColorsFromConfig(cfg, 'orca');
+    expect(o[1]).toEqual(solidColour(0x00ff00));
+    expect(o[2]).toEqual(solidColour(0xfce94f));
+    expect(c).toHaveLength(32);
+  });
+  it('Orca 2.5 translucent and multi-colour filaments', () => {
+    const c = toolColorsFromConfig({
+      filament_colour: ['#FF000080', '#00FF00'],
+      filament_multi_colour: ['#FF000080', '#00FF00 #0000FF'],
+      filament_colour_type: ['1', '0'],
+    });
+    expect(toolPrimary(c[0]).a).toBe(0x80);
+    expect(c[1].colours).toHaveLength(2);
+    expect(c[1].gradient).toBe(true);
+    expect(toolSwatch(c[0])).toContain('repeating-conic-gradient');
+    expect(toolSwatch(c[1])).toBe('linear-gradient(to right, #00FF00, #0000FF)');
+  });
+  it('draws translucent filaments in a second, blended pass', () => {
+    const p = parseGcode(enc.encode(prusa));
+    const ch = new GcodeChunks(p, createSharedUniforms(), 1 << 20);
+    while (ch.buildNext());
+    const meshes = () => ch.group.children.filter((o) => o.name.startsWith('gcode-chunk-'));
+    expect(meshes()).toHaveLength(1);
+    ch.setTranslucentPass(true);
+    const clear = meshes().find((o) => o.name.endsWith('-translucent')) as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+    expect(clear.material.transparent).toBe(true);
+    expect(clear.material.depthWrite).toBe(false);
+    expect(clear.material.uniforms.uPass.value).toBe(1);
+    ch.setTranslucentPass(false);
+    expect(clear.visible).toBe(false);
+    ch.dispose();
   });
 });
 

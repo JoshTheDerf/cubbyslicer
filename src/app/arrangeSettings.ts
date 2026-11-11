@@ -7,6 +7,7 @@
  * shared. Spacing 0 means auto (each object keeps its brim / support margin).
  */
 import { reactive, watch } from 'vue';
+import { readJson, writeJson } from '../lib/storage';
 
 export interface ArrangeSetSettings { distance: number; enableRotation: boolean }
 
@@ -50,12 +51,8 @@ export function sanitizeArrangeSettings(raw: unknown): ArrangeSettingsState {
   };
 }
 
-function load(): ArrangeSettingsState {
-  try { return sanitizeArrangeSettings(JSON.parse(localStorage.getItem(LS_KEY) ?? 'null')); } catch { return sanitizeArrangeSettings(null); }
-}
-
-export const arrangeSettings = reactive<ArrangeSettingsState>(load());
-watch(arrangeSettings, (s) => { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch { /* private mode */ } }, { deep: true });
+export const arrangeSettings = reactive<ArrangeSettingsState>(sanitizeArrangeSettings(readJson(LS_KEY)));
+watch(arrangeSettings, (s) => { writeJson(LS_KEY, s); }, { deep: true });
 
 /** The set in use: Orca picks the "seq print" one when the global print sequence is by object. */
 export function activeArrangeSet(seqPrint: boolean): ArrangeSetSettings {

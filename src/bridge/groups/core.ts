@@ -96,7 +96,7 @@ export function coreTools(): BridgeTool[] {
 
     {
       name: 'set_engine',
-      description: 'Switch the slicing engine: "orca" (OrcaSlicer, large printer library), "fullspectrum" (Snapmaker Orca fork with mixed filaments) or "preflight" (PrusaSlicer-based). Each engine keeps its own presets and edits. Returns the presets now selected.',
+      description: 'Switch the slicing engine: "orca" (OrcaSlicer, large printer library, mixed filaments) or "preflight" (PrusaSlicer-based). Each engine keeps its own presets and edits. Returns the presets now selected.',
       inputSchema: obj({ engine: oneOfS(ENGINES, 'Engine id.') }, ['engine']),
       async run(args) {
         const e = oneOf(args.engine, ENGINES, 'engine') as EngineId;
@@ -190,7 +190,7 @@ export function coreTools(): BridgeTool[] {
 
     {
       name: 'set_preferences',
-      description: 'Change app preferences, e.g. { "values": { "autoArrangeImport": true, "units": "metric" } }. units: metric | imperial; defaultEngine: last | orca | preflight | fullspectrum; autoFlush: all | color | off; orbitSpeed 0.1–5; the rest are booleans.',
+      description: `Change app preferences, e.g. { "values": { "autoArrangeImport": true, "units": "metric" } }. units: metric | imperial; defaultEngine: last | ${ENGINES.join(' | ')}; autoFlush: all | color | off; orbitSpeed 0.1–5; the rest are booleans.`,
       inputSchema: obj({ values: { type: 'object', description: 'Preference → value.' } }, ['values']),
       run(args) {
         const v = args.values as Record<string, unknown>;

@@ -4,46 +4,73 @@
  * (e.g. Bambu H2D): Auto (Filament-saving = "Auto For Flush", Convenience =
  * "Auto For Match") or Custom, where filaments are dragged (or tapped) between
  * the left and right nozzle. Writes filament_map_mode / filament_map (1-based
- * extruder per filament) as project values.
+ * extruder per filament) as project values. On an extruder whose flow type is
+ * Hybrid (H2C nozzle rack) each filament picks its own flow type
+ * (`filament_volume_map`, NozzleVolumeType ids), which selects its profile values.
  */
 import { computed, ref, watch } from 'vue';
 import { mobileDialog } from '../ui/mobileDialog';
+import AppDialog from '../ui/AppDialog.vue';
 import { resolvedConfig } from '../app/state';
 import { currentPresets } from '../presets/store';
-import { asArray } from '../presets/values';
+import { contrastText } from '../lib/colour';
+import { NOZZLE_VOLUME_TYPE_IDS, SCALAR, asList, nozzleVolumeTypeName, valueAt } from '../lib/configValue';
 import { nozzleCount } from './gates';
 import { dialogs } from './state';
+import { manualMapProblem, nozzleCountDialog, setAllNozzleCounts, zoneTitle } from './nozzleCount';
 
 type Mode = 'Auto For Flush' | 'Auto For Match' | 'Manual';
 const mode = ref<Mode>('Auto For Flush');
 const page = ref<'auto' | 'manual'>('auto');
 const map = ref<number[]>([]);
+/** Flow type per filament (names) for filaments on a Hybrid extruder. */
+const volumes = ref<string[]>([]);
 const dragging = ref<number | null>(null);
 const picked = ref<number | null>(null);
 
 const p = computed(() => currentPresets.value);
 const count = computed(() => p.value.selection.filaments.length);
 const nozzles = computed(() => nozzleCount());
-const colours = computed(() => p.value.selection.filaments.map((_, i) => p.value.filamentColour(i)));
-const types = computed(() => p.value.selection.filaments.map((_, i) => asArray(p.value.value('filament', 'filament_type', i))[0] ?? ''));
+const colours = computed(() => p.value.physicalColours());
+const nozzleTypes = computed(() => p.value.nozzleVolumeTypes());
+const extruderInfo = computed(() => p.value.extruders());
+/** Flow types a filament on extruder `ext` (1-based) can pick, or [] when the extruder isn't Hybrid. */
+const hybridChoices = (ext: number) => (nozzleTypes.value[ext - 1] === 'Hybrid' ? extruderInfo.value[ext - 1]?.volumeTypes ?? [] : []);
+const types = computed(() => p.value.selection.filaments.map((_, i) => valueAt(p.value.value('filament', 'filament_type', i), SCALAR) ?? ''));
+/** The project's nozzle racks (printers with extruder_max_nozzle_count > 1), else null. */
+const stats = computed(() => p.value.nozzleStats());
+const rackExtruders = computed(() => extruderInfo.value.map((e, i) => (e.multiNozzle ? i : -1)).filter((i) => i >= 0));
 const columns = computed(() => Array.from({ length: nozzles.value }, (_, k) => ({
   ext: k + 1,
-  label: nozzles.value === 2 ? (k === 0 ? 'Left nozzle' : 'Right nozzle') : `Nozzle ${k + 1}`,
+  label: zoneTitle(k, nozzles.value, stats.value, nozzleTypes.value[1] === 'Hybrid'),
   items: map.value.map((e, i) => ({ i, e })).filter((x) => x.e === k + 1).map((x) => x.i),
 })));
+/** FilamentMapManualPanel::check_sync: a used extruder without a nozzle of the filaments' flow type. */
+const problem = computed(() => (page.value === 'manual' && stats.value
+  ? manualMapProblem(map.value, map.value.map((e, i) => (hybridChoices(e).length ? volumes.value[i] : nozzleTypes.value[e - 1] ?? 'Standard')), nozzleTypes.value, stats.value)
+  : null));
+/** "Please adjust your grouping or click [edit] to set nozzle count": Orca closes the grouping and opens the count. */
+async function fixCount(): Promise<void> {
+  const e = problem.value?.extruder;
+  dialogs.filamentMap = false;
+  if (e !== undefined) await nozzleCountDialog.ask({ extruder: e });
+}
 
 watch(() => dialogs.filamentMap, (o) => {
   if (!o) return;
   const cfg = resolvedConfig.value;
   const own = p.value.project.filament_map_mode ?? cfg.filament_map_mode;
-  const m = (Array.isArray(own) ? own[0] : own) as string | undefined;
-  mode.value = m === 'Manual' || m === 'Auto For Match' ? m : 'Auto For Flush';
+  const m = valueAt(own, SCALAR);
+  // Nozzle Manual has no page of its own: desktop shows it as Custom (and OK there writes Manual).
+  mode.value = m === 'Manual' || m === 'Nozzle Manual' ? 'Manual' : m === 'Auto For Match' ? m : 'Auto For Flush';
   page.value = mode.value === 'Manual' ? 'manual' : 'auto';
-  const cur = asArray(p.value.project.filament_map ?? cfg.filament_map).map((x) => parseInt(x, 10));
+  const cur = asList(p.value.project.filament_map ?? cfg.filament_map).map((x) => parseInt(x, 10));
   map.value = Array.from({ length: count.value }, (_, i) => {
     const e = cur[i];
     return Number.isFinite(e) && e >= 1 && e <= nozzles.value ? e : (i % nozzles.value) + 1;
   });
+  const vm = asList(p.value.project.filament_volume_map ?? cfg.filament_volume_map);
+  volumes.value = Array.from({ length: count.value }, (_, i) => (vm[i] !== undefined ? nozzleVolumeTypeName(vm[i]) : 'Standard'));
   picked.value = null;
 });
 
@@ -67,30 +94,28 @@ function apply(): void {
   const proj = p.value.project;
   proj.filament_map_mode = mode.value;
   if (mode.value === 'Manual') proj.filament_map = map.value.map(String);
+  if (map.value.some((e) => hybridChoices(e).length)) {
+    proj.filament_volume_map = volumes.value.map((v, i) => String(hybridChoices(map.value[i]).includes(v) ? NOZZLE_VOLUME_TYPE_IDS[v] : NOZZLE_VOLUME_TYPE_IDS.Standard));
+  }
   dialogs.filamentMap = false;
 }
-const textOn = (hex: string) => {
-  const h = hex.replace('#', '');
-  const v = parseInt(h.slice(0, 2), 16) * 0.299 + parseInt(h.slice(2, 4), 16) * 0.587 + parseInt(h.slice(4, 6), 16) * 0.114;
-  return v > 150 ? '#111' : '#fff';
-};
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.filamentMap" title="Filament grouping" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-4' }">
-    <template #body>
+  <AppDialog v-model:open="dialogs.filamentMap" title="Filament grouping" size="2xl" fullscreen body-class="flex flex-col gap-4"
+             confirm-label="OK" :confirm-disabled="!!problem" test-id="filament-map" @confirm="apply">
       <UTabs v-model="page" :items="pageItems" :content="false" size="sm" class="w-60" />
       <template v-if="page === 'auto'">
         <div class="fm__modes">
           <button type="button" class="fm__mode" :class="{ on: mode === 'Auto For Flush' }" @click="mode = 'Auto For Flush'">
             <UIcon name="i-lucide-leaf" class="size-5 text-primary" />
-            <strong>Filament-saving mode</strong>
+            <strong>Filament-Saving Mode</strong>
             <span>Generates filament grouping for the left and right nozzles based on the most filament-saving principles to minimize waste.</span>
           </button>
           <button type="button" class="fm__mode" :class="{ on: mode === 'Auto For Match' }" @click="mode = 'Auto For Match'">
             <UIcon name="i-lucide-hand-helping" class="size-5 text-primary" />
-            <strong>Convenience mode</strong>
-            <span>Generates filament grouping based on the printer’s actual filament status, reducing the need for manual filament adjustment.</span>
+            <strong>Convenience Mode</strong>
+            <span>Generates filament grouping for the left and right nozzles based on the printer's actual filament status, reducing the need for manual filament adjustment.</span>
           </button>
         </div>
         <p class="text-xs text-dimmed">The engine assigns the filaments to the nozzles when slicing.</p>
@@ -103,24 +128,30 @@ const textOn = (hex: string) => {
             <h4>{{ c.label }}</h4>
             <div class="fm__items">
               <button v-for="i in c.items" :key="i" type="button" class="fm__fil" :class="{ picked: picked === i }" draggable="true"
-                      :style="{ background: colours[i], color: textOn(colours[i]) }" :title="`Filament ${i + 1}${types[i] ? ` (${types[i]})` : ''}`"
+                      :style="{ background: colours[i], color: contrastText(colours[i]) }" :title="`Filament ${i + 1}${types[i] ? ` (${types[i]})` : ''}`"
                       @dragstart="dragging = i" @dragend="dragging = null" @click.stop="onTap(i)">
                 <span class="fm__no">{{ i + 1 }}</span><span class="fm__type">{{ types[i] }}</span>
               </button>
+              <USelect v-for="i in c.items.filter(() => hybridChoices(c.ext).length)" :key="`v${i}`" v-model="volumes[i]" size="xs" class="w-full"
+                       :items="hybridChoices(c.ext)" :aria-label="`Filament ${i + 1} nozzle flow`" @click.stop>
+                <template #leading><span class="fm__no">{{ i + 1 }}</span></template>
+              </USelect>
               <span v-if="!c.items.length" class="fm__empty">Drop filaments here</span>
             </div>
           </section>
         </div>
-        <p class="text-xs text-dimmed">Tip: drag the filaments{{ nozzles === 2 ? ' (or tap them)' : '' }} to reassign them to a different nozzle.</p>
+        <p class="text-xs text-dimmed">Tip: You can drag the filaments to reassign them to different nozzles.{{ nozzles === 2 ? ' Tapping one moves it to the other nozzle.' : '' }}</p>
+        <template v-if="problem">
+          <p class="fm__err" role="alert" data-testid="filament-map-error">{{ problem.message }}</p>
+          <p class="fm__err">Please adjust your grouping or click
+            <UButton size="xs" variant="ghost" color="error" icon="i-lucide-pencil" square aria-label="Set nozzle count" @click="fixCount" />
+            to set nozzle count</p>
+        </template>
+        <button v-if="rackExtruders.length" type="button" class="fm__link" data-testid="set-nozzle-count" @click="setAllNozzleCounts(rackExtruders)">
+          Set the physical nozzle count...
+        </button>
       </template>
-    </template>
-    <template #footer>
-      <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="dialogs.filamentMap = false" />
-        <UButton color="primary" label="OK" @click="apply" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -141,5 +172,8 @@ const textOn = (hex: string) => {
 .fm__no { font-weight: 700; }
 .fm__type { opacity: 0.85; }
 .fm__empty { color: var(--ui-text-dimmed); font-size: 12px; }
+.fm__err { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; font-size: 13px; color: var(--ui-error); }
+.fm__link { align-self: flex-start; font-size: 14px; color: var(--ui-primary); cursor: pointer; }
+.fm__link:hover { text-decoration: underline; }
 @media (max-width: 640px) { .fm__modes { grid-template-columns: 1fr; } }
 </style>

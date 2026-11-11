@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** Printer catalog browser: vendors → models → nozzle variants. Emits `use` with the chosen preset id. */
+import { afterPresetSelect } from './applyAutoChanges';
 import { computed, onMounted, ref, shallowRef, watch } from 'vue';
 import type { EnginePresets } from '../presets/store';
 import type { MachineModel, VendorInfo } from '../presets/types';
@@ -55,7 +56,7 @@ const using = ref<string | null>(null);
 async function add(id: string, select: boolean): Promise<void> {
   if (!select) { await props.presets.installPrinter(id); return; }
   using.value = id;
-  try { await props.presets.selectPrinter(id); emit('use', id); } finally { using.value = null; }
+  try { await props.presets.selectPrinter(id); void afterPresetSelect('printer'); emit('use', id); } finally { using.value = null; }
 }
 /** Most printers ship with a 0.4 mm nozzle. */
 const isCommon = (variant: string) => Number(variant) === 0.4;

@@ -8,7 +8,7 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await ctx.addInitScript(() => { delete window.showOpenFilePicker; delete window.showSaveFilePicker; }); // <input type=file> path (Playwright file chooser)
 const page = await ctx.newPage();
-page.setDefaultTimeout(120000);
+page.setDefaultTimeout(300000); // software WebGL: a screenshot of the 2.5 filament list (360+ cards) takes ~100 s
 const errs = [];
 page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });

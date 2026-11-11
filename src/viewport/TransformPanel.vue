@@ -15,15 +15,16 @@ import { eulerFromQuat, quatFromEuler, type Vec3 } from '../project/math';
 import { dropToBed, objectInfo, objectLocalBBox, primarySelection, selectedIds, selectedObjects, setTransforms } from '../project/store';
 import { fromDisplayLength, lengthUnit, preferences, toDisplayLength } from '../app/preferences';
 import { groupMove, groupRotate, groupScale } from './groupTransform';
+import { readString, writeString } from '../lib/storage';
 
 const LS = 'cubby-slicer:transform-collapsed';
 const lock = ref(true);
 // Phones start collapsed (the panel would cover most of the view).
 const collapsed = ref((() => {
   if (typeof matchMedia !== 'undefined' && matchMedia('(max-width: 640px)').matches) return true;
-  try { return localStorage.getItem(LS) === '1'; } catch { return false; }
+  return readString(LS) === '1';
 })());
-watch(collapsed, (v) => { try { localStorage.setItem(LS, v ? '1' : '0'); } catch { /* ignore */ } });
+watch(collapsed, (v) => { writeString(LS, v ? '1' : '0'); });
 
 const obj = primarySelection;
 const group = computed(() => selectedObjects.value.length > 1);

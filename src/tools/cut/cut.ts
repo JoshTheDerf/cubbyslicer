@@ -174,8 +174,7 @@ export async function performCut(objectId: string, s: CutSettings): Promise<stri
       } : undefined,
     },
   };
-  type Res = { objects: Array<{ name: string; instance: number[]; volumes: Array<{ name: string; type: string; transform: number[]; connector?: boolean; paint?: PaintLayers; mesh: number }> }> };
-  const { result, meshes: outMeshes } = await engineTool<Res>('cut', args, meshes);
+  const { result, meshes: outMeshes } = await engineTool('cut', args, meshes);
   const pieces: ObjectPiece[] = result.objects.map((ro) => {
     const inst = new Matrix4().fromArray(ro.instance);
     // Before "place on cut" / flip the piece sat at the original instance (a pure offset).

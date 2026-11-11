@@ -14,6 +14,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { resolvedConfig } from '../app/state';
 import { phone } from '../app/shell/uiState';
 import { rampColor } from '../preview/render/colors';
+import { intToCss } from '../lib/colour';
 import {
   brush, editObject, hasCustomProfile, heightRanges, layersUi, liveProfile, paramsFor, profileOf, resetLayerProfile, runAdaptive,
   runSmooth, setBandWidth, setLayerProfile,
@@ -70,7 +71,6 @@ function css(name: string, fallback: string): string {
   const v = wrap.value ? getComputedStyle(wrap.value).getPropertyValue(name).trim() : '';
   return v || fallback;
 }
-const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
 function draw(): void {
   const c = canvas.value, p = params.value;
@@ -90,7 +90,7 @@ function draw(): void {
   for (let i = 0; i + 1 < L.length; i += 2) {
     const lh = L[i + 1] - L[i];
     const y0 = yOf(L[i]), y1 = yOf(L[i + 1]);
-    g.fillStyle = hex(rampColor((lh - p.minLayerHeight) / span));
+    g.fillStyle = intToCss(rampColor((lh - p.minLayerHeight) / span));
     g.globalAlpha = (i / 2) % 2 ? 0.55 : 0.8;
     g.fillRect(PAD.l - 12, y1, 8, Math.max(0.5, y0 - y1));
   }

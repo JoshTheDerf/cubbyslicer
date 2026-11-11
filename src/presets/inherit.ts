@@ -72,6 +72,29 @@ export function flattenInheritsSync(leaf: RawPreset, lookup: (ref: string) => Ra
   return { chain, missing, values };
 }
 
+/**
+ * The presets a system preset names in `include` (Orca 2.5, BBL_JSON_KEY_INCLUDES): an array of
+ * names or one bare name. PresetBundle::load_vendor_configs_from_json layers each one's resolved
+ * values over the resolved `inherits` parent, in this order, before the preset's own keys.
+ */
+export function includesOf(raw: RawPreset): string[] {
+  const v = raw.include;
+  const list = Array.isArray(v) ? v : v === undefined || v === null || v === '' ? [] : [v];
+  return list.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim());
+}
+
+/**
+ * A vendor file that only exists to be included or inherited (parse_subfile): `instantiation`
+ * "false", or — when it states none — a nameless file or one named as G-code
+ * ("Bambu Lab H2C 0.4 nozzle template machine_start_gcode").
+ */
+export function isTemplate(raw: RawPreset): boolean {
+  const inst = str(raw.instantiation);
+  if (inst) return inst === 'false';
+  const name = str(raw.name);
+  return !name || name.includes('gcode');
+}
+
 /** Raw JSON values → engine-native strings / string arrays (no schema needed). */
 export function toPresetValues(raw: Record<string, unknown>): PresetValues {
   const out: PresetValues = {};
@@ -83,7 +106,7 @@ export function toPresetValues(raw: Record<string, unknown>): PresetValues {
   return out;
 }
 
-export function rawToConfigValue(v: unknown): ConfigValue | undefined {
+function rawToConfigValue(v: unknown): ConfigValue | undefined {
   if (v === null || v === undefined) return undefined;
   if (Array.isArray(v)) return v.map((x) => (typeof x === 'boolean' ? (x ? '1' : '0') : x === null ? '' : String(x)));
   if (typeof v === 'boolean') return v ? '1' : '0';

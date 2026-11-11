@@ -6,14 +6,15 @@
  * Cooling, Setting overrides, Advanced, …) and the page's option groups.
  * "Changed" lists every setting that differs from the preset, by page.
  */
+import { setExtruderCount } from './applyAutoChanges';
 import { computed, shallowRef, watch } from 'vue';
 import type { BuiltPage } from './layout/types';
 import { currentPresets } from '../presets/store';
-import ColorField from './controls/ColorField.vue';
+import FilamentColorField from './controls/FilamentColorField.vue';
 import ModeSelect from './ModeSelect.vue';
 import PresetRow from './PresetRow.vue';
 import SettingsGroups from './SettingsGroups.vue';
-import { currentPageOf, extruderCount, pageDirty, pageIcon, perExtruderKeys, selectPage, settingsLayout } from './useLayout';
+import { currentPageOf, extruderCount, pageDirty, pageIcon, selectPage, settingsLayout } from './useLayout';
 import { panelRequest, settingsUi } from './uiState';
 import { mobileDialog } from '../ui/mobileDialog';
 
@@ -63,7 +64,7 @@ const pageItems = computed(() => [
 ]);
 
 function setExtruders(n: number | null | undefined): void {
-  if (typeof n === 'number' && Number.isFinite(n) && n >= 1 && n !== extruderCount.value) p.value.setExtruderCount(n, perExtruderKeys.value);
+  if (typeof n === 'number' && Number.isFinite(n) && n >= 1 && n !== extruderCount.value) void setExtruderCount(n);
   extruderDraft.value = null;
 }
 </script>
@@ -110,8 +111,7 @@ function setExtruders(n: number | null | undefined): void {
             </UButton>
           </div>
           <span v-else class="flex-1 truncate text-xs text-muted">Filament {{ slotIdx + 1 }}</span>
-          <ColorField :model-value="p.filamentColour(slotIdx)" size="sm" aria-label="Filament colour" resettable
-                      @update:model-value="(c: string) => p.setFilamentColour(slotIdx, c)" />
+          <FilamentColorField :slot-index="slotIdx" size="sm" aria-label="Filament colour" />
         </div>
         <div v-else-if="tab" class="psm__barrow psm__barrow--end">
           <span class="text-xs text-muted">Extruders</span>
@@ -121,8 +121,7 @@ function setExtruders(n: number | null | undefined): void {
       </div>
       <nav v-else class="psm__nav" aria-label="Pages">
         <div v-if="kind === 'filament'" class="psm__slot">
-          <ColorField :model-value="p.filamentColour(slotIdx)" size="sm" aria-label="Filament colour" resettable
-                      @update:model-value="(c: string) => p.setFilamentColour(slotIdx, c)" />
+          <FilamentColorField :slot-index="slotIdx" size="sm" aria-label="Filament colour" />
           <span class="truncate text-xs text-muted">Filament {{ slotIdx + 1 }}</span>
         </div>
         <button v-if="dirty" type="button" class="psm__page psm__page--changed" :class="{ on: showChanged }"

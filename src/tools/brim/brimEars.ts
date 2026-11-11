@@ -14,12 +14,13 @@ import { pointInPolygon, type Pt } from '../../project/math';
 
 export interface Loop { pts: Pt[]; hole: boolean }
 
-export const EAR_DEFAULTS = { maxAngle: 125, detectionRadius: 1, headDiameterMin: 5, headDiameterMax: 20 };
+/** Orca 2.5 GLGizmoBrimEars: "Brim ear radius" 0.1–100 mm (BRIM_EAR_RADIUS_MIN / _MAX). */
+export const EAR_DEFAULTS = { maxAngle: 125, detectionRadius: 1, radiusMin: 0.1, radiusMax: 100 };
 
-/** Orca get_brim_default_radius(): initial layer line width × 16 is the *diameter*. */
+/** Orca get_brim_default_radius(): initial layer line width × 8 is the radius (clamped); returns the diameter. */
 export function defaultHeadDiameter(initialLineWidth: number, nozzle: number): number {
   const w = initialLineWidth > 0 ? initialLineWidth : nozzle > 0 ? nozzle : 0.4;
-  return Math.max(EAR_DEFAULTS.headDiameterMin, Math.min(EAR_DEFAULTS.headDiameterMax, w * 16));
+  return 2 * Math.max(EAR_DEFAULTS.radiusMin, Math.min(EAR_DEFAULTS.radiusMax, w * 8));
 }
 
 /**

@@ -13,8 +13,7 @@
 export interface ParseOptions {
   /** Filament diameter (mm) when not found in the file. Default 1.75. */
   filamentDiameter?: number;
-  /** Default print acceleration (mm/s²) when the file sets none. Default 1500. */
-  acceleration?: number;
+  /** Default print acceleration (mm/s²) when the file sets none. Default 1500. */  acceleration?: number;
   /** Default travel acceleration (mm/s²). Defaults to `acceleration`. */
   travelAcceleration?: number;
   /** Max chord error (mm) for G2/G3 tessellation. Default 0.01. */
@@ -34,6 +33,19 @@ export interface GcodeHeaderInfo {
   filamentCm3: number[] | null;
   filamentCost: number[] | null;
   filamentDiameter: number | null;
+  /**
+   * Orca 2.5 belt printers: the slicing tilt (degrees, absolute) from the
+   * `; belt_slice_rotation_angle = ` header line. Null for flat-bed files.
+   */
+  beltTiltAngle: number | null;
+  /** Selected config-block values (`HEADER_CONFIG_KEYS` in ./header.ts); vectors as arrays. */
+  config: Record<string, string | string[]>;
+  /**
+   * Segment index where the printer's start G-code ended / the end G-code
+   * began (Orca 2.5 `; MACHINE_START_GCODE_END` / `; MACHINE_END_GCODE_START`).
+   */
+  startGcodeEndSeg?: number;
+  endGcodeStartSeg?: number;
 }
 
 export interface ParsedStats {

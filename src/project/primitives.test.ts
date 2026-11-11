@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxMesh, cylinderMesh, primitiveFor, primitiveOfSize, sphereMesh } from './primitives';
+import { boxMesh, cylinderMesh, primitiveFor, primitiveOfSize, primitiveSegments, sphereMesh } from './primitives';
 import { computeBBox } from './mesh';
 
 /** Signed volume (divergence theorem): positive for outward-facing closed meshes. */
@@ -35,5 +35,14 @@ describe('primitiveOfSize', () => {
       expect(b.max.map((v, i) => +(v - b.min[i]).toFixed(4))).toEqual([10, 6, 3]);
       expect(b.min.map((v, i) => +((v + b.max[i]) / 2).toFixed(4) || 0)).toEqual([0, 0, 0]);
     }
+  });
+});
+
+describe('primitiveSegments (Orca 2.5 primitive_angle_step)', () => {
+  it('scales with the radius between 16 and 720 segments', () => {
+    expect(primitiveSegments(0.001)).toBe(16);
+    expect(primitiveSegments(10)).toBe(160); // ceil(157.08…) → multiple of 4
+    expect(primitiveSegments(1e6)).toBe(720);
+    expect(primitiveSegments(5)).toBeLessThan(primitiveSegments(50));
   });
 });

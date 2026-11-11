@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orcaToPreflight, splitOrcaCompat, translateGcode } from './convert';
+import { orcaToPreflight, splitOrcaCompat, translateGcode, TRANSFORMS } from './convert';
 import type { ConfigSchema } from '../../engine/types';
 
 const VECTORS = new Set(['temperature', 'first_layer_temperature', 'nozzle_diameter', 'first_layer_bed_temperature', 'filament_type']);
@@ -27,6 +27,15 @@ describe('orcaToPreflight printer fix-ups', () => {
     expect(out.machine_limits_usage).toBe('time_estimate_only');
     expect(out.autoemit_temperature_commands).toBe('0');
     expect(out.layer_gcode).toBe('SET_PRINT_STATS_INFO\nG92 E0');
+  });
+  it('indexes Orca 2.5 variant vectors preFlight doesn\'t define (their orca:* variables are vectors)', () => {
+    const orca = { engine: 'orca', version: '2.5.0', options: {
+      outer_wall_acceleration: { type: 'floats' }, travel_speed: { type: 'floats' },
+    } } as unknown as ConfigSchema;
+    const isNative = (k: string) => k !== 'outer_wall_acceleration';
+    const out = orcaToPreflight('printer', { machine_start_gcode: 'M204 S{min(20000,max(1000,outer_wall_acceleration))} G1 F{travel_speed*60}' },
+      isNative, isVector, orca);
+    expect(out.machine_start_gcode).toBe('M204 S{min(20000,max(1000,outer_wall_acceleration[0]))} G1 F{travel_speed*60}');
   });
   it('resolves percentage accelerations', () => {
     const isNative = (k: string) => ['default_acceleration', 'external_perimeter_acceleration', 'infill_acceleration', 'solid_infill_acceleration', 'bridge_acceleration'].includes(k);
@@ -71,5 +80,13 @@ describe('splitOrcaCompat', () => {
       bed_temperature: ['70'], 'orca:hot_plate_temp': ['55'], 'orca:textured_plate_temp': ['65'], 'orca:curr_bed_type': 'Textured PEI Plate',
     }, schema);
     expect(config.bed_temperature).toEqual(['70']);
+  });
+});
+
+describe('arc fitting', () => {
+  it('reads Orca 2.4 bools and the 2.5 choice values', () => {
+    const t = TRANSFORMS.transform_arc_fitting;
+    expect(['1', 'true', 'enabled'].map(t)).toEqual(['emit_center', 'emit_center', 'emit_center']);
+    expect(['0', 'false', 'disabled', 'sparse_infill'].map(t)).toEqual(['disabled', 'disabled', 'disabled', 'disabled']);
   });
 });

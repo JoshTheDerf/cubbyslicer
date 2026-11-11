@@ -4,6 +4,7 @@
  * the assembly view. They call the same functions as the tool panels; each
  * result is one undo step.
  */
+import { SCALAR, valueAt } from '../../lib/configValue';
 import { argNumber, argString, type BridgeTool } from '@cubby/shared/bridge';
 import { Vector3 } from 'three';
 import { activePlate, addToolObject, addToolPart, getMesh, getObject, objectInfo, replaceVolumeMesh, setBrimPoints, setObjectOverride } from '../../project/store';
@@ -352,7 +353,7 @@ export function modelToolTools(): BridgeTool[] {
         return {
           data: {
             ok: true, ears: now.brimPoints?.length ?? 0, brimType: brim,
-            hint: (now.brimPoints?.length ?? 0) > 0 && (Array.isArray(brim) ? brim[0] : brim) !== 'painted' ? 'Ears only print with brim type "painted" (setPainted: true).' : undefined,
+            hint: (now.brimPoints?.length ?? 0) > 0 && valueAt(brim, SCALAR) !== 'painted' ? 'Ears only print with brim type "painted" (setPainted: true).' : undefined,
           },
         };
       },

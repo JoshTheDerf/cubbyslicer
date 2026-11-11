@@ -261,11 +261,15 @@ if (want('objcolor')) {
   await page.screenshot({ path: `${out}/objcolor-dialog.png` });
   const text = (await dlg.innerText()).replace(/\s+/g, ' ');
   await dlg.getByRole('button', { name: 'Apply' }).click();
-  await page.waitForTimeout(3000);
+  // Apply paints through the engine (paint_from_states): the first tool call starts the engine instance.
+  await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), null, { timeout: 180000 }).catch(() => {});
+  await page.waitForTimeout(1000);
+  await page.screenshot({ path: `${out}/objcolor-applied.png` });
   const state = await page.evaluate(() => {
     const o = window.__cubbyProject.objects.value[0];
     const paint = window.__cubbyProject.getMeshPaint?.(o.meshId);
-    return { extruder: o.overrides.extruder ?? null, paintColor: paint?.color?.length ?? null, dialogOpen: !!document.querySelector('[role="dialog"]') };
+    const d = document.querySelector('[role="dialog"]');
+    return { extruder: o.overrides.extruder ?? null, paintColor: paint?.color?.length ?? null, dialogOpen: !!d, dialog: d ? d.textContent.replace(/\s+/g, ' ').slice(0, 200) : null };
   });
   results.objcolor = { text: text.slice(0, 300), ...state, ok: /Number of colours/.test(text) && !state.dialogOpen };
   await page.context().close();

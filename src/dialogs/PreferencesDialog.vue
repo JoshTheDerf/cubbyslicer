@@ -9,6 +9,7 @@
  */
 import { computed, ref, watch } from 'vue';
 import { mobileDialog } from '../ui/mobileDialog';
+import { ENGINES } from '../engine/capabilities';
 import { ENGINE_LABELS, engineThreadsAvailable, engineThreadsPref, setEngineThreadsPref } from '../engine/client';
 import {
   DEFAULT_PREFERENCES, preferences, clearRememberedChoice, rememberedChoices, resetRememberedChoices, type Preferences,
@@ -23,12 +24,7 @@ type Row =
   | { key: Key; label: string; help: string; kind: 'switch' }
   | { key: Key; label: string; help: string; kind: 'slider'; min: number; max: number; step: number; fmt: (v: number) => string };
 
-const engineItems: Item[] = [
-  { value: 'last', label: 'Last used' },
-  { value: 'orca', label: ENGINE_LABELS.orca },
-  { value: 'preflight', label: ENGINE_LABELS.preflight },
-  { value: 'fullspectrum', label: ENGINE_LABELS.fullspectrum },
-];
+const engineItems: Item[] = [{ value: 'last', label: 'Last used' }, ...ENGINES.map((e) => ({ value: e, label: ENGINE_LABELS[e] }))];
 
 const SECTIONS: Array<{ id: string; title: string; rows: Row[] }> = [
   { id: 'general', title: 'General', rows: [
@@ -43,6 +39,8 @@ const SECTIONS: Array<{ id: string; title: string; rows: Row[] }> = [
     { key: 'autoArrangeImport', label: 'Auto arrange plate after import', help: 'Arrange the active plate whenever models are added.', kind: 'switch' },
     { key: 'autoFlush', label: 'Auto flush after changing…', help: 'Re-calculate flushing volumes when these change.', kind: 'select',
       items: [{ value: 'all', label: 'Filaments or colours' }, { value: 'color', label: 'Colours only' }, { value: 'off', label: 'Disabled' }] },
+    { key: 'askPrimitiveSize', label: 'Show options when adding a primitive', help: 'Adding a box, cylinder, sphere or slab part asks for its size first.', kind: 'switch' },
+    { key: 'designTab', label: 'CAD feature (experimental)', help: 'Show the Design tab, where models from OrcaSlicer 2.5’s Design tab can be edited parametrically. Still under development.', kind: 'switch' },
   ] },
   { id: 'camera', title: 'Camera', rows: [
     { key: 'zoomToCursor', label: 'Zoom to mouse position', help: 'Zoom towards the pointer instead of the view centre.', kind: 'switch' },

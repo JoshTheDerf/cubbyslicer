@@ -16,10 +16,11 @@ import * as THREE from 'three';
 import { Feature, FIRST_NON_EXTRUSION } from '../parser/features';
 import type { ParsedGcode } from '../parser/types';
 import { EXTRUSION_FRAG, EXTRUSION_VERT, LINE_FRAG, LINE_VERT, POINT_FRAG, POINT_VERT } from './shaders';
-import { fillValues } from './colors';
+import { TOOL_SLOTS, fillValues } from './colors';
 import type { ColorScheme } from './colors';
 
 export const DEFAULT_CHUNK_SIZE = 1 << 19;
+
 
 export interface ChunkRange { base: number; count: number }
 
@@ -43,7 +44,8 @@ export interface SharedUniforms {
   uRangeMax: { value: number };
   uFeatVis: { value: Float32Array };
   uFeatColor: { value: THREE.Color[] };
-  uToolColor: { value: THREE.Color[] };
+  uToolColor: { value: THREE.Vector4[] };
+  uTranslucentOn: { value: number };
   uScheme: { value: number };
   uVMin: { value: number };
   uVMax: { value: number };
@@ -68,7 +70,8 @@ export function createSharedUniforms(): SharedUniforms {
     uRangeMax: { value: -1 },
     uFeatVis: { value: new Float32Array(32).fill(1) },
     uFeatColor: { value: Array.from({ length: 32 }, () => lin(0x999999)) },
-    uToolColor: { value: Array.from({ length: 16 }, () => lin(0x999999)) },
+    uToolColor: { value: Array.from({ length: TOOL_SLOTS }, () => new THREE.Vector4(0.6, 0.6, 0.6, 1)) },
+    uTranslucentOn: { value: 1 },
     uScheme: { value: 0 },
     uVMin: { value: 0 },
     uVMax: { value: 1 },
@@ -83,16 +86,27 @@ export function createSharedUniforms(): SharedUniforms {
     uKindColor: { value: [lin(0xcc00cc), lin(0x00cccc), lin(0xe6e6e6)] },
     uKindVis: { value: new Float32Array([0, 0, 0]) },
     uPointPx: { value: 6 },
+    // Orca 2.5 section view: drawn where dot(xyz, p) <= w (w huge = off).
+    uSection: { value: new THREE.Vector4(0, 0, 1, 1e9) },
   };
 }
 
-function material(vert: string, frag: string, shared: SharedUniforms, base: number): THREE.ShaderMaterial {
+function material(vert: string, frag: string, shared: SharedUniforms, base: number, extra: Record<string, { value: unknown }> = {}): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader: vert,
     fragmentShader: frag,
-    uniforms: { ...shared, uBase: { value: base } },
+    uniforms: { ...shared, uBase: { value: base }, ...extra },
   });
+}
+
+/** The extrusion material for one pass: 0 opaque, 1 translucent filaments (blended, no depth writes, drawn last). */
+function extrusionMaterial(shared: SharedUniforms, base: number, pass: 0 | 1): THREE.ShaderMaterial {
+  const m = material(EXTRUSION_VERT, EXTRUSION_FRAG, shared, base, { uPass: { value: pass } });
+  // Mirrored copies (IDEX/IQEX Mirror carriages) flip the quads' winding: draw both faces.
+  m.side = THREE.DoubleSide;
+  if (pass === 1) { m.transparent = true; m.depthWrite = false; }
+  return m;
 }
 
 // One quad, shared by all chunks (never disposed per chunk).
@@ -109,6 +123,8 @@ function quadAttrs() {
 
 interface Chunk extends ChunkRange {
   mesh: THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial>;
+  /** Same instances, translucent-filament pass; built on first need. */
+  clear: THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial> | null;
   value: Float32Array;
   valueAttr: THREE.InstancedBufferAttribute;
   gpuBytes: number;
@@ -124,6 +140,7 @@ export class GcodeChunks {
   private numeric = false;
   private travelOn = false;
   private markersOn = false;
+  private translucentOn = false;
   private rangeMin = 0;
   private rangeMax = -1;
 
@@ -145,6 +162,7 @@ export class GcodeChunks {
     this.group.add(c.mesh);
     if (this.travelOn) this.ensureTravel(c);
     if (this.markersOn) this.ensureMarkers(c);
+    if (this.translucentOn) this.ensureClear(c);
     this.applyRangeTo(c);
     return this.pending.length > 0;
   }
@@ -188,11 +206,31 @@ export class GcodeChunks {
     geo.boundingSphere = sphere;
     geo.boundingBox = box.isEmpty() ? new THREE.Box3(new THREE.Vector3(), new THREE.Vector3()) : box;
 
-    const mesh = new THREE.Mesh(geo, material(EXTRUSION_VERT, EXTRUSION_FRAG, this.shared, base));
+    const mesh = new THREE.Mesh(geo, extrusionMaterial(this.shared, base, 0));
     mesh.name = `gcode-chunk-${base}`;
     mesh.frustumCulled = !box.isEmpty();
     const gpuBytes = (count + 1) * 12 + count * 4 + meta.byteLength + value.byteLength;
-    return { base, count, mesh, value, valueAttr, gpuBytes, travel: null, markers: null };
+    return { base, count, mesh, clear: null, value, valueAttr, gpuBytes, travel: null, markers: null };
+  }
+
+  private ensureClear(c: Chunk): void {
+    if (c.clear) return;
+    const m = new THREE.Mesh(c.mesh.geometry, extrusionMaterial(this.shared, c.base, 1));
+    m.name = `${c.mesh.name}-translucent`;
+    m.frustumCulled = c.mesh.frustumCulled;
+    m.renderOrder = 1;
+    c.clear = m;
+    this.group.add(m);
+    this.applyRangeTo(c);
+  }
+
+  /** Draw the translucent-filament pass (only needed while some shown filament colour is translucent). */
+  setTranslucentPass(on: boolean): void {
+    this.translucentOn = on;
+    for (const c of this.chunks) {
+      if (on) this.ensureClear(c);
+      else if (c.clear) c.clear.visible = false;
+    }
   }
 
   private ensureTravel(c: Chunk): void {
@@ -281,6 +319,7 @@ export class GcodeChunks {
     const n = chunkDrawCount(c, this.rangeMin, this.rangeMax);
     c.mesh.visible = n > 0;
     c.mesh.geometry.instanceCount = Math.max(n, 1);
+    if (c.clear) c.clear.visible = this.translucentOn && n > 0;
     if (c.travel) c.travel.visible = this.travelOn && n > 0;
     if (c.markers) c.markers.visible = this.markersOn && n > 0;
   }
@@ -294,6 +333,7 @@ export class GcodeChunks {
       // Keep the shared quad attributes alive: detach before disposing.
       c.mesh.geometry.dispose();
       c.mesh.material.dispose();
+      c.clear?.material.dispose();
       c.travel?.geometry.dispose(); c.travel?.material.dispose();
       c.markers?.geometry.dispose(); c.markers?.material.dispose();
     }

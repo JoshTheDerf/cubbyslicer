@@ -58,6 +58,19 @@
   --vp-object: #8fa3b8;
   --vp-selected: #19c37d;
   --vp-hover: #4ea1ff;
+  /* Design tab sketcher (SketchOverlay): geometry by constraint state, construction, snaps. */
+  --vp-sketch-free: #5fb8ff;        /* under-constrained (Onshape blue) */
+  --vp-sketch-fixed: #e8eaed;       /* fully constrained */
+  --vp-sketch-bad: #ff6b6b;         /* conflicting / over-constrained */
+  --vp-sketch-sel: #19c37d;         /* selected */
+  --vp-sketch-hover: #9fd3ff;
+  --vp-sketch-preview: #f2a33a;     /* rubber band, snap hints */
+  --vp-sketch-dim: #f7d27a;         /* dimensions */
+  --vp-sketch-region: rgba(95, 184, 255, 0.10);
+  --vp-sketch-glyph-bg: rgba(16, 19, 24, 0.92);
+  --vp-sketch-axis-x: #e0605e;
+  --vp-sketch-axis-y: #5cc46e;
+  --vp-sketch-committed: #7fb2e6;   /* finished sketches in the 3D view */
   --vp-warn: #f5b041;
   --vp-axis-x: #ef5b5b;
   --vp-axis-y: #19c37d;
@@ -83,27 +96,6 @@
   --ui-color-primary-800: #9a3412;
   --ui-color-primary-900: #7c2d12;
   --ui-color-primary-950: #431407;
-}
-
-/* Full Spectrum: fuchsia accent. */
-:root[data-engine='fullspectrum'] {
-  --accent: #d946ef;
-  --accent-2: #c026d3;
-  --accent-fg: #1f0322;
-  --accent-soft: rgba(217, 70, 239, 0.14);
-  --accent-line: rgba(217, 70, 239, 0.45);
-  --vp-selected: #d946ef;
-  --ui-color-primary-50: #fdf4ff;
-  --ui-color-primary-100: #fae8ff;
-  --ui-color-primary-200: #f5d0fe;
-  --ui-color-primary-300: #f0abfc;
-  --ui-color-primary-400: #e879f9;
-  --ui-color-primary-500: #d946ef;
-  --ui-color-primary-600: #c026d3;
-  --ui-color-primary-700: #a21caf;
-  --ui-color-primary-800: #86198f;
-  --ui-color-primary-900: #701a75;
-  --ui-color-primary-950: #4a044e;
 }
 
 /*

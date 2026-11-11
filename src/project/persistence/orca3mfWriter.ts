@@ -1,26 +1,39 @@
 /**
- * Save the project as an OrcaSlicer project 3MF (bbs_3mf.cpp layout), which
- * desktop OrcaSlicer / Bambu Studio open as a project: objects with their
- * parts, per-object / per-part settings, painting, instances, plates, the
- * project settings (resolved config + preset names + changed keys), variable
- * layer heights, height ranges and the slider's custom G-code.
+ * Save the project as an OrcaSlicer 2.5 project 3MF (Format/bbs_3mf.cpp
+ * layout), which desktop OrcaSlicer / Bambu Studio open as a project: objects
+ * with their parts (incl. precise seams), per-object / per-part settings,
+ * painting, instances, plates with their settings, the project settings
+ * (resolved config + preset names + changed keys), variable layer heights,
+ * height ranges, brim ears and the slider's custom G-code. What an opened
+ * project carried that CubbySlicer doesn't model (passthrough.ts, the
+ * `passthrough` fields) is written back as it was read.
  *
  * Everything CubbySlicer needs to reopen the project exactly (part
- * transforms, emboss, brim ears, UI sections, …) rides along in
+ * transforms, emboss, UI sections, …) rides along in
  * Metadata/cubby_slicer.json, which Orca ignores.
  */
 import { strToU8, zipSync, type Zippable } from 'fflate';
-import type { ConfigValue, PaintLayers } from '../../engine/types';
+import type { ConfigValue } from '../../engine/types';
 import { activeEngine, resolvedConfig } from '../../app/state';
-import { isOrcaFamily } from '../../engine/types';
+import { isOrcaConfig } from '../../engine/capabilities';
 import { currentPresets } from '../../presets/store';
-import { composeTRS, type Mat4, type Quat, type Vec3 } from '../math';
+import { isHoleObject } from '../../cad/build';
+import { joinValue } from '../../lib/configValue';
+import { composeTRS, type Quat, type Vec3 } from '../math';
 import {
   liveMeshes, plateOf, projectName, serializeObjects, serializePaint, serializePlates,
 } from '../store';
-import type { MeshData, ObjectPart, ProjectObject } from '../types';
+import type { ObjectPart, ProjectObject, VolumePassthrough } from '../types';
+import { escapeAttr, escapeXml } from '../import/xml';
+import {
+  BBS_COMPAT_VERSION, BRIM_EARS_FILE, CUSTOM_GCODE_FILE, CUT_INFO_FILE, GCODE_TYPE_ID, LAYER_HEIGHTS_FILE, LAYER_RANGES_FILE, MODEL_FILE,
+  MODEL_SETTINGS_FILE, ORCA_FORMAT_VERSION, PAINT_ATTR, PLATE_KEYS, PLATE_KEYS_NEED_MAP_MODE, PRECISE_SEAM_CONFIG_PREFIX, PRECISE_SEAM_TYPE_KEY,
+  PROJECT_SETTINGS_FILE, SLICE_INFO_FILE, SUBTYPE_OF,
+} from '../import/orcaFormat';
+import { ChunkWriter, MODEL_REL_TYPE, PRODUCTION_NS, CORE_NS, contentTypesXml, num, relsXml, transform3mf, writeMesh } from '../export/xml3mf';
 import { CUBBY_CAD_META, PROJECT_FORMAT, PROJECT_VERSION, type CadTreesJson, type ProjectJson } from './format';
 import { saveSections } from './sections';
+import { passthroughFor } from './passthrough';
 import { renderPlateImages, type PlateImages } from '../thumbnails';
 
 export const CUBBY_META = 'Metadata/cubby_slicer.json';
@@ -58,54 +71,27 @@ export function projectStem(fileName: string): string {
   return fileName.replace(/\.(gcode\.3mf|3mf)$/i, '');
 }
 const OBJECTS_FILE = '3D/Objects/object_1.model';
-/**
- * Header metadata exactly as OrcaSlicer 2.4.2 writes it: Application carries
- * the Bambu Studio compatibility version (SLIC3R_VERSION) and the separate
- * "OrcaSlicer" tag the Orca version. Without that tag desktop Orca classifies
- * the file as a Bambu Studio project and warns "Some settings may differ".
- */
-const ORCA_VERSION = '2.4.2';
-const BBS_COMPAT_VERSION = '02.06.00.51';
 
-const SUBTYPE: Record<string, string> = {
-  part: 'normal_part', negative: 'negative_part', modifier: 'modifier_part', support_blocker: 'support_blocker', support_enforcer: 'support_enforcer',
-};
-const GCODE_TYPE: Record<string, number> = { color_change: 0, pause: 1, tool_change: 2, template: 3, custom: 4 };
-const PAINT_ATTR: Record<string, string> = { support: 'paint_supports', seam: 'paint_seam', color: 'paint_color', fuzzy: 'paint_fuzzy_skin' };
+const meta = (indent: string, key: string, value: string) => `${indent}<metadata key="${escapeAttr(key)}" value="${escapeAttr(value)}"/>\n`;
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const num = (v: number) => (Number.isInteger(v) ? String(v) : String(+v.toPrecision(9)));
-/** Column-major 4x4 → 3MF's "m00 m01 m02 m10 m11 m12 m20 m21 m22 m30 m31 m32". */
-const tf = (m: Mat4) => [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]].map(num).join(' ');
-const scalar = (v: ConfigValue) => (Array.isArray(v) ? v.join(',') : v);
-
-function meshXml(id: number, m: MeshData, paint: PaintLayers | undefined): string {
-  const out: string[] = [`  <object id="${id}" type="model">\n   <mesh>\n    <vertices>\n`];
-  const p = m.positions;
-  for (let i = 0; i < p.length; i += 3) out.push(`     <vertex x="${num(p[i])}" y="${num(p[i + 1])}" z="${num(p[i + 2])}"/>\n`);
-  out.push('    </vertices>\n    <triangles>\n');
-  // Painted triangles: index → attribute string.
-  const extra = new Map<number, string>();
-  for (const [layer, map] of Object.entries(paint ?? {})) {
-    const a = PAINT_ATTR[layer];
-    if (!a || !map) continue;
-    for (const [t, s] of map) extra.set(t, `${extra.get(t) ?? ''} ${a}="${esc(s)}"`);
-  }
-  const ix = m.indices;
-  for (let t = 0; t < ix.length / 3; t++) {
-    out.push(`     <triangle v1="${ix[t * 3]}" v2="${ix[t * 3 + 1]}" v3="${ix[t * 3 + 2]}"${extra.get(t) ?? ''}/>\n`);
-  }
-  out.push('    </triangles>\n   </mesh>\n  </object>\n');
-  return out.join('');
+/** A volume's passthrough as it applies to its current mesh (mesh-bound parts dropped once the mesh changed). */
+function liveVolumeKeep(p: VolumePassthrough | undefined, meshId: string): VolumePassthrough | undefined {
+  if (!p || p.meshId === meshId) return p;
+  const { meshMetadata: _m, elements: _e, subtype: _s, ...rest } = p;
+  return rest;
 }
+
+/** A stand-alone CubbyCAD hole: shown and kept, but desktop Orca must not print it as a solid. */
+const isHole = (o: ProjectObject) => isHoleObject(o.cad?.node);
 
 /**
  * Objects that only differ by placement become one Orca object with several
  * instances. Copies get " (2)", " (3)"… names here, so the suffix doesn't count.
  */
 function groupKey(o: ProjectObject): string {
-  return JSON.stringify([o.name.replace(/ \(\d+\)$/, ''), o.meshId, o.overrides, (o.parts ?? []).map((p) => [p.meshId, p.type, p.position, p.rotation, p.scale, p.overrides]),
-    o.layerHeightProfile ?? null, o.layerRanges ?? null]);
+  return JSON.stringify([o.name.replace(/ \(\d+\)$/, ''), o.meshId, o.overrides,
+    (o.parts ?? []).map((p) => [p.meshId, p.type, p.position, p.rotation, p.scale, p.overrides, p.preciseSeam ?? null, p.passthrough ?? null]),
+    o.layerHeightProfile ?? null, o.layerRanges ?? null, o.brimPoints ?? null, o.passthrough ?? null, isHole(o)]);
 }
 
 /** Group into Orca objects: objects that only differ by placement become instances of one. */
@@ -121,6 +107,17 @@ function groupObjects(objects: ProjectObject[], meshIds: { has(id: string): bool
   return groups;
 }
 
+/** Passthrough `<metadata>` not already written (a setting the engine now knows wins). */
+function keptMetadata(indent: string, list: Array<[string, string]> | undefined, written: Set<string>): string {
+  let out = '';
+  for (const [k, v] of list ?? []) {
+    if (written.has(k)) continue;
+    written.add(k);
+    out += meta(indent, k, v);
+  }
+  return out;
+}
+
 /**
  * `thumbnails[i]`: plate i's images (Orca's Metadata/plate_N.png,
  * plate_N_small.png, plate_no_light_N.png, top_N.png, pick_N.png), referenced
@@ -131,20 +128,32 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   const meshes = new Map(liveMeshes().map((m) => [m.id, m]));
   const paint = serializePaint();
   const plates = serializePlates();
-  const orcaEngine = isOrcaFamily(activeEngine.value);
+  const orcaEngine = isOrcaConfig(activeEngine.value);
   const thumbs = opts.thumbnails ?? [];
+  const keep = passthroughFor(new Set(meshes.keys()));
 
   // ---- group into Orca objects + sub-object (volume) ids ----
   const groups = groupObjects(objects, meshes);
   let subId = 0;
   const subOf = new Map<string, number>(); // meshId → sub-object id (shared meshes written once)
-  const subXml: string[] = [];
-  const sub = (meshId: string): number => {
+  const header = `<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="${CORE_NS}" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:p="${PRODUCTION_NS}" requiredextensions="p">\n`;
+  const sub = new ChunkWriter(); // the objects file
+  sub.write(`${header} <resources>\n`);
+  const subObject = (meshId: string): number => {
     let id = subOf.get(meshId);
     if (id === undefined) {
       id = ++subId;
       subOf.set(meshId, id);
-      subXml.push(meshXml(id, meshes.get(meshId)!, paint[meshId]));
+      // Painted triangles and the per-triangle data we keep (texture masks): index → attributes.
+      const extra = new Map<number, string>();
+      const add = (name: string, map: Array<[number, string]> | undefined) => {
+        for (const [t, s] of map ?? []) extra.set(t, `${extra.get(t) ?? ''} ${name}="${escapeAttr(s)}"`);
+      };
+      for (const [layer, map] of Object.entries(paint[meshId] ?? {})) add(PAINT_ATTR[layer as keyof typeof PAINT_ATTR], map);
+      for (const [name, map] of Object.entries(keep.triangleAttrs[meshId] ?? {})) add(name, map);
+      sub.write(`  <object id="${id}" type="model">\n`);
+      writeMesh(sub, meshes.get(meshId)!, '   ', extra.size ? (t) => extra.get(t) ?? '' : undefined);
+      sub.write('  </object>\n');
     }
     return id;
   };
@@ -155,100 +164,96 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   const plateInstances: string[][] = plates.map(() => []);
   const profiles: string[] = [];
   const rangesXml: string[] = [];
+  const brims: string[] = [];
+  const cuts: string[] = [];
+  const assembleXml: string[] = [];
   let rootId = 0;
   groups.forEach((g, gi) => {
     const o = g.first;
+    const index = gi + 1; // Orca's 1-based object index (per-object metadata files)
     const id = ++rootId + 100000; // root ids live apart from the sub-object ids
-    const volumes: Array<{ sub: number; part: ObjectPart | null }> = [
-      { sub: sub(o.meshId), part: null },
-      ...(o.parts ?? []).filter((p) => meshes.has(p.meshId)).map((p) => ({ sub: sub(p.meshId), part: p })),
+    const volumes: Array<{ sub: number; part: ObjectPart | null; keep?: VolumePassthrough }> = [
+      { sub: subObject(o.meshId), part: null, keep: liveVolumeKeep(o.passthrough?.volume, o.meshId) },
+      ...(o.parts ?? []).filter((p) => meshes.has(p.meshId)).map((p) => ({ sub: subObject(p.meshId), part: p, keep: liveVolumeKeep(p.passthrough, p.meshId) })),
     ];
     rootXml.push(`  <object id="${id}" type="model">\n   <components>\n`);
     for (const v of volumes) {
       const m = v.part ? composeTRS(v.part.position as Vec3, v.part.rotation as Quat, v.part.scale as Vec3) : composeTRS([0, 0, 0], [0, 0, 0, 1], [1, 1, 1]);
-      rootXml.push(`    <component p:path="/${OBJECTS_FILE}" objectid="${v.sub}" transform="${tf(m)}"/>\n`);
+      rootXml.push(`    <component p:path="/${OBJECTS_FILE}" objectid="${v.sub}" transform="${transform3mf(m)}"/>\n`);
     }
     rootXml.push('   </components>\n  </object>\n');
 
-    settingsXml.push(`  <object id="${id}">\n    <metadata key="name" value="${esc(o.name)}"/>\n`);
-    const ov = orcaEngine ? o.overrides : pick(o.overrides, ['extruder']);
-    if (!('extruder' in ov)) settingsXml.push('    <metadata key="extruder" value="1"/>\n');
-    for (const [k, v] of Object.entries(ov)) settingsXml.push(`    <metadata key="${esc(k)}" value="${esc(scalar(v))}"/>\n`);
-    for (const v of volumes) {
-      const name = v.part?.name ?? o.name;
-      settingsXml.push(`    <part id="${v.sub}" subtype="${SUBTYPE[v.part?.type ?? 'part']}">\n      <metadata key="name" value="${esc(name)}"/>\n`);
-      const pov = v.part ? (orcaEngine ? v.part.overrides : pick(v.part.overrides, ['extruder'])) : {};
-      for (const [k, val] of Object.entries(pov)) settingsXml.push(`      <metadata key="${esc(k)}" value="${esc(scalar(val))}"/>\n`);
-      settingsXml.push('    </part>\n');
-    }
+    settingsXml.push(objectXml(id, o, orcaEngine));
+    for (const v of volumes) settingsXml.push(volumeXml(v.sub, v.part, o.name, v.keep, orcaEngine));
     settingsXml.push('  </object>\n');
 
     g.members.forEach((m, k) => {
       const t = composeTRS(m.position as Vec3, m.rotation as Quat, m.scale as Vec3);
-      buildXml.push(`  <item objectid="${id}" transform="${tf(t)}" printable="${m.printable ? 1 : 0}"/>\n`);
+      buildXml.push(`  <item objectid="${id}" transform="${transform3mf(t)}" printable="${m.printable && !isHole(m) ? 1 : 0}"/>\n`);
       const p = Math.max(0, plateOf(m.id));
-      (plateInstances[p] ??= []).push(`    <model_instance>\n      <metadata key="object_id" value="${id}"/>\n      <metadata key="instance_id" value="${k}"/>\n      <metadata key="identify_id" value="${id * 100 + k}"/>\n    </model_instance>\n`);
+      (plateInstances[p] ??= []).push(`    <model_instance>\n${meta('      ', 'object_id', String(id))}${meta('      ', 'instance_id', String(k))}${meta('      ', 'identify_id', String(id * 100 + k))}    </model_instance>\n`);
+      assembleXml.push(assembleItemXml(id, k, m, t));
     });
 
-    if (o.layerHeightProfile && o.layerHeightProfile.length >= 4) profiles.push(`object_id=${gi + 1}|${o.layerHeightProfile.map((v) => v.toFixed(6)).join(';')}`);
+    if (o.layerHeightProfile && o.layerHeightProfile.length >= 4) profiles.push(`object_id=${index}|${o.layerHeightProfile.map((v) => v.toFixed(6)).join(';')}`);
     if (o.layerRanges?.length) {
-      rangesXml.push(` <object id="${gi + 1}">\n`);
+      rangesXml.push(` <object id="${index}">\n`);
       for (const r of o.layerRanges) {
         rangesXml.push(`  <range min_z="${num(r.min)}" max_z="${num(r.max)}">\n`);
         const cfg = orcaEngine ? r.overrides : pick(r.overrides, ['layer_height']);
-        for (const [k, v] of Object.entries(cfg)) rangesXml.push(`   <option opt_key="${esc(k)}">${esc(scalar(v))}</option>\n`);
+        for (const [k, v] of Object.entries(cfg)) rangesXml.push(`   <option opt_key="${escapeAttr(k)}">${escapeXml(joinValue(v))}</option>\n`);
+        // Settings this engine doesn't know, as they were read (a key the engine now knows wins).
+        for (const [k, v] of r.passthrough ?? []) if (!(k in r.overrides)) rangesXml.push(`   <option opt_key="${escapeAttr(k)}">${escapeXml(v)}</option>\n`);
         rangesXml.push('  </range>\n');
       }
       rangesXml.push(' </object>\n');
     }
+    if (o.brimPoints?.length) {
+      brims.push(`object_id=${index}|${o.brimPoints.map((b) => [...b.pos, b.radius].map((v) => v.toFixed(6)).join(' ')).join(' ')}`);
+    }
+    if (o.passthrough?.cutInfo) cuts.push(` <object id="${index}">\n  ${o.passthrough.cutInfo}\n </object>\n`);
   });
 
   plates.forEach((p, i) => {
-    settingsXml.push(`  <plate>\n    <metadata key="plater_id" value="${i + 1}"/>\n    <metadata key="plater_name" value="${esc(p.name)}"/>\n    <metadata key="locked" value="${p.locked}"/>\n`);
+    settingsXml.push(`  <plate>\n${meta('    ', 'plater_id', String(i + 1))}${meta('    ', 'plater_name', p.name)}${meta('    ', 'locked', String(p.locked))}`);
     const cfg = p.config ?? {};
-    if (cfg.curr_bed_type) settingsXml.push(`    <metadata key="bed_type" value="${esc(scalar(cfg.curr_bed_type))}"/>\n`);
-    if (cfg.print_sequence) settingsXml.push(`    <metadata key="print_sequence" value="${esc(scalar(cfg.print_sequence))}"/>\n`);
-    if (cfg.spiral_mode !== undefined) settingsXml.push(`    <metadata key="spiral_mode" value="${scalar(cfg.spiral_mode) === '1' ? 'true' : 'false'}"/>\n`);
-    for (const k of ['first_layer_print_sequence', 'other_layers_print_sequence'] as const) {
-      if (cfg[k]) settingsXml.push(`    <metadata key="${k}" value="${esc(scalar(cfg[k]!).replace(/,/g, ' '))}"/>\n`);
+    const written = new Set<string>();
+    for (const k of PLATE_KEYS) {
+      const v = cfg[k.key];
+      if (v === undefined || (PLATE_KEYS_NEED_MAP_MODE.has(k.key) && cfg.filament_map_mode === undefined)) continue;
+      const out = k.write(String(joinValue(v)));
+      if (out !== null) settingsXml.push(meta('    ', k.meta, out));
+      written.add(k.meta);
     }
     if (thumbs[i]) {
       // bbs_3mf.cpp order: thumbnail_file, thumbnail_no_light_file, top_file, pick_file.
-      settingsXml.push(`    <metadata key="thumbnail_file" value="Metadata/plate_${i + 1}.png"/>\n`,
-        `    <metadata key="thumbnail_no_light_file" value="Metadata/plate_no_light_${i + 1}.png"/>\n`,
-        `    <metadata key="top_file" value="Metadata/top_${i + 1}.png"/>\n`,
-        `    <metadata key="pick_file" value="Metadata/pick_${i + 1}.png"/>\n`);
+      settingsXml.push(meta('    ', 'thumbnail_file', `Metadata/plate_${i + 1}.png`), meta('    ', 'thumbnail_no_light_file', `Metadata/plate_no_light_${i + 1}.png`),
+        meta('    ', 'top_file', `Metadata/top_${i + 1}.png`), meta('    ', 'pick_file', `Metadata/pick_${i + 1}.png`));
     }
-    settingsXml.push(...(plateInstances[i] ?? []), '  </plate>\n');
+    settingsXml.push(keptMetadata('    ', p.passthrough?.metadata, written), ...(plateInstances[i] ?? []), '  </plate>\n');
   });
+  // Every instance's assemble state, after the plates (_add_model_config_file_to_archive).
+  settingsXml.push('  <assemble>\n', ...assembleXml, '  </assemble>\n');
 
-  const P = 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06';
-  const header = (extra = '') => `<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:p="${P}" requiredextensions="p"${extra}>\n`;
-  const rootModel = header()
-    + ` <metadata name="Application">BambuStudio-${BBS_COMPAT_VERSION}</metadata>\n <metadata name="OrcaSlicer">${ORCA_VERSION}</metadata>\n`
-    + ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n'
-    + ` <metadata name="Title">${esc(projectName.value)}</metadata>\n <metadata name="CreationDate">${new Date().toISOString().slice(0, 10)}</metadata>\n`
-    + ` <resources>\n${rootXml.join('')} </resources>\n <build>\n${buildXml.join('')} </build>\n</model>\n`;
-  const objectsModel = header() + ` <resources>\n${subXml.join('')} </resources>\n <build/>\n</model>\n`;
+  const rootModel = header + modelMetadataXml(keep.modelMetadata) + ` <resources>\n${rootXml.join('')} </resources>\n <build>\n${buildXml.join('')} </build>\n</model>\n`;
+  sub.write(' </resources>\n <build/>\n</model>\n');
 
   const files: Zippable = {
-    '[Content_Types].xml': strToU8('<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
-      + ' <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
-      + ' <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
-      + ' <Default Extension="png" ContentType="image/png"/>\n <Default Extension="gcode" ContentType="text/x.gcode"/>\n</Types>\n'),
-    '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-      + ' <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n'
+    '[Content_Types].xml': strToU8(contentTypesXml([['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['json', 'application/json'], ['gcode', 'text/x.gcode']])),
+    '_rels/.rels': strToU8(relsXml([
+      [`/${MODEL_FILE}`, 'rel-1', MODEL_REL_TYPE],
       // Orca (whole project): the package thumbnail and Bambu's cover images are plate 1's.
-      + (thumbs[0] ? ' <Relationship Target="/Metadata/plate_1.png" Id="rel-2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>\n'
-        + ' <Relationship Target="/Metadata/plate_1.png" Id="rel-4" Type="http://schemas.bambulab.com/package/2021/cover-thumbnail-middle"/>\n'
-        + ' <Relationship Target="/Metadata/plate_1_small.png" Id="rel-5" Type="http://schemas.bambulab.com/package/2021/cover-thumbnail-small"/>\n' : '')
-      + '</Relationships>\n'),
-    '3D/_rels/3dmodel.model.rels': strToU8('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
-      + ` <Relationship Target="/${OBJECTS_FILE}" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n</Relationships>\n`),
-    '3D/3dmodel.model': [strToU8(rootModel), { level: 6 }],
-    [OBJECTS_FILE]: [strToU8(objectsModel), { level: 6 }],
-    'Metadata/model_settings.config': strToU8(`<?xml version="1.0" encoding="UTF-8"?>\n<config>\n${settingsXml.join('')}</config>\n`),
-    'Metadata/slice_info.config': strToU8(`<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <header>\n    <header_item key="X-BBL-Client-Type" value="slicer"/>\n    <header_item key="X-BBL-Client-Version" value="${BBS_COMPAT_VERSION}"/>\n    <header_item key="OrcaSlicer-Version" value="${ORCA_VERSION}"/>\n  </header>\n</config>\n`),
+      ...(thumbs[0] ? [
+        ['/Metadata/plate_1.png', 'rel-2', 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail'],
+        ['/Metadata/plate_1.png', 'rel-4', 'http://schemas.bambulab.com/package/2021/cover-thumbnail-middle'],
+        ['/Metadata/plate_1_small.png', 'rel-5', 'http://schemas.bambulab.com/package/2021/cover-thumbnail-small'],
+      ] as Array<[string, string, string]> : []),
+    ])),
+    '3D/_rels/3dmodel.model.rels': strToU8(relsXml([[`/${OBJECTS_FILE}`, 'rel-1', MODEL_REL_TYPE]])),
+    [MODEL_FILE]: [strToU8(rootModel), { level: 6 }],
+    [OBJECTS_FILE]: [sub.bytes(), { level: 6 }],
+    [MODEL_SETTINGS_FILE]: strToU8(`<?xml version="1.0" encoding="UTF-8"?>\n<config>\n${settingsXml.join('')}</config>\n`),
+    [SLICE_INFO_FILE]: strToU8(`<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <header>\n    <header_item key="X-BBL-Client-Type" value="slicer"/>\n    <header_item key="X-BBL-Client-Version" value="${BBS_COMPAT_VERSION}"/>\n    <header_item key="OrcaSlicer-Version" value="${ORCA_FORMAT_VERSION}"/>\n  </header>\n</config>\n`),
   };
   thumbs.forEach((t, i) => {
     // Stored uncompressed, as Orca does (PNG is already deflated).
@@ -258,11 +263,15 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
     files[`Metadata/top_${i + 1}.png`] = [t.top, { level: 0 }];
     files[`Metadata/pick_${i + 1}.png`] = [t.pick, { level: 0 }];
   });
-  if (orcaEngine) files['Metadata/project_settings.config'] = strToU8(JSON.stringify(projectSettings(), null, 4));
-  if (profiles.length) files['Metadata/layer_heights_profile.txt'] = strToU8(`${profiles.join('\n')}\n`);
-  if (rangesXml.length) files['Metadata/layer_config_ranges.xml'] = strToU8(`<?xml version="1.0" encoding="utf-8"?>\n<objects>\n${rangesXml.join('')}</objects>\n`);
+  if (orcaEngine) files[PROJECT_SETTINGS_FILE] = strToU8(JSON.stringify(projectSettings(), null, 4));
+  if (profiles.length) files[LAYER_HEIGHTS_FILE] = strToU8(`${profiles.join('\n')}\n`);
+  if (rangesXml.length) files[LAYER_RANGES_FILE] = strToU8(`<?xml version="1.0" encoding="utf-8"?>\n<objects>\n${rangesXml.join('')}</objects>\n`);
+  if (brims.length) files[BRIM_EARS_FILE] = strToU8(`brim_points_format_version=0\n${brims.join('\n')}\n`);
+  if (cuts.length) files[CUT_INFO_FILE] = strToU8(`<?xml version="1.0" encoding="utf-8"?>\n<objects>\n${cuts.join('')}</objects>\n`);
   const gcodes = customGcodeXml(plates);
-  if (gcodes) files['Metadata/custom_gcode_per_layer.xml'] = strToU8(gcodes);
+  if (gcodes) files[CUSTOM_GCODE_FILE] = strToU8(gcodes);
+  // Kept archive entries (Design tab recipe, texture layers, SVG shapes, Auxiliaries, embedded presets).
+  for (const [path, bytes] of Object.entries(keep.files)) if (!(path in files)) files[path] = [bytes, { level: /\.(png|jpe?g)$/i.test(path) ? 0 : 6 }];
 
   // Exact round-trip for CubbySlicer: the project JSON, with meshes pointing into the model file.
   // CubbyCAD trees go to their own file (stock Orca ignores both; it just sees the meshes).
@@ -284,6 +293,99 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   return zipSync(files, { level: 6 });
 }
 
+/**
+ * A double as Orca's model_settings.config stream writes it
+ * (std::setprecision(max_digits10) = printf "%.17g").
+ */
+export function formatG17(x: number): string {
+  if (x === 0) return Object.is(x, -0) ? '-0' : '0';
+  if (!Number.isFinite(x)) return Number.isNaN(x) ? 'nan' : x > 0 ? 'inf' : '-inf';
+  const [mant, ex] = x.toExponential(16).split('e');
+  const e = Number(ex);
+  if (e < -4 || e >= 17) {
+    const m = mant.includes('.') ? mant.replace(/0+$/, '').replace(/\.$/, '') : mant;
+    return `${m}e${e < 0 ? '-' : '+'}${String(Math.abs(e)).padStart(2, '0')}`;
+  }
+  const f = x.toFixed(16 - e);
+  return f.includes('.') ? f.replace(/0+$/, '').replace(/\.$/, '') : f;
+}
+
+/**
+ * One `<assemble_item>`: the instance's assemble state as read (an opened 3MF
+ * keeps its own), else its Assembly view pose, else its placement (desktop
+ * initialises the assemble transform from the placement when objects load).
+ */
+function assembleItemXml(id: number, k: number, o: ProjectObject, placement: number[]): string {
+  let matrix: readonly number[];
+  if (o.assemble) matrix = o.assemble.matrix;
+  else {
+    const m = o.assembly ? composeTRS(o.assembly.position as Vec3, o.assembly.rotation as Quat, o.assembly.scale as Vec3) : placement;
+    matrix = [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]];
+  }
+  const offset = o.assemble?.offset ?? [0, 0, 0];
+  return `   <assemble_item object_id="${id}" instance_id="${k}" transform="${matrix.map(formatG17).join(' ')}" offset="${offset.map(formatG17).join(' ')}" />\n`;
+}
+
+/** `<object>` header + its metadata (name, settings, kept items). */
+function objectXml(id: number, o: ProjectObject, orcaEngine: boolean): string {
+  const keep = o.passthrough?.object;
+  const attrs = keep?.attrs ?? [];
+  // Orca 2.5 writes auto_drop on every object (2.4.x read it from the build items).
+  const attrText = (attrs.some(([k]) => k === 'auto_drop') ? attrs : [...attrs, ['auto_drop', '1'] as [string, string]])
+    .map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join('');
+  let out = `  <object id="${id}"${attrText}>\n${meta('    ', 'name', o.name)}`;
+  const ov = orcaEngine ? o.overrides : pick(o.overrides, ['extruder']);
+  const written = new Set(['name']);
+  if (!('extruder' in ov) && !keep?.metadata?.some(([k]) => k === 'extruder')) { out += meta('    ', 'extruder', '1'); written.add('extruder'); }
+  for (const [k, v] of Object.entries(ov)) { out += meta('    ', k, String(joinValue(v))); written.add(k); }
+  out += keptMetadata('    ', keep?.metadata, written);
+  for (const e of keep?.elements ?? []) out += `    ${e}\n`;
+  return out;
+}
+
+/** One `<part>` of an object (the object's own volume when `part` is null). */
+function volumeXml(sub: number, part: ObjectPart | null, objectName: string, keep: VolumePassthrough | undefined, orcaEngine: boolean): string {
+  const seam = part?.preciseSeam;
+  // An unknown subtype read from the file is written back while the part is still the inert modifier it opened as.
+  const subtype = keep?.subtype && part?.type === 'modifier' && !seam ? keep.subtype : SUBTYPE_OF[part?.type ?? 'part'];
+  const attrs = (keep?.attrs ?? []).map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join('');
+  let out = `    <part id="${sub}" subtype="${seam ? SUBTYPE_OF.modifier : subtype}"${attrs}>\n`;
+  // Older readers must see a plain modifier: the seam type and its settings go in their own keys.
+  if (seam) out += meta('      ', PRECISE_SEAM_TYPE_KEY, seam.type);
+  out += meta('      ', 'name', part?.name ?? keep?.metadata?.find(([k]) => k === 'name')?.[1] ?? objectName);
+  const written = new Set(['name', PRECISE_SEAM_TYPE_KEY]);
+  const ov = part ? (orcaEngine ? part.overrides : pick(part.overrides, ['extruder'])) : {};
+  for (const [k, v] of Object.entries(ov)) { out += meta('      ', k, String(joinValue(v))); written.add(k); }
+  for (const [k, v] of Object.entries(seam?.config ?? {})) { out += meta('      ', PRECISE_SEAM_CONFIG_PREFIX + k, String(joinValue(v))); written.add(PRECISE_SEAM_CONFIG_PREFIX + k); }
+  out += keptMetadata('      ', keep?.meshMetadata, written);
+  out += keptMetadata('      ', keep?.metadata, written);
+  for (const e of keep?.elements ?? []) out += `      ${e}\n`;
+  return `${out}    </part>\n`;
+}
+
+/**
+ * Model `<metadata name>` items as Orca 2.5 writes them: the file's own items
+ * (designer, licence, …) plus ours, sorted by name (a std::map), the
+ * "OrcaSlicer" tag right after "Application", dates blank (Orca's privacy rule).
+ */
+function modelMetadataXml(kept: ReadonlyArray<readonly [string, string]>): string {
+  const items = new Map<string, string>();
+  for (const k of ['Copyright', 'Description', 'Designer', 'DesignerCover', 'DesignerUserId', 'License', 'Origin']) items.set(k, '');
+  for (const [k, v] of kept) items.set(k, v);
+  items.set('DesignerUserId', ''); // Orca: never stores the Bambu user id
+  items.set('Title', projectName.value);
+  items.set('CreationDate', '');
+  items.set('ModificationDate', '');
+  items.set('Application', `BambuStudio-${BBS_COMPAT_VERSION}`);
+  items.set('BambuStudio:3mfVersion', '1');
+  let out = '';
+  for (const k of [...items.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    out += ` <metadata name="${escapeAttr(k)}">${escapeXml(items.get(k)!)}</metadata>\n`;
+    if (k === 'Application') out += ` <metadata name="OrcaSlicer">${ORCA_FORMAT_VERSION}</metadata>\n`;
+  }
+  return out;
+}
+
 function pick(o: Record<string, ConfigValue>, keys: string[]): Record<string, ConfigValue> {
   const out: Record<string, ConfigValue> = {};
   for (const k of keys) if (k in o) out[k] = o[k];
@@ -295,10 +397,12 @@ function projectSettings(): Record<string, unknown> {
   const p = currentPresets.value;
   const cfg: Record<string, unknown> = { ...resolvedConfig.value };
   const keys = (o: Record<string, unknown> | undefined) => Object.keys(o ?? {}).sort().join(';');
-  cfg.different_settings_to_system = [keys(p.overrides.process), ...p.selection.filaments.map((_, i) => keys(p.overrides.filaments[i])), keys(p.overrides.printer)];
+  // One entry per filament slot, mixed ones included (their preset is a copy of the first component's).
+  const slots = Array.from({ length: p.filamentSlotCount() }, (_, i) => keys(p.overrides.filaments[i]));
+  cfg.different_settings_to_system = [keys(p.overrides.process), ...slots, keys(p.overrides.printer)];
   cfg.name = 'project_settings';
   cfg.from = 'project';
-  cfg.version = '2.4.2.0';
+  cfg.version = BBS_COMPAT_VERSION; // config.save_to_json(…, SLIC3R_VERSION)
   return cfg;
 }
 
@@ -309,7 +413,7 @@ function customGcodeXml(plates: ReturnType<typeof serializePlates>): string | nu
   const mode = filaments > 1 ? 'MultiAsSingle' : 'SingleExtruder';
   const blocks = plates.map((p, i) => {
     if (!p.customGcodes?.length) return '';
-    const layers = p.customGcodes.map((g) => `  <layer top_z="${num(g.z)}" type="${GCODE_TYPE[g.type] ?? 4}" extruder="${g.extruder ?? 1}" color="${esc(g.color ?? '')}" extra="${esc(g.extra ?? '')}" gcode="${esc(g.type === 'custom' ? g.extra ?? '' : '')}"/>\n`).join('');
+    const layers = p.customGcodes.map((g) => `  <layer top_z="${num(g.z)}" type="${GCODE_TYPE_ID[g.type] ?? 4}" extruder="${g.extruder ?? 1}" color="${escapeAttr(g.color ?? '')}" extra="${escapeAttr(g.extra ?? '')}" gcode="${escapeAttr(g.type === 'custom' ? g.extra ?? '' : '')}"/>\n`).join('');
     return ` <plate>\n  <plate_info id="${i + 1}"/>\n${layers}  <mode value="${mode}"/>\n </plate>\n`;
   }).join('');
   return blocks ? `<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n${blocks}</custom_gcodes_per_layer>\n` : null;

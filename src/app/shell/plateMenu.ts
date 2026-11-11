@@ -5,8 +5,11 @@
 import type { DropdownMenuItem } from '@nuxt/ui';
 import { moveObjectsToPlate, objectPlate, objectsOnPlate, plates, select, selectedIds, setActivePlate } from '../../project/store';
 import { useSliceController } from '../slice';
-import { openPlateSettings } from '../../plates/ui';
-import { arrangePlate, autoOrientObjects, clearPlateCmd, deletePlateCmd, exportGcode, togglePlateLock } from './actions';
+import { imexModeLabel, imexModes, openPlateSettings, plateImex } from '../../plates/ui';
+import { setPlateImexMode } from '../../plates/store';
+import { arrangePlate, autoOrientObjects, clearPlateCmd, deletePlateCmd, exportGcode, OBJECT_ORDER_LABELS, orderPlateObjects, repairMeshesCmd, togglePlateLock, type ObjectOrder } from './actions';
+
+const ORDERS = Object.keys(OBJECT_ORDER_LABELS) as ObjectOrder[];
 
 export function plateMenu(i: number, rename: (i: number) => void): DropdownMenuItem[][] {
   const slicer = useSliceController();
@@ -23,6 +26,16 @@ export function plateMenu(i: number, rename: (i: number) => void): DropdownMenuI
     [
       n > 0 && !p.locked && { label: 'Arrange objects on plate', icon: 'i-lucide-layout-dashboard', kbds: ['shift', 'A'], onSelect: run(arrangePlate) },
       n > 0 && !p.locked && { label: 'Auto orient plate', icon: 'i-lucide-compass', kbds: ['shift', 'Q'], onSelect: run(() => autoOrientObjects('all')) },
+      n > 1 && {
+        // Orca 2.5 "Order By": again = reversed; "All plates" sorts every plate.
+        label: 'Order by', icon: 'i-lucide-arrow-down-wide-narrow',
+        children: [
+          ORDERS.map((o) => ({ label: OBJECT_ORDER_LABELS[o], onSelect: run(() => orderPlateObjects(o, i)) })),
+          ...(plates.value.length > 1 ? [[{ label: 'All plates', children: ORDERS.map((o) => ({ label: OBJECT_ORDER_LABELS[o], onSelect: () => orderPlateObjects(o, 'all') })) }]] : []),
+        ],
+      },
+      n > 0 && { label: 'Fix all', icon: 'i-lucide-wrench', onSelect: run(() => repairMeshesCmd('plate')) },
+      n > 0 && plates.value.length > 1 && { label: 'Fix all plates', icon: 'i-lucide-wrench', onSelect: () => repairMeshesCmd('all') },
       n > 0 && { label: 'Select objects on plate', icon: 'i-lucide-box-select', onSelect: run(() => select(objectsOnPlate(i).map((o) => o.id))) },
       moving.length > 0 && {
         label: moving.length > 1 ? `Move ${moving.length} selected objects here` : 'Move selected object here', icon: 'i-lucide-move-right',
@@ -33,6 +46,14 @@ export function plateMenu(i: number, rename: (i: number) => void): DropdownMenuI
       { label: 'Rename…', icon: 'i-lucide-text-cursor-input', onSelect: () => rename(i) },
       { label: p.locked ? 'Unlock plate' : 'Lock plate', icon: p.locked ? 'i-lucide-lock-open' : 'i-lucide-lock', onSelect: () => togglePlateLock(i) },
       { label: 'Plate settings…', icon: 'i-lucide-settings-2', onSelect: run(() => openPlateSettings(i)) },
+      // Orca 2.5 IDEX/IQEX: right-click on the plate's mode icon lists the modes.
+      !!plateImex(i) && {
+        label: `IDEX/IQEX mode: ${plateImex(i)!.label}`, icon: plateImex(i)!.icon,
+        children: [imexModes.value.map((m) => ({
+          label: imexModeLabel(m), type: 'checkbox' as const, checked: plateImex(i)!.mode === m,
+          onSelect: () => setPlateImexMode(i, m),
+        }))],
+      },
     ],
     [
       n > 0 && { label: 'Delete all objects on plate', icon: 'i-lucide-eraser', color: 'error', onSelect: () => clearPlateCmd(i) },

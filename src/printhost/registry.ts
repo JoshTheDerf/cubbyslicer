@@ -12,6 +12,7 @@ import { esp3d, flashair, mks } from './hosts/simple';
 import { elegooKind, elegoolink } from './hosts/elegoo';
 import { crealityprint } from './hosts/creality';
 import { flashforge } from './hosts/flashforge';
+import { ultimaker } from './hosts/ultimaker';
 
 export type HostSupport = 'full' | 'upload' | 'none';
 
@@ -29,6 +30,12 @@ export interface HostMeta {
   apiKeyPlaceholder?: string;
   /** PrusaLink: API key vs HTTP digest user/password. */
   authTypes?: boolean;
+  /** Always a user / password (HTTP digest) login; `credentials`: the printer can issue them (UltiMaker). */
+  userPassword?: { user: string; password: string; credentials?: boolean };
+  /** Every upload starts printing (no plain Upload). */
+  printOnly?: boolean;
+  /** Moonraker: the filament slots can be synced from the printer's lanes. */
+  filamentSync?: boolean;
   /** Repetier: printer slug (`printhost_port`). */
   printerSlug?: boolean;
   /** Flashforge: serial number. */
@@ -75,11 +82,21 @@ export const HOSTS: HostMeta[] = [
     ],
   },
   {
-    type: 'moonraker', label: 'Moonraker (Klipper)', support: 'full', driver: moonraker,
+    type: 'moonraker', label: 'Moonraker (Klipper)', support: 'full', driver: moonraker, filamentSync: true,
     apiKeyLabel: 'API key (optional)', apiKeyPlaceholder: 'Only if this client isn’t a trusted client', folder: 'folder', hostPlaceholder: 'mainsailos.local or http://192.168.1.30', canPrint: always,
     hints: (origin) => [
       { text: 'Allow this site in moonraker.conf, then restart Moonraker:', code: `[authorization]\ncors_domains:\n    ${origin}` },
       { text: 'Without trusted_clients covering your computer, Moonraker also needs its API key (Mainsail/Fluidd → Settings → API key, or GET /access/api_key).' },
+      { text: '“Sync filaments” reads the lanes AFC or Happy Hare publish to Moonraker (lane_data). Qidi printers with a Box: Upload & Print can assign a Box slot to each filament.' },
+    ],
+  },
+  {
+    type: 'ultimaker', label: 'UltiMaker', support: 'full', driver: ultimaker, printOnly: true,
+    apiKeyLabel: null, userPassword: { user: 'ID', password: 'Key', credentials: true }, folder: false, hostPlaceholder: '192.168.1.130', canPrint: always,
+    note: 'UltiMaker 3 / S5 (Griffin API). Every upload starts printing. The login is an ID / key the printer issues: request it here, approve it on the printer’s screen, then Test.',
+    hints: (origin) => [
+      { text: `The printer’s API doesn’t send CORS headers and is http:// only, so a browser needs a proxy that adds CORS for ${origin} and exposes WWW-Authenticate (HTTP digest login):` },
+      proxyHint(origin, '192.168.1.130'),
     ],
   },
   {

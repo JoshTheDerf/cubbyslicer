@@ -14,16 +14,23 @@ import { validateValue } from '../../settings/validate';
 import { getObjectOverrides, setObjectOverride } from '../../settings/projectAdapter';
 import { getRange } from '../../layers/store';
 import { PLATE_KEYS, plateConfig, setPlateConfig } from '../../plates/store';
-import { DEFINITIONS_KEY, MIXED_SETTING_GROUPS, mixedSetting, setMixedSetting } from '../../mixed/store';
+import { MIXED_SLOT_KEYS } from '../../mixed/model';
+import { SCALAR, valueAt, valueCount, variantValue } from '../../lib/configValue';
+import { variantKey } from '../../presets/variants';
 import { settingValue } from '../logic';
 import { slotArg } from './presets';
 import { num, obj, objectArg, partArg, plateArg, settled, str } from './util';
 
 /** Project-level values that belong to no preset (the app's own dialogs write them). */
-const PROJECT_KEYS = new Set(['filament_map', 'filament_map_mode', 'flush_volumes_matrix', 'flush_multiplier', 'wiping_volumes_matrix', 'wiping_volumes_use_custom_matrix']);
-const MIXED_KEYS = new Set(MIXED_SETTING_GROUPS.flatMap((g) => g.keys));
+const PROJECT_KEYS = new Set([
+  'filament_map', 'filament_map_mode', 'flush_volumes_matrix', 'flush_multiplier', 'wiping_volumes_matrix', 'wiping_volumes_use_custom_matrix',
+  // Orca 2.5: nozzle flow type per extruder, per-filament flow type on a Hybrid extruder, purge mode.
+  'nozzle_volume_type', 'filament_volume_map', 'prime_volume_mode', 'flush_multiplier_fast',
+]);
+/** Orca's per-slot mixed filament vectors: edited as filaments, not as settings. */
+const MIXED_KEYS = new Set<string>(MIXED_SLOT_KEYS);
 /** Per-object / part / range overrides: process settings plus the filament (extruder). */
-const OBJECT_OK = (d: ConfigOptionDef, key: string) => d.scope === 'print' || key === 'extruder';
+const OBJECT_OK = (d: ConfigOptionDef, key: string) => d.scope === 'print' || d.scope === 'object' || key === 'extruder';
 
 type Target =
   | { kind: 'global' }
@@ -114,8 +121,26 @@ export function settingsTools(): BridgeTool[] {
           if (!keys) throw new Error('Pass keys (find_settings looks them up). compare_presets lists unsaved edits.');
           const out: Record<string, unknown> = {};
           const unknown: string[] = [];
-          for (const k of keys as string[]) { if (k in cfg) out[k] = cfg[k]; else unknown.push(k); }
-          return { data: { values: out, unknown: unknown.length ? unknown : undefined, hint: unknown.length ? 'Use find_settings to look up keys.' : undefined } };
+          const perVariant: Record<string, string[]> = {};
+          const schema = currentPresets.value.schema.value;
+          const extruders = Math.max(1, valueCount(cfg.nozzle_diameter));
+          const filaments = Math.max(1, valueCount(cfg.filament_diameter));
+          for (const k of keys as string[]) {
+            if (!(k in cfg)) { unknown.push(k); continue; }
+            out[k] = cfg[k];
+            // Orca 2.5 per-variant vectors: the value each extruder (filament) slices with.
+            const info = variantKey(schema, k);
+            if (info && valueCount(cfg[k]) > 1) {
+              const n = info.family === 'filament' ? filaments : extruders;
+              perVariant[k] = Array.from({ length: n }, (_, i) => variantValue(cfg, k, info.family, i) ?? '');
+            }
+          }
+          return {
+            data: {
+              values: out, unknown: unknown.length ? unknown : undefined, hint: unknown.length ? 'Use find_settings to look up keys.' : undefined,
+              perExtruder: Object.keys(perVariant).length ? perVariant : undefined,
+            },
+          };
         }
         const own: Readonly<Record<string, ConfigValue>> = t.kind === 'plate' ? plateConfig(t.plate) : getObjectOverrides(t.objectId, t.partId, t.rangeId);
         const list = (keys as string[] | undefined) ?? Object.keys(own);
@@ -130,7 +155,9 @@ export function settingsTools(): BridgeTool[] {
         'Change settings, e.g. { "values": { "layer_height": 0.2, "sparse_infill_density": "15%", "enable_support": true } }. null resets a key. ' +
         'Without a target each key goes to its own tab (printer / process / filament slot) as an unsaved edit, like typing in the sidebar (save_preset keeps it). ' +
         'objectId / partId / rangeId: per-object, per-part (modifier) or height-range overrides (process settings and "extruder"). plate: plate settings (bed type, print sequence, spiral vase, filament order). ' +
-        'Filament colours: set_filaments; flushing: set_flushing_volumes; mixed filaments: edit_mixed_filaments. Returns what changed and anything rejected with the reason.',
+        'Filament colours: set_filaments; flushing: set_flushing_volumes; mixed filaments: edit_mixed_filaments. ' +
+        'Per-nozzle settings (Orca 2.5 speeds, accelerations, retraction, filament temperatures on multi-nozzle / High Flow printers): a single value applies to every nozzle variant; a list sets each variant column; get_settings reports `perExtruder`, the value each extruder slices with. ' +
+        'Returns what changed and anything rejected with the reason.',
       inputSchema: obj({ values: { type: 'object', description: 'Setting key → value (string, number, boolean, a list for per-extruder values, or null to reset).' }, ...TARGET_ARGS }, ['values']),
       async run(args) {
         const values = args.values as Record<string, unknown>;
@@ -161,14 +188,12 @@ export function settingsTools(): BridgeTool[] {
           } else if (t.kind === 'object') {
             if (!OBJECT_OK(def, key)) { rejected[key] = `a ${def.scope === 'machine' ? 'printer' : def.scope} setting can’t be set per object`; continue; }
             setObjectOverride(t.objectId, key, reset ? undefined : v, t.partId, t.rangeId);
-          } else if (key === DEFINITIONS_KEY) {
+          } else if (MIXED_KEYS.has(key)) {
             rejected[key] = 'use edit_mixed_filaments'; continue;
           } else if (key === 'filament_colour') {
             rejected[key] = 'use set_filaments'; continue;
           } else if (key === 'curr_bed_type') {
-            p.setBedType(reset ? null : String(Array.isArray(v) ? v[0] : v));
-          } else if (MIXED_KEYS.has(key)) {
-            setMixedSetting(key, reset ? String(def.default ?? '') : String(Array.isArray(v) ? v[0] : v));
+            p.setBedType(reset ? null : valueAt(v, SCALAR) ?? null);
           } else if (PROJECT_KEYS.has(key)) {
             if (reset) delete p.project[key]; else p.project[key] = v!;
           } else {
@@ -185,7 +210,7 @@ export function settingsTools(): BridgeTool[] {
         for (const k of applied) {
           if (t.kind === 'object') now[k] = getObjectOverrides(t.objectId, t.partId, t.rangeId)[k] ?? null;
           else if (t.kind === 'plate') now[k] = plateConfig(t.plate)[k] ?? null;
-          else now[k] = MIXED_KEYS.has(k) ? mixedSetting(k) : cfg[k];
+          else now[k] = cfg[k];
         }
         return {
           data: {

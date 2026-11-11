@@ -7,12 +7,10 @@
  *  - project 3MF: Metadata/plate_N.png (512², + plate_N_small.png 128²),
  *    plate_no_light_N.png, top_N.png and pick_N.png for every plate.
  */
-import { engineTool } from '../../engine/client';
-import type { EngineId, FlatConfig, SliceObjectInput, SliceResult, SliceWarning } from '../../engine/types';
-import { activeEngine } from '../../app/state';
+import type { FlatConfig, SliceObjectInput, SliceResult, SliceWarning } from '../../engine/types';
 import { filamentColourOf } from '../../mixed/store';
-import { maxStateFor } from '../../paint/state';
-import { asArray } from '../../presets/values';
+import { decodePaint } from '../../paint/session';
+import { asList } from '../../lib/configValue';
 import { bed, getSliceObjects, plates } from '../store';
 import { base64, colpicSize, encodeBttTft, encodeColPic, encodePng, encodeQoi, type RgbaImage } from './encode';
 import {
@@ -23,16 +21,14 @@ import { downscale, prepareThumbScene, type ThumbScene, type ThumbVolume } from 
 
 export { thumbnailSpecs } from './gcode';
 
-const extruderOf = (cfg: FlatConfig | undefined, fallback: number) => Number(asArray(cfg?.extruder)[0]) || fallback;
+const extruderOf = (cfg: FlatConfig | undefined, fallback: number) => Number(asList(cfg?.extruder)[0]) || fallback;
 
 /** Colour painting as sub-meshes per filament (the engine's TriangleSelector decodes Orca's paint strings). */
 async function paintPatches(positions: Float32Array, indices: Uint32Array, map: NonNullable<SliceObjectInput['paint']>['color']): Promise<ThumbVolume['paint']> {
   if (!map?.length) return undefined;
   try {
-    const engine: EngineId = activeEngine.value === 'fullspectrum' ? 'fullspectrum' : 'orca';
-    const r = await engineTool<{ handle: number; states: number[] }>('paint_open', { paint: map, maxState: maxStateFor('color') }, [{ positions, indices }], engine);
-    void engineTool('paint_close', { handle: r.result.handle }, [], engine).catch(() => {});
-    return r.result.states.flatMap((st, i) => {
+    const r = await decodePaint({ positions, indices }, 'color', map);
+    return r.states.flatMap((st, i) => {
       const m = r.meshes[i];
       return st > 0 && m?.indices.length ? [{ positions: m.positions, indices: m.indices, color: filamentColourOf(st), extruder: st }] : [];
     });
@@ -108,7 +104,7 @@ export async function withGcodeThumbnails(result: SliceResult, config: FlatConfi
   try {
     if (!engineWritesGcodeThumbnails(config, engine)) return result;
     const { specs, errors } = thumbnailSpecs(config, engine);
-    const bad = errors.length ? `Some G-code thumbnail entries are invalid${specs.length ? ' and were skipped' : ''}: "${asArray(config.thumbnails).join(',')}"` : '';
+    const bad = errors.length ? `Some G-code thumbnail entries are invalid${specs.length ? ' and were skipped' : ''}: "${asList(config.thumbnails).join(',')}"` : '';
     if (!specs.length || hasGcodeThumbnails(result.gcode)) return bad ? warn(bad) : result;
     const prepared = prepareThumbScene(await thumbSceneFor(objects));
     try {

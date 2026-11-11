@@ -6,7 +6,7 @@
 import { convexHull, linearRS, type Pt, type Quat, type Vec3 } from './math';
 import type { MeshData, ObjectPart, ProjectObject } from './types';
 
-export interface LinearInfo {
+interface LinearInfo {
   /** Bounds of R*S*v (no translation). */
   min: Vec3;
   max: Vec3;
@@ -27,13 +27,11 @@ function key(q: Quat, s: Vec3): string {
   return `${q.map((v) => v.toFixed(7)).join(',')}|${s.map((v) => v.toFixed(7)).join(',')}`;
 }
 
-/** Transform + XY hull. Akl–Toussaint pre-filter for small meshes, angular buckets for big ones. */
-export function computeLinearInfo(positions: Float32Array, q: Quat, s: Vec3): LinearInfo {
-  return computeMatrixInfo(positions, linearRS(q, s));
-}
-
-/** Same as computeLinearInfo for an arbitrary column-major 3×3 linear map. */
-export function computeMatrixInfo(positions: Float32Array, m: ArrayLike<number>): LinearInfo {
+/**
+ * Transform by a column-major 3×3 linear map + XY hull. Akl–Toussaint
+ * pre-filter for small meshes, angular buckets for big ones.
+ */
+function computeMatrixInfo(positions: Float32Array, m: ArrayLike<number>): LinearInfo {
   const n = positions.length / 3;
   if (n === 0) return { min: [0, 0, 0], max: [0, 0, 0], hull: [] };
   const xs = new Float64Array(n), ys = new Float64Array(n);
@@ -108,7 +106,7 @@ function bucketCandidates(xs: Float64Array, ys: Float64Array, n: number, minX: n
   return out;
 }
 
-export function linearInfo(mesh: MeshData, q: Quat, s: Vec3): LinearInfo {
+function linearInfo(mesh: MeshData, q: Quat, s: Vec3): LinearInfo {
   let m = cache.get(mesh);
   if (!m) { m = new Map(); cache.set(mesh, m); }
   const k = key(q, s);
@@ -118,7 +116,7 @@ export function linearInfo(mesh: MeshData, q: Quat, s: Vec3): LinearInfo {
     m.delete(k); m.set(k, info);
     return info;
   }
-  info = computeLinearInfo(mesh.positions, q, s);
+  info = computeMatrixInfo(mesh.positions, linearRS(q, s));
   m.set(k, info);
   if (m.size > PER_MESH) m.delete(m.keys().next().value as string);
   return info;

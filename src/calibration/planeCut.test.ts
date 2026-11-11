@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cutHorizontal, meshBounds, type CutMesh } from './planeCut';
+import { computeBBox as meshBounds } from '../project/mesh';
+import { cutHorizontal, type CutMesh } from './planeCut';
 
 function box(sx: number, sy: number, sz: number): CutMesh {
   const v = [[0, 0, 0], [sx, 0, 0], [sx, sy, 0], [0, sy, 0], [0, 0, sz], [sx, 0, sz], [sx, sy, sz], [0, sy, sz]];

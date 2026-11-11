@@ -5,11 +5,13 @@
  */
 import { onBeforeUnmount, watch } from 'vue';
 import { activeView, lastSlice } from '../state';
-import { activePlate, historyState, objects, objectPlate, plates, selectedIds } from '../../project/store';
+import {
+  activePlate, centerObjects, clearSelection, dropToBed, historyState, mirrorObjects, objects, objectPlate, plates, scaleToFit, selectAll, selectedIds,
+} from '../../project/store';
 import {
   fitBed, fitSelection, setCameraType, setGizmo, setSnapIncrement, setView, toggleLayOnFace, viewportState, zoomView,
 } from '../../viewport/controller';
-import { buildActions } from '../actions/buildActions';
+import { builtinActions } from '../actions/buildActions';
 import { bindPaintDispatch } from '../actions/families/paint';
 import { closePaint, togglePaint } from '../../paint/controller';
 import { paintUi } from '../../paint/state';
@@ -19,6 +21,7 @@ import { getAllActions, registerActions } from '../actions/registry';
 import { setActionErrorHandler } from '../actions/run';
 import { toast } from '../../ui';
 import * as cmd from './actions';
+import { undoOverride } from './commands/edit';
 import { runArrange } from './arrange';
 import { cloud } from '../../cloud/store';
 import { saveToCloudLocation } from '../../cloud/commands';
@@ -26,6 +29,8 @@ import { fsAccessSupported, local } from '../../localfs/store';
 import { importLocal, openLocalProject, saveLocal, saveLocalAs } from '../../localfs/commands';
 import type { SliceControllerLike } from './external';
 import { sidebarOpen, toggleSidebar, ui } from './uiState';
+import { preferences } from '../preferences';
+import { anyDialogOpen, openDialog } from '../../dialogs/state';
 
 /** Focus is on nothing in particular (body / viewport canvas) and no page text is selected. */
 function focusIdle(): boolean {
@@ -61,20 +66,25 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     exportSelectionStl: () => cmd.exportStl(true),
     undo: cmd.doUndo,
     redo: cmd.doRedo,
-    selectAll: cmd.selectAll,
-    clearSelection: cmd.clearSelection,
+    selectAll,
+    clearSelection,
     deleteSelection: cmd.deleteSelection,
     deleteAll: cmd.deleteAll,
     copy: cmd.copySelection,
     cut: cmd.cutSelection,
     paste: cmd.pasteClipboard,
     duplicate: () => cmd.doDuplicate(1),
-    addInstances: () => { ui.instancesOpen = true; },
+    addInstances: () => openDialog('instances'),
     removeInstance: cmd.removeInstanceSel,
     splitToObjects: cmd.splitSelectionToObjects,
     splitToParts: cmd.splitSelectionToParts,
+    repairMeshes: async (scope) => { await cmd.repairMeshesCmd(scope); },
     addSubObject: cmd.addSubObject,
     arrangePlate: cmd.arrangePlate,
+    align: (axis, edge) => cmd.alignObjects(axis, edge),
+    distribute: (axis) => cmd.distributeObjects(axis),
+    orderObjects: (order, all) => cmd.orderPlateObjects(order, all ? 'all' : activePlate.value),
+    setAskPrimitiveSize: (on) => { preferences.askPrimitiveSize = on; },
     addPlate: cmd.addPlateCmd,
     deletePlate: () => cmd.deletePlateCmd(),
     selectPlate: cmd.selectPlate,
@@ -85,11 +95,11 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     rename: cmd.startRename,
     setGizmo,
     toggleLayOnFace: cmd.toggleLayFlat,
-    dropToBed: () => cmd.dropToBed(),
-    center: () => cmd.centerObjects(),
-    mirror: (a) => cmd.mirrorObjects(a),
+    dropToBed: () => dropToBed(),
+    center: () => centerObjects(),
+    mirror: (a) => mirrorObjects(a),
     rotate90: cmd.rotate90,
-    scaleToFit: () => cmd.scaleToFit(),
+    scaleToFit: () => scaleToFit(),
     toggleHidden: cmd.toggleHiddenSelection,
     togglePrintable: cmd.togglePrintableSelection,
     perObjectSettings: cmd.revealObjectSettings,
@@ -108,9 +118,9 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     slice: cmd.sliceNow,
     cancelSlice: cmd.cancelSlice,
     exportGcode: cmd.exportGcode,
-    openPalette: () => { ui.paletteOpen = true; },
-    openShortcuts: () => { ui.shortcutsOpen = true; },
-    openAbout: () => { ui.aboutOpen = true; },
+    openPalette: () => openDialog('palette'),
+    openShortcuts: () => openDialog('shortcuts'),
+    openAbout: () => openDialog('about'),
   };
 
   const ctx: AppContext = {
@@ -127,10 +137,10 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
         allNotPrintable: sel.length > 0 && sel.every((o) => !o.printable),
       };
     },
-    get canUndo() { return !!historyState.value.undo; },
-    get canRedo() { return !!historyState.value.redo; },
-    get undoLabel() { return historyState.value.undo; },
-    get redoLabel() { return historyState.value.redo; },
+    get canUndo() { const o = undoOverride.value; return o ? o.canUndo() : !!historyState.value.undo; },
+    get canRedo() { const o = undoOverride.value; return o ? o.canRedo() : !!historyState.value.redo; },
+    get undoLabel() { const o = undoOverride.value; return o ? o.undoLabel() : historyState.value.undo; },
+    get redoLabel() { const o = undoOverride.value; return o ? o.redoLabel() : historyState.value.redo; },
     get gizmo() { return viewportState.gizmo; },
     get layOnFace() { return viewportState.layOnFace; },
     get cameraType() { return viewportState.camera; },
@@ -138,6 +148,7 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     get sidebar() { return sidebarOpen(); },
     get clipboard() { return !!ui.clipboard; },
     get orienting() { return ui.orienting; },
+    get askPrimitiveSize() { return preferences.askPrimitiveSize; },
     get slice() {
       const status = slicer?.status?.value ?? 'idle';
       return {
@@ -155,7 +166,7 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
       return { count: plates.value.length, active: a, locked: !!plates.value[a]?.locked, activeObjects: n };
     },
     get modalOpen() {
-      return ui.paletteOpen || ui.shortcutsOpen || ui.aboutOpen || ui.instancesOpen || overlayOpen();
+      return anyDialogOpen() || overlayOpen();
     },
     get focusIdle() { return focusIdle(); },
     dispatch,
@@ -168,7 +179,7 @@ export function useActionSystem(slicer: SliceControllerLike | null): AppContext 
   bindPaintDispatch({ togglePaint, closePaint, paintLayer: () => paintUi.layer });
   const ctx = createAppContext(slicer);
   setActionContext(ctx);
-  const dispose = registerActions(buildActions());
+  const dispose = registerActions(builtinActions());
   setActionErrorHandler((a, e) => toast.error(`${a.title} failed.`, { detail: (e as Error)?.message ?? String(e) }));
   installActionKeyListener(getAllActions, () => ctx);
   const stop = watch(activeView, (v) => setActionScope(v), { immediate: true });

@@ -72,8 +72,7 @@ describe('Orca 3MF header + custom G-code', () => {
     addCube('A');
     const zip = unzipSync(buildOrca3mf());
     const model = strFromU8(zip['3D/3dmodel.model']);
-    expect(model).toContain('<metadata name="Application">BambuStudio-02.06.00.51</metadata>');
-    expect(model).toContain('<metadata name="OrcaSlicer">2.4.2</metadata>');
+    expect(model).toContain('<metadata name="Application">BambuStudio-02.08.01.55</metadata>\n <metadata name="OrcaSlicer">2.5.0</metadata>');
     expect(strFromU8(zip['Metadata/slice_info.config'])).not.toMatch(/BambuStudio/);
   });
 

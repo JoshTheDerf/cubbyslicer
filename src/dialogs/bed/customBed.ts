@@ -7,6 +7,8 @@
  * by viewport/bedAssets.ts like the vendor ones).
  */
 import { shallowRef, watch, type ShallowRef } from 'vue';
+import type { ConfigValue } from '../../engine/types';
+import { SCALAR, valueAt } from '../../lib/configValue';
 import { openKv } from '../../presets/kv';
 import { currentPresets } from '../../presets/store';
 import type { BedAssets } from '../../presets/types';
@@ -72,7 +74,7 @@ export function bedAssetUrl(ref: string): Promise<string | null> {
   return p;
 }
 
-const single = (v: unknown) => String(Array.isArray(v) ? v[0] ?? '' : v ?? '');
+const single = (v: ConfigValue | undefined) => valueAt(v, SCALAR) ?? '';
 
 let effective: ShallowRef<BedAssets | null> | null = null;
 /**

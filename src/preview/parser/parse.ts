@@ -1,29 +1,32 @@
 /**
- * Streaming byte-level G-code parser.
+ * Streaming byte-level G-code parser: tokenizer, machine state, arcs and the
+ * struct-of-arrays output (`ParsedGcode`, see ./types.ts).
  *
  * Works directly on the UTF-8 bytes: motion lines are tokenized without ever
- * creating a JS string (numbers are parsed from bytes), only short comment
- * lines and rare extended (Klipper-style) commands are turned into strings.
- * Output is the struct-of-arrays `ParsedGcode` (see ./types.ts).
+ * creating a JS string (numbers are parsed from bytes, ./bytes.ts); only short
+ * comment lines and rare extended (Klipper-style) commands become strings.
+ * Comment tags are in ./comments.ts, header / config-block values in
+ * ./header.ts, the time model in ./planner.ts.
  *
  * Supported: G0/G1, G2/G3 (I/J or R, tessellated with a chord-error bound,
  * helical Z), G4 dwell, G10/G11 firmware retract, G20/G21, G28, G90/G91, G92,
- * M82/M83, M104/M109, M106/M107, M201/M203/M204/M205, Klipper
- * SET_VELOCITY_LIMIT, T<n>. Comment dialects: PrusaSlicer/preFlight, Orca/
- * Bambu, Cura (see ./features.ts). Without layer comments, layers are
- * derived from Z changes of extruding moves.
- *
- * Time model: per-move trapezoid with acceleration, junction speed from
- * Marlin-style junction deviation, one-move lookahead (forward pass only).
- * Good enough for colour-by-time and relative feature times; the headline
- * total should come from the engine report when present.
+ * M82/M83, M104/M109, M106/M107, M201/M203/M204/M205, M1020 (Bambu filament
+ * select), Klipper SET_VELOCITY_LIMIT, T<n>. Comment dialects: PrusaSlicer /
+ * preFlight, Orca / Bambu (2.5 tags included), Cura (see ./features.ts).
+ * Without layer comments, layers are derived from Z changes of extruding moves.
  */
 import { Feature, FEATURE_COUNT, classifyFeature, isExtrusionFeature } from './features';
 import { MarkerKind } from './types';
-import type { GcodeHeaderInfo, ParseOptions, ParsedGcode } from './types';
+import type { ParseOptions, ParsedGcode } from './types';
+import { CR, DOT, LETTER, NL, SEMI, SP, TAB, ascii, numEnd, parseNumber } from './bytes';
+import { Planner } from './planner';
+import { Tag, matchTag, tagValue } from './comments';
+import { emptyHeader, readHeaderComment } from './header';
+import { hexToInt } from '../../lib/colour';
 
-const NL = 10, CR = 13, SP = 32, TAB = 9, SEMI = 59, DOT = 46, MINUS = 45, PLUS = 43;
-const LETTER = (c: string) => c.charCodeAt(0) - 65;
+export { parseDuration } from './bytes';
+export { trapezoidTime } from './planner';
+
 const PX = LETTER('X'), PY = LETTER('Y'), PZ = LETTER('Z'), PE = LETTER('E'), PF = LETTER('F');
 const PI_ = LETTER('I'), PJ = LETTER('J'), PR = LETTER('R'), PS = LETTER('S'), PP = LETTER('P'), PT = LETTER('T');
 const PL = LETTER('L');
@@ -32,85 +35,6 @@ const BIT = (p: number) => 1 << p;
 const E_EPS = 1e-7;
 const LEN_EPS = 1e-6;
 const LAYER_Z_EPS = 0.009;
-
-let numEnd = 0;
-const INV_POW10 = new Float64Array(16).map((_, i) => 1 / 10 ** i);
-/** Parse a decimal number (no exponent — `E` is an axis letter). NaN if no digits. */
-function parseNumber(b: Uint8Array, p: number, end: number): number {
-  let neg = false;
-  let c = b[p];
-  if (c === MINUS) { neg = true; p++; } else if (c === PLUS) { p++; }
-  let intPart = 0, digits = 0;
-  while (p < end) {
-    const d = b[p] - 48;
-    if (d < 0 || d > 9) break;
-    intPart = intPart * 10 + d; p++; digits++;
-  }
-  let v = intPart;
-  if (p < end && b[p] === DOT) {
-    p++;
-    let frac = 0, nd = 0;
-    while (p < end) {
-      const d = b[p] - 48;
-      if (d < 0 || d > 9) break;
-      if (nd < 15) { frac = frac * 10 + d; nd++; }
-      p++; digits++;
-    }
-    v += frac * INV_POW10[nd];
-  }
-  numEnd = p;
-  if (digits === 0) return NaN;
-  return neg ? -v : v;
-}
-
-function ascii(b: Uint8Array, start: number, end: number): string {
-  const sub = b.subarray(start, end);
-  // fromCharCode.apply on a typed array: fast for short strings.
-  return String.fromCharCode.apply(null, sub as unknown as number[]);
-}
-
-/** "1d 2h 3m 4s" / "2h 5m" / "45s" → seconds; NaN if nothing parsed. */
-export function parseDuration(s: string): number {
-  let total = 0, any = false;
-  const re = /(\d+(?:\.\d+)?)\s*([dhms])/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(s))) {
-    any = true;
-    const v = Number(m[1]);
-    switch (m[2].toLowerCase()) {
-      case 'd': total += v * 86400; break;
-      case 'h': total += v * 3600; break;
-      case 'm': total += v * 60; break;
-      default: total += v;
-    }
-  }
-  if (!any) {
-    const hms = s.match(/(\d+):(\d{2}):(\d{2})/);
-    if (hms) return Number(hms[1]) * 3600 + Number(hms[2]) * 60 + Number(hms[3]);
-    return NaN;
-  }
-  return total;
-}
-
-function numList(s: string): number[] {
-  return s.split(/[,;]/).map((t) => Number(t.trim())).filter((v) => Number.isFinite(v));
-}
-
-/** Trapezoid move time. */
-export function trapezoidTime(len: number, vMax: number, accel: number, vIn: number, vOut: number): number {
-  if (len <= 0) return 0;
-  if (vMax <= 0) return 0;
-  if (accel <= 0) return len / vMax;
-  vIn = Math.min(vIn, vMax); vOut = Math.min(vOut, vMax);
-  const d1 = (vMax * vMax - vIn * vIn) / (2 * accel);
-  const d2 = (vMax * vMax - vOut * vOut) / (2 * accel);
-  if (d1 + d2 <= len) {
-    return (vMax - vIn) / accel + (vMax - vOut) / accel + (len - d1 - d2) / vMax;
-  }
-  const vp = Math.sqrt(Math.max((2 * accel * len + vIn * vIn + vOut * vOut) / 2, 0));
-  const peak = Math.max(vp, vIn, vOut);
-  return (peak - vIn) / accel + (peak - vOut) / accel;
-}
 
 class GcodeParser {
   // ---- input ----
@@ -154,7 +78,9 @@ class GcodeParser {
   private widthKnown = false;
   private curHeight = 0; // from ;HEIGHT comments (0 = unknown)
   private filArea = Math.PI * 0.875 * 0.875;
-  private filDiamFromFile = false;
+  private inConfig = false;
+  /** After Orca 2.5's `; MACHINE_END_GCODE_START`: dwells no longer count (GCodeProcessor m_skip_end_gcode_delays). */
+  private skipDwells = false;
   private lastWasExtrusion = false;
   /** `;COLOR_CHANGE,T<e>,#rrggbb` tags (Orca GCodeProcessor ETags::Color_Change). */
   private colorChanges: Array<{ seg: number; extruder: number; color: number | null }> = [];
@@ -167,13 +93,7 @@ class GcodeParser {
   private maxAccelZ = Infinity;
   private maxAccelE = Infinity;
   private maxVX = Infinity; private maxVY = Infinity; private maxVZ = Infinity; private maxVE = Infinity;
-  private junctionDev = 0.02;
-
-  // planner (one pending move)
-  private pIdx = -1;
-  private pLen = 0; private pV = 0; private pA = 0; private pEntry = 0;
-  private pdx = 0; private pdy = 0; private pdz = 0; private pEOnly = false;
-  private pExtra = 0; // dwell added to the pending move
+  private planner: Planner;
 
   // ---- params of the current line ----
   private pv = new Float64Array(26);
@@ -200,10 +120,7 @@ class GcodeParser {
   private extrusionCount = 0;
   private travelCount = 0;
   private totalTime = 0;
-  header: GcodeHeaderInfo = {
-    generator: null, printTimeSec: null, layerCount: null, maxZ: null,
-    filamentMm: null, filamentG: null, filamentCm3: null, filamentCost: null, filamentDiameter: null,
-  };
+  header = emptyHeader();
 
   // current line
   private lineIdx = 0;
@@ -222,6 +139,11 @@ class GcodeParser {
     this.filArea = Math.PI * r * r;
     this.accelPrint = this.opts.acceleration;
     this.accelTravel = this.opts.travelAcceleration;
+    this.planner = new Planner(this.opts.acceleration, (idx, t) => {
+      this.time[idx] = t;
+      this.totalTime += t;
+      this.featureTime[this.feature[idx]] += t;
+    });
     this.temps.fill(0);
     this.grow(Math.max(1024, Math.min(Math.ceil(bytes.length / 24), 1 << 24)));
     this.growMarkers(256);
@@ -279,7 +201,7 @@ class GcodeParser {
       this.lineIdx++;
       if (onProgress && i >= nextReport) { onProgress(Math.min(i, n), n); nextReport = i + every; }
     }
-    this.flushPending(0);
+    this.planner.flush(0);
     onProgress?.(n, n);
   }
 
@@ -363,7 +285,7 @@ class GcodeParser {
         let t = 0;
         if (this.hasNum(PP)) t = this.num(PP) / 1000;
         else if (this.hasNum(PS)) t = this.num(PS);
-        if (t > 0) { this.pExtra += t; this.flushPending(0); }
+        if (t > 0 && !this.skipDwells) this.planner.dwell(t);
         break;
       }
       case 10: if (!this.has(PP) && !this.has(PL)) this.fwRetract(true); break;
@@ -375,7 +297,7 @@ class GcodeParser {
         if (!any || this.has(PX)) this.x = 0;
         if (!any || this.has(PY)) this.y = 0;
         if (!any || this.has(PZ)) this.z = 0;
-        this.flushPending(0);
+        this.planner.flush(0);
         this.syncPoint();
         break;
       }
@@ -424,6 +346,8 @@ class GcodeParser {
         break;
       }
       case 107: if (!this.hasNum(PP) || this.num(PP) === 0) this.curFan = 0; break;
+      // Bambu filament select (`M1020 S<filament> [H<nozzle>]`), GCodeProcessor::process_M1020.
+      case 1020: if (this.hasNum(PS)) this.toolChange(this.num(PS) | 0); break;
       case 201: {
         const x = this.hasNum(PX) ? this.num(PX) : Infinity, y = this.hasNum(PY) ? this.num(PY) : Infinity;
         if (this.has(PX) || this.has(PY)) this.maxAccelXY = Math.min(x, y);
@@ -446,10 +370,10 @@ class GcodeParser {
         break;
       }
       case 205: {
-        if (this.hasNum(LETTER('J'))) this.junctionDev = this.num(LETTER('J'));
+        if (this.hasNum(LETTER('J'))) this.planner.junctionDev = this.num(LETTER('J'));
         else if (this.hasNum(PX)) {
           const jerk = this.num(PX);
-          this.junctionDev = Math.max(0.001, (0.4 * jerk * jerk) / Math.max(this.accelPrint, 1));
+          this.planner.junctionDev = Math.max(0.001, (0.4 * jerk * jerk) / Math.max(this.accelPrint, 1));
         }
         break;
       }
@@ -471,7 +395,7 @@ class GcodeParser {
     const v = get('VELOCITY');
     if (v > 0) { this.maxVX = v; this.maxVY = v; }
     const scv = get('SQUARE_CORNER_VELOCITY');
-    if (scv >= 0) this.junctionDev = Math.max(0.001, (scv * scv * (Math.SQRT2 - 1)) / Math.max(this.accelPrint, 1));
+    if (scv >= 0) this.planner.junctionDev = Math.max(0.001, (scv * scv * (Math.SQRT2 - 1)) / Math.max(this.accelPrint, 1));
   }
 
   private toolChange(t: number): void {
@@ -571,7 +495,7 @@ class GcodeParser {
     this.addMarker(dE < 0 ? MarkerKind.Retract : MarkerKind.Unretract, idx, this.x, this.y, this.z);
     const len = Math.abs(dE);
     const vv = Math.min(v, this.maxVE);
-    this.plan(idx, len, vv, Math.min(this.accelRetract, this.maxAccelE), 0, 0, 0, true);
+    this.planner.plan(idx, len, vv, Math.min(this.accelRetract, this.maxAccelE), 0, 0, 0, true);
     this.addFilament(dE);
     this.lastWasExtrusion = false;
   }
@@ -623,7 +547,7 @@ class GcodeParser {
       this.fallbackLayer(nz, idx);
       let a = Math.min(this.accelPrint, this.maxAccelXY);
       if (lenXY < LEN_EPS) a = Math.min(this.accelPrint, this.maxAccelZ);
-      this.plan(idx, len, v, a, dx * inv, dy * inv, dz * inv, false);
+      this.planner.plan(idx, len, v, a, dx * inv, dy * inv, dz * inv, false);
       this.addFilament(dE);
       this.extrusionCount++;
       if (nx < this.min[0]) this.min[0] = nx; if (nx > this.max[0]) this.max[0] = nx;
@@ -637,7 +561,7 @@ class GcodeParser {
       const idx = this.pushSeg(feat, 0, 0, v, 0);
       let a = Math.min(this.accelTravel, this.maxAccelXY);
       if (lenXY < LEN_EPS) a = Math.min(a, this.maxAccelZ);
-      this.plan(idx, len, v, a, dx * inv, dy * inv, dz * inv, false);
+      this.planner.plan(idx, len, v, a, dx * inv, dy * inv, dz * inv, false);
       if (dE !== 0) this.addFilament(dE);
       this.travelCount++;
       this.lastWasExtrusion = false;
@@ -690,40 +614,6 @@ class GcodeParser {
     return i;
   }
 
-  // ---- planner -----------------------------------------------------------
-
-  private plan(idx: number, len: number, v: number, a: number, ux: number, uy: number, uz: number, eOnly: boolean): void {
-    if (!(a > 0) || a === Infinity) a = this.opts.acceleration;
-    let vj = 0;
-    if (this.pIdx >= 0 && !eOnly && !this.pEOnly) {
-      const cos = -(this.pdx * ux + this.pdy * uy + this.pdz * uz);
-      if (cos < -0.999999) vj = Math.min(v, this.pV);
-      else if (cos > 0.999999) vj = 0;
-      else {
-        const sinHalf = Math.sqrt(0.5 * (1 - cos));
-        vj = Math.sqrt((a * this.junctionDev * sinHalf) / (1 - sinHalf));
-        vj = Math.min(vj, v, this.pV);
-      }
-    }
-    const entry = this.flushPending(vj);
-    this.pIdx = idx; this.pLen = len; this.pV = v; this.pA = a; this.pEntry = Math.min(entry, v);
-    this.pdx = ux; this.pdy = uy; this.pdz = uz; this.pEOnly = eOnly;
-  }
-
-  /** Finalize the pending move with the given exit speed; returns the actual exit speed. */
-  private flushPending(vExit: number): number {
-    if (this.pIdx < 0) { this.pExtra = 0; return 0; }
-    const reach = Math.sqrt(this.pEntry * this.pEntry + 2 * this.pA * this.pLen);
-    const exit = Math.min(vExit, reach, this.pV);
-    const t = trapezoidTime(this.pLen, this.pV, this.pA, this.pEntry, exit) + this.pExtra;
-    this.time[this.pIdx] = t;
-    this.totalTime += t;
-    this.featureTime[this.feature[this.pIdx]] += t;
-    this.pIdx = -1;
-    this.pExtra = 0;
-    return exit;
-  }
-
   // ---- comments ------------------------------------------------------------
 
   private comment(p: number, end: number): void {
@@ -753,34 +643,37 @@ class GcodeParser {
       if (v === v) this.setMarkerZ(v);
       return;
     }
-    const s = ascii(b, p, end).trim();
-    if (s.startsWith('TYPE:')) { this.setFeature(s.slice(5)); return; }
-    if (s === 'LAYER_CHANGE' || s === 'CHANGE_LAYER' || s.startsWith('LAYER:')) { this.newMarkerLayer(); return; }
-    if (s.startsWith('FEATURE:')) { this.setFeature(s.slice(8)); return; }
-    if (s.startsWith('Z_HEIGHT:')) { const v = Number(s.slice(9)); if (Number.isFinite(v)) this.setMarkerZ(v); return; }
-    if (s.startsWith('LAYER_HEIGHT:')) {
-      const v = Number(s.slice(13));
-      if (v > 0) { this.curHeight = v; this.setMarkerHeight(v); }
-      return;
+    this.taggedComment(ascii(b, p, end).trim());
+  }
+
+  private taggedComment(s: string): void {
+    switch (matchTag(s)) {
+      case Tag.Role: this.curFeature = classifyFeature(tagValue); return;
+      case Tag.LayerChange: this.newMarkerLayer(); return;
+      case Tag.LayerZ: { const v = Number(tagValue); if (Number.isFinite(v)) this.setMarkerZ(v); return; }
+      case Tag.Height: { const v = Number(tagValue); if (v > 0) { this.curHeight = v; this.setMarkerHeight(v); } return; }
+      case Tag.Width: { const v = Number(tagValue); if (v > 0) { this.curWidth = v; this.widthKnown = true; } return; }
+      case Tag.ColorChange: this.colorChangeTag(tagValue); return;
+      case Tag.WipeStart: this.inWipe = true; return;
+      case Tag.WipeEnd: this.inWipe = false; return;
+      case Tag.ConfigStart: this.inConfig = true; return;
+      case Tag.ConfigEnd: this.inConfig = false; return;
+      case Tag.MachineStartEnd: this.header.startGcodeEndSeg = this.n; return;
+      case Tag.MachineEndStart: this.header.endGcodeStartSeg = this.n; this.skipDwells = true; return;
+      case Tag.VirtualTool: this.toolChange(Number(tagValue)); return;
+      case Tag.Ignored: return;
+      default: {
+        const d = readHeaderComment(s, this.header, this.inConfig);
+        if (d !== null) this.filArea = Math.PI * (d / 2) * (d / 2);
+      }
     }
-    if (s.startsWith('LINE_WIDTH:')) { const v = Number(s.slice(11)); if (v > 0) { this.curWidth = v; this.widthKnown = true; } return; }
-    if (s.startsWith('WIDTH:')) { const v = Number(s.slice(6)); if (v > 0) { this.curWidth = v; this.widthKnown = true; } return; }
-    if (s.startsWith('HEIGHT:')) { const v = Number(s.slice(7)); if (v > 0) { this.curHeight = v; this.setMarkerHeight(v); } return; }
-    if (s.startsWith('COLOR_CHANGE')) { this.colorChangeTag(s); return; }
-    if (s === 'WIPE_START') { this.inWipe = true; return; }
-    if (s === 'WIPE_END') { this.inWipe = false; return; }
-    this.headerComment(s);
   }
 
   private colorChangeTag(s: string): void {
     const tok = s.split(',').map((t) => t.trim());
     const t = tok[1]?.startsWith('T') ? parseInt(tok[1].slice(1), 10) : this.curTool;
-    const m = tok[2]?.match(/^#([0-9a-f]{6})$/i);
-    if (this.colorChanges.length < 250) this.colorChanges.push({ seg: this.n, extruder: Number.isFinite(t) && t >= 0 && t < 256 ? t : this.curTool, color: m ? parseInt(m[1], 16) : null });
-  }
-
-  private setFeature(raw: string): void {
-    this.curFeature = classifyFeature(raw);
+    const color = tok[2]?.startsWith('#') ? hexToInt(tok[2]) : null;
+    if (this.colorChanges.length < 250) this.colorChanges.push({ seg: this.n, extruder: Number.isFinite(t) && t >= 0 && t < 256 ? t : this.curTool, color });
   }
 
   private newMarkerLayer(): void {
@@ -795,39 +688,6 @@ class GcodeParser {
   private setMarkerHeight(h: number): void {
     const k = this.mkH.length - 1;
     if (k >= 0 && this.mkH[k] !== this.mkH[k]) this.mkH[k] = h;
-  }
-
-  private headerComment(s: string): void {
-    const H = this.header;
-    const kv = s.match(/^([^=:]+?)\s*[=:]\s*(.*)$/);
-    if (!kv) return;
-    const key = kv[1].toLowerCase(), val = kv[2];
-    if (key.startsWith('generated by')) { H.generator = s.slice(12).trim(); return; }
-    if (key.startsWith('estimated printing time (normal mode)') || key === 'estimated printing time') {
-      const t = parseDuration(val); if (t === t) H.printTimeSec = t; return;
-    }
-    if (key === 'model printing time') {
-      const m = s.match(/total estimated time:\s*([^;]+)/i);
-      if (m) { const t = parseDuration(m[1]); if (t === t) H.printTimeSec = t; }
-      return;
-    }
-    if (key === 'total estimated time') { const t = parseDuration(val); if (t === t) H.printTimeSec = t; return; }
-    if (key === 'total layers count' || key === 'total layer number' || key === 'total_layer_count') {
-      const v = Number(val); if (Number.isFinite(v)) H.layerCount = v; return;
-    }
-    if (key === 'max_z_height') { const v = Number(val); if (Number.isFinite(v)) H.maxZ = v; return; }
-    if (key === 'filament used [mm]') { H.filamentMm = numList(val); return; }
-    if (key === 'filament used [g]') { H.filamentG = numList(val); return; }
-    if (key === 'filament used [cm3]') { H.filamentCm3 = numList(val); return; }
-    if (key === 'filament cost') { H.filamentCost = numList(val); return; }
-    if (key === 'filament_diameter') {
-      const v = numList(val)[0];
-      if (v > 0 && !this.filDiamFromFile) {
-        this.filDiamFromFile = true;
-        H.filamentDiameter = v;
-        this.filArea = Math.PI * (v / 2) * (v / 2);
-      }
-    }
   }
 
   // ---- finish ------------------------------------------------------------

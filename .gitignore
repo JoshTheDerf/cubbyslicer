@@ -5,11 +5,13 @@ e2e-out/
 *.local
 .DS_Store
 
-# Staged AGPL slicer WASM artifacts (large; fetched via scripts/, not committed).
-public/wasm/orca/
-public/wasm/preflight/
+# Staged AGPL slicer WASM artifacts (large; fetched via scripts/, not committed),
+# including engines a checkout may still have staged from before.
+public/wasm/
 
 # Orca calibration models (scripts/stage-calib.mjs).
 public/calib/
 
-public/wasm/fullspectrum/
+
+# Pyodide runtime for Orca Python plugins (scripts/stage-pyodide.mjs).
+public/pyodide/

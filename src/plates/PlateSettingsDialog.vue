@@ -11,10 +11,12 @@ import { getSchema } from '../engine/client';
 import type { ConfigSchema, ConfigValue } from '../engine/types';
 import { plates, renamePlate } from '../project/store';
 import { plateLabel } from '../project/plates';
-import { hexCss, toolColorsFromConfig } from '../preview/render/colors';
+import { printerMayOverrideBedType } from '../app/plateBedTypes';
+import { toolColorsFromConfig, toolSwatch } from '../preview/render/colors';
 import { mobileDialog } from '../ui/mobileDialog';
 import { setPlateConfig } from './store';
 import { plateUi } from './ui';
+import { resolvePlateSpiral } from './spiral';
 
 /** Orca MAX_LAYER_VALUE ("End"). */
 const END_LAYER = 2147483646;
@@ -99,13 +101,17 @@ const layerError = computed(() => {
   return '';
 });
 
-function save(): void {
+async function save(): Promise<void> {
   const i = idx.value;
   if (name.value !== (plates.value[i]?.name ?? '')) renamePlate(i, name.value);
   const cfg: Record<string, ConfigValue> = {};
   if (bedType.value !== G && has('curr_bed_type')) cfg.curr_bed_type = bedType.value;
   if (printSeq.value !== G && seqKey.value) cfg[seqKey.value] = seqKey.value === 'print_sequence' ? printSeq.value : printSeq.value === 'by object' ? '1' : '0';
-  if (spiral.value !== G && spiralKey.value) cfg[spiralKey.value] = spiral.value === 'on' ? '1' : '0';
+  if (spiralKey.value === 'spiral_mode') {
+    // Orca: enabling it asks the spiral question and gives the plate's objects the vase settings.
+    const v = await resolvePlateSpiral(i, spiral.value === G ? undefined : spiral.value as 'on' | 'off');
+    if (v !== undefined) cfg.spiral_mode = v;
+  } else if (spiral.value !== G && spiralKey.value) cfg[spiralKey.value] = spiral.value === 'on' ? '1' : '0';
   if (filamentCount.value > 1 && has('first_layer_print_sequence') && firstChoice.value === 'custom') {
     cfg.first_layer_print_sequence = firstOrder.value.map(String);
   }
@@ -127,7 +133,8 @@ function save(): void {
         <label class="ps__row"><span>Plate name</span>
           <UInput v-model="name" :placeholder="`Plate ${idx + 1}`" maxlength="80" size="sm" class="ps__ctl" /></label>
         <label v-if="has('curr_bed_type')" class="ps__row"><span>Bed type</span>
-          <USelect v-model="bedType" :items="bedItems" size="sm" class="ps__ctl" data-testid="plate-bed-type" /></label>
+          <USelect v-model="bedType" :items="bedItems" size="sm" class="ps__ctl" data-testid="plate-bed-type" :disabled="!printerMayOverrideBedType()"
+                   :title="printerMayOverrideBedType() ? undefined : 'The selected printer has a single bed type.'" /></label>
         <label v-if="seqKey" class="ps__row"><span>Print sequence</span>
           <USelect v-model="printSeq" :items="seqItems" size="sm" class="ps__ctl" data-testid="plate-print-seq" /></label>
         <label v-if="spiralKey" class="ps__row"><span>Spiral vase</span>
@@ -138,7 +145,7 @@ function save(): void {
             <USelect v-model="firstChoice" :items="choiceItems" size="sm" class="ps__ctl" /></label>
           <ol v-if="firstChoice === 'custom'" class="ps__order dlg-span" aria-label="First layer filament order">
             <li v-for="(f, i) in firstOrder" :key="f">
-              <i class="ps__sw" :style="{ background: hexCss(colors[f - 1] ?? 0x999999) }" />{{ f }}
+              <i class="ps__sw" :style="{ background: toolSwatch(colors[f - 1]) }" />{{ f }}
               <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-arrow-left" :disabled="i === 0" :aria-label="`Move filament ${f} earlier`" @click="move(firstOrder, i, -1)" />
               <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-arrow-right" :disabled="i === firstOrder.length - 1" :aria-label="`Move filament ${f} later`" @click="move(firstOrder, i, 1)" />
             </li>
@@ -160,7 +167,7 @@ function save(): void {
               </div>
               <ol class="ps__order">
                 <li v-for="(f, i) in s.order" :key="f">
-                  <i class="ps__sw" :style="{ background: hexCss(colors[f - 1] ?? 0x999999) }" />{{ f }}
+                  <i class="ps__sw" :style="{ background: toolSwatch(colors[f - 1]) }" />{{ f }}
                   <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-arrow-left" :disabled="i === 0" :aria-label="`Move filament ${f} earlier`" @click="move(s.order, i, -1)" />
                   <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-arrow-right" :disabled="i === s.order.length - 1" :aria-label="`Move filament ${f} later`" @click="move(s.order, i, 1)" />
                 </li>

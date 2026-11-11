@@ -4,7 +4,11 @@
  */
 import { FEATURES, FIRST_NON_EXTRUSION } from '../parser/features';
 import type { ParsedGcode } from '../parser/types';
-import type { FlatConfig } from '../../engine/types';
+import type { EngineId, FlatConfig } from '../../engine/types';
+import { activeEngine } from '../../app/state';
+import { configFilamentColour, fromInt, parseColour, primaryColour, swatchBackground, toHex } from '../../lib/colour';
+import type { FilamentColour, RGBA } from '../../lib/colour';
+import { asList, valueCount } from '../../lib/configValue';
 
 export type ColorScheme =
   | 'feature' | 'height' | 'width' | 'speed' | 'fan' | 'temperature' | 'tool' | 'layerTime' | 'flow';
@@ -49,31 +53,51 @@ export function rampColor(t: number): number {
   return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }
 
+/** Filament colour slots in the shader palette (Orca 2.5: 32 filaments). */
+export const TOOL_SLOTS = 32;
+
 export const DEFAULT_TOOL_COLORS: readonly number[] = [
   0x19c37d, 0x4ea1ff, 0xf5b041, 0xef5b5b, 0xb07cff, 0x2bbed1, 0xff7d38, 0xe6e6e6,
   0x9aa36b, 0xff6fb1, 0x6b8e23, 0x8b5a2b, 0x00a3a3, 0xc0c000, 0x7f7fff, 0xa0a0a0,
 ];
 
-function parseHex(s: string): number | null {
-  const m = s.trim().match(/^#?([0-9a-f]{6})(?:[0-9a-f]{2})?$/i);
-  return m ? parseInt(m[1], 16) : null;
+/** A filament slot's colour as the preview draws it (Orca 2.5: translucent and multi-colour). */
+export type ToolColour = FilamentColour;
+
+/** An opaque single colour from 0xRRGGBB. */
+export function solidColour(rgb: number): ToolColour {
+  return { colours: [fromInt(rgb)], gradient: false };
 }
 
-/** Filament colours from the resolved config (Orca `filament_colour`, Prusa `extruder_colour`). */
-export function toolColorsFromConfig(cfg: FlatConfig): number[] {
-  const out = DEFAULT_TOOL_COLORS.slice();
-  const read = (key: string) => {
-    const v = cfg[key];
-    if (v === undefined) return [] as string[];
-    return Array.isArray(v) ? v : v.split(/[;,]/);
-  };
-  const filament = read('filament_colour');
-  const extruder = read('extruder_colour');
-  for (let i = 0; i < out.length; i++) {
-    const c = parseHex(extruder[i] ?? '') ?? parseHex(filament[i] ?? '');
-    if (c !== null) out[i] = c;
-  }
-  return out;
+const DEFAULTS: readonly ToolColour[] = Array.from({ length: TOOL_SLOTS }, (_, i) => solidColour(DEFAULT_TOOL_COLORS[i % DEFAULT_TOOL_COLORS.length]));
+
+/**
+ * Filament colours for every palette slot. Orca: `filament_colour` (+ 2.5's
+ * `filament_multi_colour` / `filament_colour_type`, `#RRGGBBAA` alpha), as its
+ * Filament view draws them (`extruder_colour` only fills slots without one:
+ * Orca's generic printers set it to a placeholder yellow). PrusaSlicer /
+ * preFlight: a non-empty `extruder_colour` wins, as in its viewer. Slots the
+ * config doesn't name keep the default palette.
+ */
+export function toolColorsFromConfig(cfg: FlatConfig, engine: EngineId = activeEngine.value): ToolColour[] {
+  const extruder = asList(cfg.extruder_colour, { serialized: true });
+  const slots = valueCount(cfg.filament_colour, { serialized: true });
+  const extruderFirst = engine === 'preflight';
+  return DEFAULTS.map((d, i) => {
+    const ext = parseColour(extruder[i]);
+    if (ext && (extruderFirst || i >= slots)) return { colours: [ext], gradient: false };
+    return i < slots ? configFilamentColour(cfg, i, toHex(d.colours[0])) : d;
+  });
+}
+
+/** CSS background for a slot's swatch (checkerboard under translucency, bands / gradient for multi-colour). */
+export function toolSwatch(c: ToolColour | undefined): string {
+  return swatchBackground(c ?? solidColour(0x999999), 3);
+}
+
+/** The single colour 3D drawing uses: the first colour, with its opacity. */
+export function toolPrimary(c: ToolColour | undefined): RGBA {
+  return c ? primaryColour(c) : fromInt(0x999999);
 }
 
 /** Raw numeric value for segment `i` under `scheme` (display units). */
@@ -147,8 +171,4 @@ export function schemeRange(p: ParsedGcode, scheme: ColorScheme): ValueRange {
 
 export function featureColor(id: number): number {
   return FEATURES[id]?.color ?? 0x999999;
-}
-
-export function hexCss(c: number): string {
-  return `#${c.toString(16).padStart(6, '0')}`;
 }

@@ -8,6 +8,9 @@
  *   (cd ../cubby-mcp && npm run build)
  *   node scripts/dev/e2e-bridge.mjs [http://localhost:5393/slicer/]
  *
+ * Then every design_* tool once against the real CAD kernel (bridgeDesignFlow in
+ * e2e-design-create.mjs; DESIGN=0 skips it).
+ *
  * CUBBY_MCP = the cubby-mcp checkout (default ../cubby-mcp). Output (screenshots,
  * G-code, 3MF) goes to e2e-out/bridge. HEADED=1 shows the browser.
  */
@@ -70,12 +73,13 @@ await ctx.addInitScript(() => { try { localStorage.setItem('cubby.setup.done', '
 const page = await ctx.newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
+page.on('console', (m) => { if (/prime tower/i.test(m.text())) log('[page]', m.type(), m.text().slice(0, 400)); });
 
 /** Answer the app's own confirm dialog (not the bridge's). */
 async function answerAppConfirm(label) {
   const b = page.locator('[role="dialog"][data-state="open"]').getByRole('button', { name: label, exact: true }).last();
   await b.waitFor({ timeout: 120_000 });
-  await b.click();
+  await b.click({ timeout: 120_000 }); // a loaded machine can keep the dialog animating / the page busy for a while
 }
 
 try {
@@ -89,13 +93,20 @@ try {
   const tools = await waitFor(async () => { const n = (await client.listTools()).tools.map((t) => t.name); return n.includes('slicer_capture_viewport') ? n : null; }, 'tools/list');
   log(`${tools.filter((t) => t.startsWith('slicer_')).length} slicer tools`);
   check(tools.filter((t) => t.startsWith('slicer_')).length >= 80, 'the tab registered every tool group');
+  // cubby-mcp keeps `path` / `url` / `savePath` / `tab` for itself, so workspace files are `cloudPath`
+  // (src/bridge/strippedArgs.test.ts checks every tool). These need a CubbyCAD sign-in, so only their schemas here.
+  const exposed = new Map((await client.listTools()).tools.map((t) => [t.name, t.inputSchema]));
+  for (const n of ['open_cloud_file', 'save_to_cloud', 'export_to_cloud']) {
+    const s = exposed.get(`slicer_${n}`);
+    check(!!s?.properties?.cloudPath && !(s.required ?? []).includes('path'), `${n} takes cloudPath (not the reserved path)`);
+  }
 
   // ---- engines + presets ---------------------------------------------------------------------
   let st = (await call('get_state')).data;
-  check(st.engines.length === 3 && st.plates.length === 1, 'get_state lists engines and plates');
+  check(st.engines.length === 2 && st.plates.length === 1, 'get_state lists engines and plates');
   const pf = (await call('set_engine', { engine: 'preflight' })).data;
   check(pf.engine === 'preflight', `switched to preFlight (${pf.printer.name})`);
-  check((await call('set_engine', { engine: 'bogus' }, { expectError: true })).data.includes('"orca", "preflight", "fullspectrum"'), 'bad engine names the valid ones');
+  check((await call('set_engine', { engine: 'bogus' }, { expectError: true })).data.includes('"orca", "preflight"'), 'bad engine names the valid ones');
   check((await call('set_engine', { engine: 'orca' })).data.engine === 'orca', 'back to OrcaSlicer');
   const lib = (await call('list_presets', { kind: 'printer', query: 'Prusa MK4 0.4', limit: 3 })).data;
   const pick = lib.installed.find((x) => /MK4/.test(x.name)) ?? lib.library[0];
@@ -349,7 +360,8 @@ try {
     check(impP.imported.length >= 1 || impP.warnings, `imported presets (${impP.imported.length})`);
     for (const u of impP.imported) {
       const d = call('delete_preset', { id: u.id });
-      await page.getByTestId('bridge-confirm-ok').click({ timeout: 120_000 });
+      await page.getByTestId('bridge-confirm-ok').click({ timeout: 120_000 })
+        .catch(async (e) => { await page.screenshot({ path: join(OUT, 'confirm-timeout.png') }).catch(() => {}); throw e; });
       await d;
     }
     await call('run_action', { id: 'settings.setup' });
@@ -369,15 +381,17 @@ try {
     check((await call('save_project', {}, { expectError: true })).isError, 'save_project without a location points to save_to_cloud / export_3mf');
     const cl = await call('list_cloud_files', {}, { expectError: true });
     log(`    cloud: ${String(cl.data).slice(0, 120)}`);
-    // mixed filaments (Full Spectrum)
-    const fs = (await call('set_engine', { engine: 'fullspectrum' })).data;
-    check(fs.engine === 'fullspectrum', `Full Spectrum (${fs.printer.name})`);
+    // mixed filaments (OrcaSlicer 2.5 colour mixing; an older engine build reports that it has none)
     await call('set_filaments', { count: 2, colors: ['#ffff00', '#0000ff'] });
-    const mx = (await call('list_mixed_filaments')).data;
-    check(Array.isArray(mx.mixed), `mixed filaments listed (${mx.mixed.length})`);
-    const mxa = (await call('edit_mixed_filaments', { edits: [{ op: 'add', a: 1, b: 2, percent: 30 }] })).data;
-    check(mxa.mixed.length >= mx.mixed.length, 'added a mix');
-    await call('set_engine', { engine: 'orca' });
+    const mxl = await call('list_mixed_filaments', {}, { expectError: true });
+    if (mxl.isError) log(`    mixed filaments skipped: ${String(mxl.data).slice(0, 120)}`);
+    else {
+      const mxa = (await call('edit_mixed_filaments', { edits: [{ op: 'add', components: [1, 2], ratios: [30, 70] }] })).data;
+      check(mxa.mixed.length === mxl.data.mixed.length + 1 && mxa.added?.[0] === 3, 'added a mix as filament 3');
+      const mxg = (await call('edit_mixed_filaments', { edits: [{ op: 'set', filament: 3, gradient: true, direction: 'ba' }] })).data;
+      check(mxg.mixed[0].gradient?.direction === 'B→A', 'mix turned into a gradient');
+      check((await call('edit_mixed_filaments', { edits: [{ op: 'clear' }] })).data.mixed.length === 0, 'mixes cleared');
+    }
     // print host (mock OctoPrint)
     const { startMockOctoprint } = await import(pathToFileURL(join(MCP, 'scripts/mockOctoprint.mjs')).href);
     const printer = await startMockOctoprint();
@@ -401,7 +415,12 @@ try {
     await printer.close();
     const rg = (await call('read_gcode', { layer: 2, count: 5 })).data;
     check(rg.text.length > 0, 'read_gcode by layer');
-    // plates
+    // plates (arrange all above drops plates it emptied, like desktop: give plate 2 an object again)
+    if ((await call('get_state', {}, { quiet: true })).data.plates.length < 2) {
+      await call('add_plate', { name: 'Second' });
+      const anyObj = (await call('list_objects', { plate: 1 }, { quiet: true })).data.objects[0];
+      await call('move_to_plate', { ids: [anyObj.id], plate: 2 });
+    }
     const dp2 = call('delete_plate', { plate: 2 });
     await answerAppConfirm('Delete plate');
     check((await dp2).data.ok, 'deleted plate 2 after the app’s confirm');
@@ -415,6 +434,11 @@ try {
     check((await np).data.ok && (await call('get_project')).data.name === 'Fresh', 'new project after the confirm');
     const op = (await call('open_project', { path: p3mf.savedTo })).data;
     check(op.ok && op.openedAsProject && op.objects.length > 0, `reopened the saved 3MF (${op.objects.length} objects)`);
+  }
+  // ---- Design tab tools (every design_* tool once; e2e-design-create.mjs) ----------------------
+  if (process.env.DESIGN !== '0') {
+    const { bridgeDesignFlow } = await import('./e2e-design-create.mjs');
+    await bridgeDesignFlow({ call, check, log, out: OUT });
   }
   await page.screenshot({ path: join(OUT, 'slicer.png') }).catch(() => {});
 } catch (e) {

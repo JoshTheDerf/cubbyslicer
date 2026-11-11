@@ -698,7 +698,7 @@
   },
   "bottom_solid_layers": {
    "type": "int",
-   "label": "BottomLayers",
+   "label": "Bottom",
    "fullLabel": "Bottom solid layers",
    "category": "Layers and Perimeters",
    "tooltip": "Number of solid layers to generate on bottom surfaces.",
@@ -716,7 +716,7 @@
   },
   "bottom_solid_min_thickness": {
    "type": "float",
-   "label": "BottomLayers",
+   "label": "Bottom",
    "fullLabel": "Minimum bottom shell thickness",
    "category": "Layers and Perimeters",
    "tooltip": "The number of bottom solid layers is increased above bottom_solid_layers if necessary to satisfy minimum thickness of bottom shell.",
@@ -8980,7 +8980,7 @@
   },
   "top_solid_layers": {
    "type": "int",
-   "label": "TopLayers",
+   "label": "Top",
    "fullLabel": "Top solid layers",
    "category": "Layers and Perimeters",
    "tooltip": "Number of solid layers to generate on top surfaces.",
@@ -8998,7 +8998,7 @@
   },
   "top_solid_min_thickness": {
    "type": "float",
-   "label": "TopLayers",
+   "label": "Top",
    "fullLabel": "Minimum top shell thickness",
    "category": "Layers and Perimeters",
    "tooltip": "The number of top solid layers is increased above top_solid_layers if necessary to satisfy minimum thickness of top shell. This is useful to prevent pillowing effect when printing with variable layer height.",

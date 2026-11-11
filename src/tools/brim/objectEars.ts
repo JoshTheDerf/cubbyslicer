@@ -6,6 +6,7 @@
 import { Matrix4, Vector3 } from 'three';
 import { getObject, objectInfo } from '../../project/store';
 import { resolvedConfig } from '../../app/state';
+import { SCALAR, cfgAbs, cfgNumber } from '../../lib/configValue';
 import type { BrimPoint } from '../../project/types';
 import type { Vec3 } from '../../project/math';
 import { volumeMatrix, volumeMesh } from '../overlay';
@@ -34,19 +35,12 @@ export function earToLocal(objectId: string, x: number, y: number, bottom: numbe
   return [v.x, v.y, v.z];
 }
 
-function cfgNum(k: string, d: number): number {
-  const v = resolvedConfig.value[k];
-  const s = Array.isArray(v) ? v[0] : v;
-  const n = parseFloat(String(s ?? ''));
-  return Number.isFinite(n) ? n : d;
-}
-
 /** Orca's default ear head diameter for the current printer (mm). */
 export function defaultEarDiameter(): number {
-  const nozzle = cfgNum('nozzle_diameter', 0.4);
-  const v = resolvedConfig.value.initial_layer_line_width;
-  const s = String((Array.isArray(v) ? v[0] : v) ?? '');
-  const width = s.endsWith('%') ? (parseFloat(s) / 100) * nozzle : parseFloat(s) || nozzle * 1.25;
+  const cfg = resolvedConfig.value;
+  const nozzle = cfgNumber(cfg, 'nozzle_diameter', SCALAR, 0.4);
+  // 0 / unset line width = auto (1.25 × nozzle).
+  const width = cfgAbs(cfg, 'initial_layer_line_width', SCALAR, nozzle, NaN) || nozzle * 1.25;
   return defaultHeadDiameter(width, nozzle);
 }
 

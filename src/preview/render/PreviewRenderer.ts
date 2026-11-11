@@ -9,16 +9,19 @@
  * everything re-uploads from the kept CPU arrays when the context returns.
  */
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { BedShape } from '../../app/state';
 import type { ParsedGcode } from '../parser/types';
 import { parsedByteSize } from '../parser/types';
 import { FEATURES } from '../parser/features';
-import { buildBed, disposeObject, readBedColors } from './bed';
+import { buildBed, disposeObject3D as disposeObject } from '../../viewport/bed';
+import { buildCarriageBoxes, headMatrix } from '../../viewport/imexLayer';
+import type { CarriageBox } from '../../plates/imex';
+import { readViewportTheme } from '../../viewport/tokens';
 import { GcodeChunks, createSharedUniforms, DEFAULT_CHUNK_SIZE } from './chunks';
 import type { SharedUniforms } from './chunks';
-import { RAMP, schemeMeta, schemeRange } from './colors';
-import type { ColorScheme, ValueRange } from './colors';
+import { RAMP, TOOL_SLOTS, schemeMeta, schemeRange, toolPrimary } from './colors';
+import type { ColorScheme, ToolColour, ValueRange } from './colors';
 
 export type ViewPreset = 'iso' | 'top' | 'bottom' | 'front' | 'back' | 'left' | 'right';
 
@@ -26,6 +29,20 @@ export interface RendererCallbacks {
   /** Chunk build progress (0..1). */
   onBuildProgress?(fraction: number): void;
   onContextLost?(lost: boolean): void;
+  /** Alt + wheel: move the section plane (Orca 2.5). */
+  onSectionWheel?(dir: 1 | -1): void;
+}
+
+/**
+ * IDEX/IQEX parallel printing in the preview: the G-code is T0's; every other
+ * carriage prints the same moves copied or mirrored (`copies`), its toolhead
+ * follows T0's (`carriages`, with a box of the nozzle clearance), and the bed
+ * shows the zones (`zones`, plate-local).
+ */
+export interface PreviewImex {
+  copies: ReadonlyArray<Pick<CarriageBox, 'sx' | 'sy' | 'tx' | 'ty'>>;
+  carriages: { size: [number, number]; list: CarriageBox[]; colours: string[] } | null;
+  zones: THREE.Group | null;
 }
 
 export interface MemoryStats { cpuBytes: number; gpuBytes: number; chunks: number }
@@ -54,6 +71,15 @@ export class PreviewRenderer {
   private scheme: ColorScheme = 'feature';
   private range: ValueRange = { min: 0, max: 1 };
   private buildResolve: (() => void) | null = null;
+  private imex: PreviewImex | null = null;
+  /** One group per copy carriage, holding clones (shared geometry + material) of the chunk objects. */
+  private copyGroups: THREE.Group[] = [];
+  private copyClones = new Map<THREE.Object3D, THREE.Object3D[]>();
+  private carriageGroup: THREE.Group | null = null;
+  private carriageMarkers: THREE.Object3D[] = [];
+  private showCarriageBoxes = true;
+  /** G-code → scene (belt designed view); null = identity. */
+  private modelMatrix: THREE.Matrix4 | null = null;
 
   constructor(private host: HTMLElement, private cb: RendererCallbacks = {}) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -87,6 +113,8 @@ export class PreviewRenderer {
     for (const f of FEATURES) setLin(this.uniforms.uFeatColor.value[f.id], f.color);
     RAMP.forEach((hex, i) => setLin(this.uniforms.uRamp.value[i], hex));
 
+    // Orca 2.5: Alt + wheel moves the section plane instead of zooming.
+    canvas.addEventListener('wheel', this.onWheelCapture, { capture: true, passive: false });
     canvas.addEventListener('webglcontextlost', this.onLost, false);
     canvas.addEventListener('webglcontextrestored', this.onRestored, false);
     this.ro = new ResizeObserver(() => this.resize());
@@ -95,6 +123,36 @@ export class PreviewRenderer {
   }
 
   // ---- lifecycle ----------------------------------------------------------
+
+  private onWheelCapture = (e: WheelEvent) => {
+    if (!e.altKey) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    this.cb.onSectionWheel?.(e.deltaY > 0 ? -1 : 1);
+  };
+
+  private section: { ratio: number; normal: THREE.Vector3 | null } = { ratio: 0, normal: null };
+
+  /** Orca 2.5 section view: the plane sweeps the toolpaths' bounding sphere from the camera side (0) to the far side (1). */
+  setSection(ratio: number, normal: [number, number, number] | null): void {
+    this.section = { ratio, normal: normal ? new THREE.Vector3(...normal).normalize() : null };
+    this.applySection();
+  }
+
+  private applySection(): void {
+    const u = this.uniforms.uSection.value as THREE.Vector4;
+    const { ratio, normal } = this.section;
+    if (!(ratio > 0) || !normal || !this.data) { u.set(0, 0, 1, 1e9); this.requestRender(); return; }
+    const box = this.bounds();
+    const c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() / 2;
+    u.set(normal.x, normal.y, normal.z, normal.dot(c) + r - 2 * r * ratio);
+    this.requestRender();
+  }
+
+  /** The direction a section plane aimed now faces: towards the camera. */
+  cameraFacing(): [number, number, number] {
+    const d = this.camera.getWorldDirection(new THREE.Vector3()).negate();
+    return [d.x, d.y, d.z];
+  }
 
   private onLost = (e: Event) => {
     e.preventDefault();
@@ -114,10 +172,12 @@ export class PreviewRenderer {
     cancelAnimationFrame(this.buildRaf);
     this.ro.disconnect();
     this.controls.dispose();
+    this.setImex(null);
     this.clearData();
     if (this.bedGroup) { disposeObject(this.bedGroup); this.bedGroup = null; }
     disposeObject(this.toolhead);
     const canvas = this.renderer.domElement;
+    canvas.removeEventListener('wheel', this.onWheelCapture, { capture: true });
     canvas.removeEventListener('webglcontextlost', this.onLost);
     canvas.removeEventListener('webglcontextrestored', this.onRestored);
     this.renderer.dispose();
@@ -165,6 +225,7 @@ export class PreviewRenderer {
       this.camera.updateProjectionMatrix();
     }
     this.uniforms.uNear.value = this.camera.near;
+    this.syncCopies();
     this.renderer.render(this.scene, this.camera);
     for (const fn of this.afterRender) fn();
   }
@@ -182,7 +243,8 @@ export class PreviewRenderer {
   setBed(bed: BedShape): void {
     this.bed = bed;
     if (this.bedGroup) { this.scene.remove(this.bedGroup); disposeObject(this.bedGroup); }
-    this.bedGroup = buildBed(bed, readBedColors(this.host));
+    // The same bed as the Prepare view (viewport/bed.ts): plate, grid, exclude areas, build volume.
+    this.bedGroup = buildBed(bed, readViewportTheme());
     this.scene.add(this.bedGroup);
     if (!this.data) this.fit();
     this.requestRender();
@@ -191,6 +253,7 @@ export class PreviewRenderer {
   private clearData(): void {
     cancelAnimationFrame(this.buildRaf);
     this.buildRaf = 0;
+    this.clearCopies();
     if (this.chunks) {
       this.scene.remove(this.chunks.group);
       this.chunks.dispose();
@@ -210,13 +273,16 @@ export class PreviewRenderer {
     this.toolhead.visible = false;
     if (!data) { this.requestRender(); return Promise.resolve(); }
     this.data = data;
+    this.applySection();
     const chunks = new GcodeChunks(data, this.uniforms, chunkSize);
     this.chunks = chunks;
     chunks.setScheme(this.scheme, schemeMeta(this.scheme).numeric);
     if (schemeMeta(this.scheme).numeric) this.updateRange();
     chunks.setTravelVisible(this.travelOn);
     chunks.setMarkersVisible(this.markersOn);
+    chunks.setTranslucentPass(this.translucentOn && this.anyTranslucent && this.scheme === 'tool');
     chunks.setRange(this.uniforms.uRangeMin.value, this.uniforms.uRangeMax.value);
+    this.applyModelMatrix();
     this.scene.add(chunks.group);
     return new Promise<void>((resolve) => {
       this.buildResolve = resolve;
@@ -285,8 +351,31 @@ export class PreviewRenderer {
     this.requestRender();
   }
 
-  setToolColors(colors: readonly number[]): void {
-    colors.slice(0, 16).forEach((c, i) => setLin(this.uniforms.uToolColor.value[i], c));
+  private anyTranslucent = false;
+  private translucentOn = true;
+
+  /** Filament colours per palette slot; translucent ones draw see-through in the Filament scheme. */
+  setToolColors(colors: readonly ToolColour[]): void {
+    const tmp = new THREE.Color();
+    this.anyTranslucent = false;
+    colors.slice(0, TOOL_SLOTS).forEach((fc, i) => {
+      const c = toolPrimary(fc);
+      setLin(tmp, (c.r << 16) | (c.g << 8) | c.b);
+      this.uniforms.uToolColor.value[i].set(tmp.r, tmp.g, tmp.b, c.a / 255);
+      if (c.a < 255) this.anyTranslucent = true;
+    });
+    this.syncTranslucent();
+  }
+
+  /** Orca preference "Translucent filaments": off draws every filament opaque. */
+  setTranslucentFilaments(on: boolean): void {
+    this.translucentOn = on;
+    this.uniforms.uTranslucentOn.value = on ? 1 : 0;
+    this.syncTranslucent();
+  }
+
+  private syncTranslucent(): void {
+    this.chunks?.setTranslucentPass(this.translucentOn && this.anyTranslucent && this.scheme === 'tool');
     this.requestRender();
   }
 
@@ -297,7 +386,7 @@ export class PreviewRenderer {
     this.uniforms.uScheme.value = scheme === 'feature' ? 0 : scheme === 'tool' ? 1 : 2;
     if (meta.numeric) this.updateRange();
     this.chunks?.setScheme(scheme, meta.numeric);
-    this.requestRender();
+    this.syncTranslucent();
     return this.range;
   }
 
@@ -337,11 +426,133 @@ export class PreviewRenderer {
   setToolhead(seg: number): void {
     const d = this.data;
     this.toolheadSeg = seg;
-    if (!d || seg < 0 || seg >= d.segmentCount || !this.toolheadEnabled) { this.toolhead.visible = false; this.requestRender(); return; }
+    if (!d || seg < 0 || seg >= d.segmentCount || !this.toolheadEnabled) {
+      this.toolhead.visible = false;
+      if (this.carriageGroup) this.carriageGroup.visible = false;
+      this.carriageMarkers.forEach((m) => { m.visible = false; });
+      this.requestRender();
+      return;
+    }
     const i = (seg + 1) * 3;
     this.toolhead.position.set(d.points[i], d.points[i + 1], d.points[i + 2]);
+    if (this.modelMatrix) this.toolhead.position.applyMatrix4(this.modelMatrix);
     this.toolhead.visible = true;
+    this.placeCarriages();
     this.requestRender();
+  }
+
+  /**
+   * Draw the G-code under `m` (Orca 2.5 belt "designed" view: the toolpaths
+   * back-transformed upright onto the model); null shows the coordinates as
+   * written.
+   */
+  setModelMatrix(m: THREE.Matrix4 | null): void {
+    this.modelMatrix = m;
+    this.applyModelMatrix();
+    this.setToolhead(this.toolheadSeg);
+    this.requestRender();
+  }
+
+  private applyModelMatrix(): void {
+    const g = this.chunks?.group;
+    if (!g) return;
+    g.matrixAutoUpdate = false;
+    if (this.modelMatrix) g.matrix.copy(this.modelMatrix); else g.matrix.identity();
+    g.matrixWorldNeedsUpdate = true;
+    // The chunks' bounding spheres are in G-code space; three culls with the world matrix, so they stay valid.
+  }
+
+  // ---- IDEX/IQEX ------------------------------------------------------------------
+
+  /** Parallel-mode copies, carriages and zones for the shown plate (null = normal printing). */
+  setImex(v: PreviewImex | null): void {
+    if (this.imex?.zones) { this.scene.remove(this.imex.zones); disposeObject(this.imex.zones); }
+    this.clearCopies();
+    if (this.carriageGroup) { this.scene.remove(this.carriageGroup); disposeObject(this.carriageGroup); this.carriageGroup = null; }
+    for (const m of this.carriageMarkers) this.scene.remove(m);
+    this.carriageMarkers = [];
+    this.imex = v;
+    if (v?.zones) this.scene.add(v.zones);
+    if (v?.carriages && v.carriages.size[0] > 0 && v.carriages.size[1] > 0) {
+      this.carriageGroup = buildCarriageBoxes(v.carriages.size, v.carriages.colours);
+      this.scene.add(this.carriageGroup);
+    }
+    // A nozzle marker per other carriage (same mesh as T0's).
+    for (const _ of v?.carriages?.list.slice(1) ?? []) {
+      const m = this.toolhead.clone();
+      m.visible = false;
+      this.carriageMarkers.push(m);
+      this.scene.add(m);
+    }
+    this.placeCarriages();
+    this.requestRender();
+  }
+
+  /** Orca View > "Show IDEX/IQEX Toolhead" (the clearance boxes). */
+  setCarriageBoxesVisible(on: boolean): void {
+    this.showCarriageBoxes = on;
+    this.placeCarriages();
+    this.requestRender();
+  }
+
+  /** Copies drawn (dev hooks / tests). */
+  get imexCopyCount(): number { return this.copyGroups.length; }
+
+  private placeCarriages(): void {
+    const list = this.imex?.carriages?.list ?? [];
+    const on = this.toolhead.visible;
+    const p = this.toolhead.position;
+    list.forEach((c, k) => {
+      const x = c.sx * p.x + c.tx, y = c.sy * p.y + c.ty;
+      const box = this.carriageGroup?.children[k];
+      if (box) { box.position.set(x + c.boxX, y + c.boxY, p.z); box.visible = on && this.showCarriageBoxes; }
+      const m = k > 0 ? this.carriageMarkers[k - 1] : null;
+      if (m) { m.position.set(x, y, p.z); m.visible = on; }
+    });
+    if (this.carriageGroup) this.carriageGroup.visible = on && this.showCarriageBoxes;
+  }
+
+  /** Keep each copy group's clones in step with the chunk objects (built progressively; travel / marker objects come and go). */
+  private syncCopies(): void {
+    const copies = this.imex?.copies ?? [];
+    const src = this.chunks?.group;
+    if (!src || !copies.length) { if (this.copyGroups.length) this.clearCopies(); return; }
+    if (this.copyGroups.length !== copies.length) {
+      this.clearCopies();
+      this.copyGroups = copies.map((t, k) => {
+        const g = new THREE.Group();
+        g.name = `imex-copy-${k}`;
+        g.matrixAutoUpdate = false;
+        headMatrix(t, g.matrix);
+        this.scene.add(g);
+        return g;
+      });
+    }
+    for (const o of src.children) {
+      let clones = this.copyClones.get(o);
+      if (!clones) {
+        clones = this.copyGroups.map((g) => {
+          const c = o.clone(false);
+          // The source chunk's bounding sphere is untransformed; skip culling the copy rather than mis-cull it.
+          c.frustumCulled = false;
+          g.add(c);
+          return c;
+        });
+        this.copyClones.set(o, clones);
+      }
+      for (const c of clones) { c.visible = o.visible; c.renderOrder = o.renderOrder; }
+    }
+    if (this.copyClones.size > src.children.length) {
+      const live = new Set(src.children);
+      for (const [o, clones] of this.copyClones) if (!live.has(o)) { clones.forEach((c) => c.removeFromParent()); this.copyClones.delete(o); }
+    }
+  }
+
+  private clearCopies(): void {
+    // Clones share the chunks' geometry and materials: just detach them.
+    for (const g of this.copyGroups) this.scene.remove(g);
+    this.copyGroups = [];
+    this.copyClones.clear();
   }
 
   // ---- camera ----------------------------------------------------------------
@@ -349,7 +560,13 @@ export class PreviewRenderer {
   private bounds(): THREE.Box3 {
     const d = this.data;
     if (d && d.stats.extrusionCount > 0) {
-      return new THREE.Box3(new THREE.Vector3(...d.stats.min), new THREE.Vector3(...d.stats.max));
+      const box = new THREE.Box3(new THREE.Vector3(...d.stats.min), new THREE.Vector3(...d.stats.max));
+      if (this.modelMatrix) box.applyMatrix4(this.modelMatrix);
+      // IDEX/IQEX: frame every carriage's copy too.
+      const m = new THREE.Matrix4();
+      const own = box.clone();
+      for (const t of this.imex?.copies ?? []) box.union(own.clone().applyMatrix4(headMatrix(t, m)));
+      return box;
     }
     const b = this.bed;
     if (b) return new THREE.Box3(new THREE.Vector3(b.min[0], b.min[1], 0), new THREE.Vector3(b.max[0], b.max[1], 10));

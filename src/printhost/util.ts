@@ -13,9 +13,36 @@ function trimBody(text: string): string {
   return t.length > 300 ? `${t.slice(0, 300)}…` : t;
 }
 
-/** Orca PrintHost::format_error(): "HTTP <status>: <body>"; 401/403 become 'auth'. */
+/**
+ * PrintHost.cpp moonraker_error_reason (2.5): Moonraker reports a raised
+ * exception as { error: { code, message, traceback } }, often with the cause
+ * only in the traceback. Returns the reason to show, or '' for other bodies.
+ */
+export function moonrakerErrorReason(text: string): string {
+  const err = tryJson<{ error?: { code?: unknown; message?: unknown; traceback?: unknown } }>(text)?.error;
+  if (!err || typeof err.message !== 'string' || typeof err.traceback !== 'string' || !err.message) return '';
+  const msg = err.message, tb = err.traceback.trimEnd();
+  if (!tb) return msg;
+  const header = tb.lastIndexOf('Traceback (most recent call last):');
+  // Tornado renders a raised HTTPError as "HTTP <code>: <reason>[ (<detail>)]".
+  if (Number.isInteger(err.code)) {
+    const marker = `HTTP ${err.code as number}: `;
+    const pos = tb.lastIndexOf(marker);
+    if (pos >= 0 && pos > header && pos + marker.length < tb.length) {
+      const reason = tb.slice(pos + marker.length);
+      return reason === `${msg} (${msg})` ? msg : reason;
+    }
+  }
+  // Any other exception: from the first unindented line after the frames.
+  const lines = (header >= 0 ? tb.slice(header) : tb).split(/\r?\n/);
+  const at = header >= 0 ? lines.findIndex((l, i) => i > 0 && l !== '' && !/^\s/.test(l)) : -1;
+  const tail = at >= 0 ? lines.slice(at).join('\n') : lines[lines.length - 1];
+  return `${msg} (${tail})`;
+}
+
+/** Orca PrintHost::format_error(): "HTTP <status>: <body or Moonraker reason>"; 401/403 become 'auth'. */
 export function httpError(r: HostResponse, what: string): HostError {
-  const body = trimBody(r.text);
+  const body = trimBody(moonrakerErrorReason(r.text) || r.text);
   const auth = r.status === 401 || r.status === 403;
   const hint = auth ? ' Check the API key / password.' : r.status === 404 ? ' Is the host type right?' : '';
   return new HostError(auth ? 'auth' : 'http', `${what}: HTTP ${r.status}.${hint}`, body || undefined, r.status);

@@ -48,6 +48,13 @@ export async function parseModelFile(name: string, buffer: ArrayBuffer): Promise
   if (isStepName(name)) {
     const opts = await askStepOptions(name);
     if (!opts) throw new ImportCancelled();
+    if (opts.toDesign) {
+      // "Open in Design": exact bodies in the Design tab; nothing is added to the plate.
+      const { importStepToDesign } = await import('../../design/io');
+      const { toast } = await import('../../ui');
+      importStepToDesign(name, new Uint8Array(buffer.slice(0))).then((r) => { if (!r.ok) toast.error(`${name}: ${r.error}`); }, (e: unknown) => toast.error(e instanceof Error ? e.message : String(e)));
+      throw new ImportCancelled();
+    }
     return parseStep(name, buffer, opts);
   }
   const w = getWorker();

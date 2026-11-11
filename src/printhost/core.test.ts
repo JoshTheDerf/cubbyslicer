@@ -106,7 +106,7 @@ describe('registry', () => {
   it('covers every Orca host_type exactly once', () => {
     const types = HOSTS.map((h) => h.type).sort();
     expect(types).toEqual(['3dprinteros', 'astrobox', 'crealityprint', 'duet', 'elegoolink', 'esp3d', 'flashair', 'flashforge', 'mks', 'moonraker',
-      'obico', 'octoprint', 'prusaconnect', 'prusalink', 'repetier', 'simplyprint']);
+      'obico', 'octoprint', 'prusaconnect', 'prusalink', 'repetier', 'simplyprint', 'ultimaker']);
   });
   it('marks browser-impossible hosts unsupported with a reason', () => {
     for (const t of ['prusaconnect', 'obico', 'simplyprint', '3dprinteros']) {

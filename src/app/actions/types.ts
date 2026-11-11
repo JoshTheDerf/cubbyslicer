@@ -16,11 +16,12 @@ export type ActionCategory =
   | (string & {});
 
 /**
- * Keyboard activation scope. `global` works everywhere; `prepare` / `preview`
- * only while that centre view is active (the dispatcher's active scope follows
- * `activeView`).
+ * Keyboard activation scope. `global` works everywhere; `design` / `prepare` /
+ * `preview` only while that centre view is active (the dispatcher's active
+ * scope follows `activeView`). `sketch` replaces `design` while the Design tab's sketcher is open
+ * (Orca's sketch key map applies in Sketch mode, the feature map otherwise).
  */
-export type ActionScope = 'global' | 'prepare' | 'preview';
+export type ActionScope = 'global' | 'design' | 'prepare' | 'preview' | 'sketch';
 
 /** Declarative key binding (shared with CubbyCAD, see @cubby/shared/actions). */
 export type KeyBinding = SharedKeyBinding<ActionScope>;
@@ -28,6 +29,10 @@ export type KeyBinding = SharedKeyBinding<ActionScope>;
 export type { ActionState };
 
 export interface Action extends ActionBase<AppContext, ActionCategory, ActionScope> {
+  /** One or two sentences on what it does (the command palette's footer, Orca's Speed Dial description). */
+  description?: string;
+  /** Wiki / help page (the palette footer's link, F1). */
+  helpUrl?: string;
   /** Exclude from the command palette (e.g. binding twins like Ctrl+Y redo). */
   paletteHidden?: boolean;
   /** Visual tone on the toolbar. */

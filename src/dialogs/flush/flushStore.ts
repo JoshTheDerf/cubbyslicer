@@ -3,19 +3,24 @@
  * flush_volumes_matrix / flush_multiplier in the project config, not in a
  * preset). preFlight (PrusaSlicer) uses wiping_volumes_matrix +
  * wiping_volumes_use_custom_matrix and has no multiplier.
+ *
+ * Only physical filaments flush: the matrix here is physical × physical;
+ * mixed filament slots get zero rows / columns in the slice config
+ * (mixed/model.ts withMixedSlots, Orca WipeTowerDialog).
  */
+import { asList } from '../../lib/configValue';
 import { watch } from 'vue';
 import { activeEngine, resolvedConfig } from '../../app/state';
 import { preferences } from '../../app/preferences';
 import { currentPresets } from '../../presets/store';
-import { asArray } from '../../presets/values';
+
 import {
-  autoFlushMatrix, autoFlushUpdate, flattenMatrices, flushDataset, matrixSize, minFlushVolumes, nozzleMatrix, resizeFlat, supportFlags,
+  autoFlushMatrix, autoFlushUpdate, flattenMatrices, flushDataset, matrixSize, minFlushVolumes, nozzleMatrix, physicalBlock, resizeFlat, supportFlags,
 } from './flushCalc';
-import { isOrcaFamily } from '../../engine/types';
+import { engineCaps, type EngineId } from '../../engine/types';
 
 export interface FlushState {
-  engine: 'orca' | 'preflight' | 'fullspectrum';
+  engine: EngineId;
   /** Filament count. */
   n: number;
   /** Nozzles with their own matrix (Orca multi-extruder printers). */
@@ -23,24 +28,25 @@ export interface FlushState {
   colours: string[];
   matrices: number[][][];
   multipliers: number[];
+  /** Orca 2.5 purge mode (`prime_volume_mode`) and the choices the printer offers ([] = none). */
+  purgeMode: 'Default' | 'Saving' | 'Fast';
+  purgeModes: Array<'Default' | 'Saving' | 'Fast'>;
+  /** `flush_multiplier_fast` per nozzle (used instead of the multiplier in Fast mode). */
+  fastMultipliers: number[];
 }
 
-function keys() {
-  return isOrcaFamily(activeEngine.value)
-    ? { matrix: 'flush_volumes_matrix', multiplier: 'flush_multiplier' as string | null, custom: null as string | null }
-    : { matrix: 'wiping_volumes_matrix', multiplier: null, custom: 'wiping_volumes_use_custom_matrix' };
-}
+function keys() { return engineCaps(activeEngine.value).flush; }
 
-const nums = (v: unknown): number[] => asArray(v as string | string[]).map((x) => parseFloat(x)).filter((x) => Number.isFinite(x));
+const nums = (v: unknown): number[] => asList(v as string | string[]).map((x) => parseFloat(x)).filter((x) => Number.isFinite(x));
 
-export function flushColours(): string[] {
-  const p = currentPresets.value;
-  return p.selection.filaments.map((_, i) => p.filamentColour(i));
+/** Colours of the physical filaments (the ones that flush). */
+function flushColours(): string[] {
+  return currentPresets.value.physicalColours();
 }
 
 export function flushNozzles(): number {
-  if (!isOrcaFamily(activeEngine.value)) return 1;
-  return Math.max(1, asArray(currentPresets.value.value('printer', 'nozzle_diameter')).length);
+  if (!engineCaps(activeEngine.value).orcaConfig) return 1;
+  return Math.max(1, asList(currentPresets.value.value('printer', 'nozzle_diameter')).length);
 }
 
 /** Auto-calculated matrix for nozzle `z` from the current colours (WipingDialog::CalcFlushingVolumes). */
@@ -55,22 +61,29 @@ export function readFlush(): FlushState {
   const colours = flushColours();
   const n = colours.length, nozzles = flushNozzles();
   const cfg = resolvedConfig.value;
-  const flat = nums(p.project[k.matrix] ?? cfg[k.matrix]);
+  // The project keeps the physical block; the resolved config may carry every slot (mixed filaments).
+  const flat = p.project[k.matrix] !== undefined ? nums(p.project[k.matrix]) : physicalBlock(nums(cfg[k.matrix]), n, nozzles);
   const consistent = matrixSize(flat.length, nozzles) === n;
   const matrices = Array.from({ length: nozzles }, (_, z) => (consistent ? nozzleMatrix(flat, n, z, nozzles) : autoMatrixFor(z, colours)));
   const mult = k.multiplier ? nums(p.project[k.multiplier] ?? cfg[k.multiplier]) : [];
   const multipliers = Array.from({ length: nozzles }, (_, z) => mult[z] ?? mult[0] ?? 1);
-  return { engine: activeEngine.value, n, nozzles, colours, matrices, multipliers };
+  const fast = nums(p.project.flush_multiplier_fast ?? cfg.flush_multiplier_fast);
+  const fastMultipliers = Array.from({ length: nozzles }, (_, z) => fast[z] ?? fast[0] ?? 1.2);
+  return { engine: activeEngine.value, n, nozzles, colours, matrices, multipliers, purgeMode: p.purgeMode(), purgeModes: p.purgeModes(), fastMultipliers };
 }
 
 const fmt = (v: number) => String(Math.round(v * 1000) / 1000);
 
-export function writeFlush(s: Pick<FlushState, 'matrices' | 'multipliers'>): void {
+export function writeFlush(s: Pick<FlushState, 'matrices' | 'multipliers'> & Partial<Pick<FlushState, 'purgeMode' | 'purgeModes' | 'fastMultipliers'>>): void {
   const p = currentPresets.value;
   const k = keys();
   p.project[k.matrix] = flattenMatrices(s.matrices).map(fmt);
   if (k.multiplier) p.project[k.multiplier] = s.multipliers.map(fmt);
   if (k.custom) p.project[k.custom] = '1';
+  if (s.purgeModes?.length && s.purgeMode) {
+    if (s.purgeMode === 'Default') delete p.project.prime_volume_mode; else p.project.prime_volume_mode = s.purgeMode;
+    if (s.purgeMode === 'Fast' && s.fastMultipliers) p.project.flush_multiplier_fast = s.fastMultipliers.map(fmt);
+  }
 }
 
 /**
@@ -92,8 +105,15 @@ export function installAutoFlush(): () => void {
       if (!cur.ready) return;
       const last = prev;
       prev = { colours: cur.colours, presets: cur.presets, engine: cur.engine, matrix: cur.matrix };
-      if (!last || last.engine !== cur.engine || last.matrix !== cur.matrix || preferences.autoFlush === 'off' || cur.colours.length < 2) return;
+      if (!last || last.engine !== cur.engine || preferences.autoFlush === 'off' || cur.colours.length < 2) return;
       const n = cur.colours.length, nozzles = flushNozzles();
+      // No matrix of the project's own (new project, cleared): calculate one for the current
+      // filaments (the slice would otherwise carry the fitted default, resolve()).
+      if (engineCaps(cur.engine as EngineId).orcaConfig && currentPresets.value.project[keys().matrix] === undefined) {
+        writeFlush({ ...readFlush(), matrices: Array.from({ length: nozzles }, (_, z) => autoMatrixFor(z, cur.colours)) });
+        return;
+      }
+      if (last.matrix !== cur.matrix) return;
       const changed = new Set<number>();
       for (let i = 0; i < n; i++) {
         if (cur.colours[i] !== last.colours[i]) changed.add(i);

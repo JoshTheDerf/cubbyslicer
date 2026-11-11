@@ -1,0 +1,268 @@
+/**
+ * Slice 3 of the Design tab — the sketcher: 2D geometry, snapping / inference, the drawing tools'
+ * shapes, constraint planning and guards, inline values, and the session on the fake kernel
+ * (one app undo step per sketch, sketch-level undo inside, conflicts naming the constraint they
+ * clash with, editing an existing sketch, recovery after a kernel reset).
+ */
+import { beforeEach, describe, expect, it } from 'vitest';
+import { nextTick } from 'vue';
+import * as S from '../../project/store';
+import { resolvedConfig } from '../../app/state';
+import { setOrcaCadRecipe } from '../../project/persistence/passthrough';
+import { undoOverride, doUndo } from '../../app/shell/commands/edit';
+import { FakeKernel } from '../kernel/fake';
+import { design, designKernel, designReady, editBlocker, setDesignBackend } from '../session';
+import { arc, arcThrough, circleThrough, cons, entity, line, nearestOn, splineAt, tangentArc, inSweep, type V2 } from './model';
+import { axisHint, snapPoint } from './infer';
+import { anchorConstraints, DRAW_TOOL_BY_ID, type BuildOpts } from './shapes';
+import { duplicateOf, fromWire, guard, planLocal, refsPoint, toWire, describeConstraint } from './constraints';
+import { evalValue } from './expr';
+import * as K from './session';
+import { sk } from './session';
+import { getActionScope, setActionScope } from '../../app/actions/dispatch';
+
+const close = (a: V2, b: V2, eps = 1e-9) => Math.abs(a[0] - b[0]) < eps && Math.abs(a[1] - b[1]) < eps;
+const opts = (o: Partial<BuildOpts> = {}): BuildOpts => ({ base: 0, entities: [], snaps: [], axes: [], construction: false, polygonSides: 6, polygonCircumscribed: false, final: true, ...o });
+
+describe('sketch geometry', () => {
+  it('builds arcs through three points and tangent arcs that leave in the given direction', () => {
+    const a = arcThrough([10, 0], [-10, 0], [0, 10])!;
+    expect(a.radius).toBeCloseTo(10);
+    expect(close(a.center, [0, 0], 1e-9)).toBe(true);
+    expect(inSweep(a, Math.PI / 2)).toBe(true);
+    expect(inSweep(a, -Math.PI / 2)).toBe(false);
+    const t = tangentArc([0, 0], [1, 0], [10, 10])!;
+    expect(t.radius).toBeCloseTo(10);
+    expect(close(t.center, [0, 10], 1e-9)).toBe(true);
+    expect(t.end_angle - t.start_angle).toBeGreaterThan(0); // CCW: centre on the left of travel
+    expect(circleThrough([0, 0], [1, 1], [2, 2])).toBeNull();
+  });
+  it('finds nearest points on lines / arcs / circles and evaluates clamped B-splines', () => {
+    expect(nearestOn(line([0, 0], [10, 0]), [3, 4]).d).toBeCloseTo(4);
+    expect(nearestOn(entity('circle', { center: [0, 0], radius: 5 }), [10, 0]).d).toBeCloseTo(5);
+    const q = arc([0, 0], 5, 0, Math.PI / 2);
+    expect(nearestOn(q, [-5, -5]).t).toBe(0); // off the sweep: the nearer end
+    expect(close(splineAt([[0, 0], [5, 5], [10, 0]], 0), [0, 0])).toBe(true);
+    expect(close(splineAt([[0, 0], [5, 5], [10, 0]], 1 - 1e-12), [10, 0], 1e-6)).toBe(true);
+  });
+});
+
+describe('snapping and inference (Orca SketchInference)', () => {
+  const ents = [line([0, 0], [10, 0]), entity('circle', { center: [20, 0], radius: 3 })];
+  it('prefers ends, then centres, then the origin, then midpoints, then edges', () => {
+    expect(snapPoint(ents, [10.2, 0.1], 1)).toMatchObject({ kind: 'end', entity: 0, role: 'p1' });
+    expect(snapPoint(ents, [20.1, 0.1], 1)).toMatchObject({ kind: 'center', entity: 1, role: 'center' });
+    expect(snapPoint(ents, [5.1, 0.2], 1)).toMatchObject({ kind: 'midpoint', entity: 0 });
+    expect(snapPoint(ents, [7, 0.3], 1)).toMatchObject({ kind: 'edge', entity: 0 });
+    expect(snapPoint(ents, [0.2, 0.1], 1)).toMatchObject({ kind: 'end', entity: 0 }); // an end beats the origin
+    expect(snapPoint([], [0.2, 0.1], 1)).toMatchObject({ kind: 'origin', entity: -2 });
+    expect(snapPoint(ents, [50, 50], 1).kind).toBe('none');
+  });
+  it('infers H / V within 3°', () => {
+    expect(axisHint([0, 0], [10, 0.4])).toBe('horizontal');
+    expect(axisHint([0, 0], [0.3, 10])).toBe('vertical');
+    expect(axisHint([0, 0], [10, 3])).toBeNull();
+  });
+  it('turns click snaps into Coincident / Midpoint / Point on object on the built shape', () => {
+    const t = DRAW_TOOL_BY_ID.get('line')!;
+    const b = t.build([[0, 0], [10, 5]], opts({ base: 2 }))!;
+    const ex = [line([0, 0], [10, 0]), line([10, 0], [10, 10])];
+    const c = anchorConstraints(b, [{ kind: 'origin', p: [0, 0], entity: -2, role: 'p0' }, { kind: 'midpoint', p: [10, 5], entity: 1 }], ex);
+    expect(c).toEqual([cons('coincident', 2, 'p0', -2, 'p0'), cons('midpoint', 2, 'p1', 1)]);
+  });
+});
+
+describe('drawing tools (shapes)', () => {
+  it('a corner rectangle is 4 lines, 4 corner joins, H / V, and a Width / Height queue', () => {
+    const b = DRAW_TOOL_BY_ID.get('rect')!.build([[0, 0], [40, 20]], opts())!;
+    expect(b.entities.map((e) => e.type)).toEqual(['line', 'line', 'line', 'line']);
+    expect(b.constraints.filter((c) => c.type === 'coincident')).toHaveLength(4);
+    expect(b.constraints.filter((c) => c.type === 'horizontal' || c.type === 'vertical')).toHaveLength(4);
+    expect(b.dims.map((d) => [d.label, d.constraint.value])).toEqual([['Width', 40], ['Height', 20]]);
+  });
+  it('a slot keeps its caps tangent and equal; a polygon is equal sides on a construction circle', () => {
+    const s = DRAW_TOOL_BY_ID.get('slot')!.build([[0, 0], [30, 0], [10, 4]], opts())!;
+    expect(s.entities.map((e) => `${e.type}${e.construction ? '*' : ''}`)).toEqual(['line', 'arc', 'line', 'arc', 'line*']);
+    expect(s.constraints.filter((c) => c.type === 'tangent')).toHaveLength(4);
+    expect(s.entities[1].radius).toBeCloseTo(4);
+    const p = DRAW_TOOL_BY_ID.get('polygon')!.build([[0, 0], [10, 0]], opts({ polygonSides: 5 }))!;
+    expect(p.entities.filter((e) => e.type === 'line')).toHaveLength(5);
+    expect(p.entities[5]).toMatchObject({ type: 'circle', construction: true, radius: 10 });
+    expect(p.constraints.filter((c) => c.type === 'equal_length')).toHaveLength(4);
+    const circ = DRAW_TOOL_BY_ID.get('polygon')!.build([[0, 0], [10, 0]], opts({ polygonSides: 6, polygonCircumscribed: true }))!;
+    expect(circ.entities[6].radius).toBeCloseTo(10 / Math.cos(Math.PI / 6));
+  });
+  it('every tool builds from its click count; degenerate clicks build nothing', () => {
+    const pts: V2[] = [[0, 0], [20, 3], [7, 12], [3, 9], [-4, 6]];
+    for (const [id, t] of DRAW_TOOL_BY_ID) {
+      if (id === 'arc-tangent') continue;
+      const n = typeof t.clicks === 'number' ? t.clicks : 3;
+      const b = t.build(pts.slice(0, n), opts({ snaps: [] }));
+      expect(b, id).not.toBeNull();
+      expect(b!.entities.length, id).toBeGreaterThan(0);
+    }
+    expect(DRAW_TOOL_BY_ID.get('rect')!.build([[0, 0], [0, 10]], opts())).toBeNull();
+    const ta = DRAW_TOOL_BY_ID.get('arc-tangent')!.build([[10, 0], [20, 10]], opts({ base: 1, entities: [line([0, 0], [10, 0])], snaps: [{ kind: 'end', p: [10, 0], entity: 0, role: 'p1' }] }))!;
+    expect(ta.constraints).toEqual([cons('tangent', 0, 'p0', 1, 'p0')]);
+  });
+});
+
+describe('constraint planning and guards', () => {
+  const ents = [line([0, 0], [10, 0]), line([10, 0], [10, 5]), entity('circle', { center: [5, 5], radius: 2 }), entity('point', { p0: [3, 3] })];
+  it('plans vertex selections locally (Orca planner rules)', () => {
+    expect(planLocal('coincident', [{ e: 0, role: 'p0' }, { e: 3 }], ents)).toEqual({ kind: 'apply', constraints: [cons('coincident', 0, 'p0', 3, 'p0')] });
+    expect(planLocal('coincident', [{ e: 3 }, { e: 2 }], ents)).toEqual({ kind: 'apply', constraints: [cons('point_on_object', 3, 'p0', 2)] });
+    expect(planLocal('midpoint', [{ e: 3 }, { e: 0 }], ents)).toEqual({ kind: 'apply', constraints: [cons('midpoint', 3, 'p0', 0)] });
+    expect(planLocal('distance', [{ e: 0 }], ents)).toMatchObject({ kind: 'ask_value', prefill: 10 });
+    expect(planLocal('distance', [{ e: 2 }], ents)).toMatchObject({ kind: 'ask_value', prefill: 4, constraints: [{ type: 'diameter' }] });
+    const dx = planLocal('distance_x', [{ e: 1, role: 'p0' }, { e: 0, role: 'p0' }], ents);
+    expect(dx).toMatchObject({ kind: 'ask_value', prefill: 10, constraints: [{ ea: 0, eb: 1 }] }); // reordered: non-negative
+    expect(planLocal('parallel', [{ e: 0 }, { e: 1 }], ents)).toBeNull(); // entities only: the kernel's planner
+    expect(planLocal('point_on_line', [{ e: 3 }, { e: 0 }], ents)).toMatchObject({ kind: 'ask_value', prefill: 3 });
+  });
+  it('refuses requests that trap the kernel (radius / equal radius on a line) and duplicates', () => {
+    expect(guard(cons('radius', 0, 'center', -1, 'p0', 3), ents)).toMatch(/arc or a circle/);
+    expect(guard(cons('equal_radius', 0, 'p0', 2), ents)).toMatch(/two arcs/);
+    expect(guard(cons('tangent', 0, 'p0', 1), ents)).toMatch(/Tangent/);
+    expect(guard(cons('radius', 2, 'center', -1, 'p0', 3), ents)).toBeNull();
+    const list = [cons('horizontal', 0, 'p0', 0, 'p1')];
+    expect(duplicateOf(cons('horizontal', 0, 'p1', 0, 'p0'), list)).toBe(0);
+    expect(duplicateOf(cons('vertical', 0, 'p0', 0, 'p1'), list)).toBe(-1);
+  });
+  it('angles are degrees on the wire and in the UI (kernel v1.2)', () => {
+    // kernel v1.2: angles are degrees on the wire
+    expect(toWire('angle', 90)).toBe(90);
+    expect(fromWire('angle', 60)).toBe(60);
+    expect(toWire('distance', 5)).toBe(5);
+    expect(describeConstraint(cons('angle', 0, 'p0', 1, 'p0', 45), ents)).toBe('Angle 45° on line 1 and line 2');
+  });
+  it('knows which constraints hold the end a trim moves', () => {
+    expect(refsPoint(cons('coincident', 0, 'p1', 1, 'p0'), 0, 'p1')).toBe(true);
+    expect(refsPoint(cons('horizontal', 0, 'p0', 0, 'p1'), 0, 'p1')).toBe(false);
+  });
+});
+
+describe('inline values', () => {
+  it('reads numbers, commas and expressions over variables', () => {
+    expect(evalValue('12,5')).toEqual({ value: 12.5 });
+    expect(evalValue('w / 2 + 1', { w: 40 })).toEqual({ value: 21 });
+    expect(evalValue('2^3*sqrt(4)')).toEqual({ value: 16 });
+    expect(evalValue('10 mm')).toEqual({ value: 10 });
+    expect(evalValue('q + 1')).toEqual({ error: 'Unknown variable q' });
+    expect(evalValue('12x')).toEqual({ error: 'Not a number' });
+    expect(evalValue('')).toEqual({ error: 'Enter a number' });
+  });
+});
+
+// ---- the session on the fake kernel ---------------------------------------------------------------
+
+let fake: FakeKernel;
+async function settle(): Promise<void> { for (let i = 0; i < 4; i++) { await nextTick(); await designReady(); } }
+async function idle(): Promise<void> { await designKernel().run('wait', async () => {}, { quiet: true }); await nextTick(); }
+
+beforeEach(async () => {
+  resolvedConfig.value = { printable_area: '0x0,220x0,220x220,0x220', printable_height: '250' };
+  fake = new FakeKernel();
+  setDesignBackend(() => fake);
+  if (sk.open) await K.cancelSketch();
+  S.resetProject();
+  setOrcaCadRecipe(null);
+  await settle();
+});
+
+describe('sketch session', () => {
+  it('is one app undo step; edits are blocked meanwhile; Ctrl+Z inside is sketch undo', async () => {
+    expect(await K.beginSketch({ plane: 'XY' })).toBe(true);
+    expect(sk.open).toBe(true);
+    expect(editBlocker()).toMatch(/Finish or cancel the sketch/);
+    expect(undoOverride.value).not.toBeNull();
+    setActionScope('design');
+    expect(getActionScope()).toBe('sketch');
+    await K.addEntities([line([0, 0], [10, 0]), line([10, 0], [10, 5])], [cons('coincident', 0, 'p1', 1, 'p0'), cons('horizontal', 0, 'p0', 0, 'p1')]);
+    expect(sk.entities).toHaveLength(2);
+    expect(sk.constraints).toHaveLength(2);
+    expect(sk.undo).toEqual([2]); // add + constrain = one entry
+    await K.addConstraints([cons('distance', 0, 'p0', 0, 'p1', 10)]);
+    expect(sk.constraints).toHaveLength(3);
+    doUndo(); await idle();
+    expect(sk.constraints).toHaveLength(2);
+    expect(sk.redo).toEqual([1]);
+    await K.sketchRedo();
+    expect(sk.constraints).toHaveLength(3);
+    const steps = S.historyState.value.undo;
+    const r = await K.finishSketch();
+    expect(r).toMatchObject({ ok: true, index: 0 });
+    expect(sk.open).toBe(false);
+    expect(undoOverride.value).toBeNull();
+    expect(getActionScope()).toBe('design');
+    expect(design.features.map((f) => f.type)).toEqual(['Sketch']);
+    expect(sk.finished).toMatchObject({ index: 0 });
+    expect(S.historyState.value.undo).not.toBe(steps);
+    S.undo(); await settle();
+    expect(design.features).toHaveLength(0);
+  });
+
+  it('a gesture (drag) is one sketch undo entry however many solver steps it took', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    await K.addEntities([line([0, 0], [10, 0])], []);
+    K.beginGesture('Drag');
+    for (let i = 1; i <= 5; i++) K.drag({ kind: 'point', entity: 0, role: 'p1', to: [10 + i, i] });
+    await K.endGesture();
+    expect(sk.entities[0].p1).toEqual([15, 5]); // coalesced: the last target wins
+    expect(sk.undo).toHaveLength(2);
+    await K.sketchUndo();
+    expect(sk.entities[0].p1).toEqual([10, 0]);
+  });
+
+  it('a refused constraint names what it conflicts with; Replace / Keep both', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    await K.addEntities([line([0, 0], [10, 0])], [cons('distance', 0, 'p0', 0, 'p1', 10)]);
+    const err = await K.addConstraints([cons('distance', 0, 'p0', 0, 'p1', 12)]);
+    expect(err).toMatch(/Distance 12 mm on line 1 conflicts with Distance 10 mm on line 1 \(#1\)/);
+    expect(sk.conflict?.offenders).toEqual([0]);
+    expect(sk.constraints).toHaveLength(1);
+    await K.resolveConflict('replace');
+    expect(sk.constraints.map((c) => c.value)).toEqual([12]);
+    expect(sk.solveOk).toBe(true);
+    await K.addConstraints([cons('distance', 0, 'p0', 0, 'p1', 9)]);
+    await K.resolveConflict('keep');
+    expect(sk.solveOk).toBe(false);
+    expect(sk.bad).toEqual([1]);
+    expect(await K.addConstraints([cons('radius', 0, 'center', -1, 'p0', 3)])).toMatch(/arc or a circle/);
+    expect(fake.calls.filter((m) => m === 'sketch_constrain').length).toBeGreaterThan(0);
+  });
+
+  it('edits an existing sketch in place (one undo step) and recovers the session after a kernel reset', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    await K.addEntities([line([0, 0], [10, 0])], []);
+    await K.finishSketch();
+    expect(await K.beginSketch({ feature: 0 })).toBe(true);
+    expect(sk.entities).toHaveLength(1);
+    expect(sk.feature).toBe(0);
+    await K.addEntities([line([10, 0], [10, 10])], [cons('coincident', 0, 'p1', 1, 'p0')]);
+    // The kernel instance dies: the document reopens from the saved bytes, the session is rebuilt from the page's copy.
+    (designKernel() as unknown as { reset(r: string): void }).reset('crash'); // as a trap / memory recycle does
+    await settle();
+    expect(fake.sketches.sessions.size).toBe(0);
+    await K.addConstraints([cons('vertical', 1, 'p0', 1, 'p1')]);
+    expect(sk.entities).toHaveLength(2);
+    expect(sk.constraints.map((c) => c.type)).toEqual(['coincident', 'vertical']);
+    const r = await K.finishSketch();
+    expect(r).toMatchObject({ ok: true, index: 0 });
+    expect(design.features).toHaveLength(1);
+    const doc = [...fake.docs.keys()][0];
+    const f = (await designKernel().run('read', async (c) => (await c.call<{ feature: { entities: unknown[] } }>('get_feature', { doc, index: 0 })).result, { quiet: true }));
+    expect(f.feature.entities).toHaveLength(2);
+  });
+
+  it('cancel leaves the design unchanged; trim drops the constraints on the moved end first', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    await K.addEntities([line([0, 0], [10, 0]), line([10, 0], [10, 5])], [cons('coincident', 0, 'p1', 1, 'p0')]);
+    expect(await K.trimExtend('trim', 0, [8, 0])).toBe(true);
+    expect(sk.constraints).toHaveLength(0);
+    expect(sk.entities[0].p1).toEqual([8, 0]);
+    await K.cancelSketch();
+    expect(sk.open).toBe(false);
+    expect(design.features).toHaveLength(0);
+  });
+});

@@ -62,6 +62,9 @@ await page.mouse.move(sb.x + sb.width * 0.3, sb.y + sb.height / 2);
 await page.mouse.down();
 for (let i = 1; i <= 12; i++) { await page.mouse.move(sb.x + sb.width * (0.3 + i * 0.03), sb.y + sb.height / 2); await page.waitForTimeout(25); }
 await page.mouse.up();
+// The drag's last value is evaluated off-thread: let it land before measuring / undoing (slow on a busy machine).
+await page.evaluate(async () => { window.__cadCommands = await import('/slicer/src/cad/commands.ts'); });
+await page.waitForFunction(() => window.__cadCommands.paramsIdle(), null, { timeout: 60000, polling: 100 });
 await page.waitForTimeout(400);
 list = await objs();
 const w1 = list[0].info.max[0] - list[0].info.min[0];

@@ -16,10 +16,16 @@ export interface LegendOptions {
   seams: boolean;
   toolMarker: boolean;
   dimBelow: boolean;
+  /** Orca 2.5 "Translucent filaments": translucent filament colours draw see-through (Filament view). */
+  translucent: boolean;
+  /** Orca 2.5 View > "Show IDEX/IQEX Toolhead": the carriages' clearance boxes in a parallel mode. */
+  imexToolheads: boolean;
+  /** Orca 2.5 "Show raw G-code (belt only)": belt prints as written (layers along the belt) instead of upright. */
+  beltRaw: boolean;
 }
 
 export const DEFAULT_LEGEND_OPTIONS: LegendOptions = {
-  travel: false, wipe: false, retracts: false, unretracts: false, seams: false, toolMarker: true, dimBelow: false,
+  travel: false, wipe: false, retracts: false, unretracts: false, seams: false, toolMarker: true, dimBelow: false, translucent: true, imexToolheads: true, beltRaw: false,
 };
 
 export interface FeatureRow {

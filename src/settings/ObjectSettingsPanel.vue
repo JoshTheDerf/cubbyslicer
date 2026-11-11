@@ -15,12 +15,20 @@ import LayerRangeHeader from '../layers/LayerRangeHeader.vue';
 import { HIDDEN_KEYS } from './layout/build';
 import { getObjectOverrides, objectName, setObjectOverride } from './projectAdapter';
 import { keyLocations, settingsLayout } from './useLayout';
+import { activeEngine } from '../app/state';
+import { evaluateRules } from './rules';
+import { ruleContext } from './useRules';
+import { afterOverrideEdit } from './applyAutoChanges';
+import { getObject } from '../project/store';
+import { PRECISE_SEAM_LABELS } from '../project/types';
 
 const props = defineProps<{ objectId: string; partId?: string; rangeId?: string }>();
 
 const p = computed(() => currentPresets.value);
 const schema = computed(() => p.value.schema.value);
 const overrides = computed(() => getObjectOverrides(props.objectId, props.partId, props.rangeId));
+/** A precise seam is helper geometry: Orca shows no per-volume settings for it (ObjectList::get_item_settings). */
+const seam = computed(() => (props.partId ? getObject(props.objectId)?.parts?.find((x) => x.id === props.partId)?.preciseSeam : undefined));
 const set = (k: string, v: ConfigValue | undefined) => setObjectOverride(props.objectId, k, v, props.partId, props.rangeId);
 
 /** Candidate keys: print / object scope (object first — those are per-object in the engine). */
@@ -72,9 +80,14 @@ function add(item: unknown): void {
 }
 
 function change(k: string, v: ConfigValue): void {
-  set(k, normalizeValue(schema.value?.options[k], v));
+  const value = normalizeValue(schema.value?.options[k], v);
+  set(k, value);
+  // Orca's update_print_fff_config for object settings (spiral vase, alternate extra wall, … as OK messages).
+  void afterOverrideEdit(() => overrides.value, (k2, v2) => set(k2, v2), k, value);
 }
 const processValue = (k: string) => p.value.value('process', k);
+/** Orca greys out per-object rows by the same rules (it can't hide them there), with this object's overrides over the process. */
+const states = computed(() => evaluateRules(activeEngine.value, 'print', ruleContext('process', 0, 0, (k) => overrides.value[k]), { hide: false, keys: new Set(keys.value) }));
 const differs = (k: string) => !valuesEqual(overrides.value[k], processValue(k));
 </script>
 
@@ -83,8 +96,8 @@ const differs = (k: string) => !valuesEqual(overrides.value[k], processValue(k))
     <header class="osp__head">
       <UIcon :name="rangeId ? 'i-lucide-between-horizontal-start' : 'i-lucide-box'" class="size-4 flex-none text-primary" />
       <span class="osp__title">{{ objectName(objectId, partId, rangeId) || 'Object' }}</span>
-      <UBadge v-if="keys.length" size="sm" variant="subtle" color="warning" :label="`${keys.length} override${keys.length > 1 ? 's' : ''}`" />
-      <UPopover v-model:open="picking" :content="{ side: 'bottom', align: 'end' }">
+      <UBadge v-if="keys.length && !seam" size="sm" variant="subtle" color="warning" :label="`${keys.length} override${keys.length > 1 ? 's' : ''}`" />
+      <UPopover v-if="!seam" v-model:open="picking" :content="{ side: 'bottom', align: 'end' }">
         <UButton size="xs" variant="soft" color="primary" icon="i-lucide-plus" label="Add setting" :disabled="!schema" />
         <template #content>
           <UCommandPalette :groups="pickGroups" :fuse="fuse" placeholder="Search process settings…" autofocus class="h-80 w-[min(22rem,90vw)]"
@@ -94,11 +107,13 @@ const differs = (k: string) => !valuesEqual(overrides.value[k], processValue(k))
     </header>
 
     <LayerRangeHeader v-if="rangeId" :object-id="objectId" :range-id="rangeId" />
-    <p v-if="!keys.length" class="osp__empty">No per-object overrides — this object uses the process preset. Add a setting to change it for this object only.</p>
-    <div v-if="schema" class="osp__rows">
+    <p v-if="seam" class="osp__empty">{{ PRECISE_SEAM_LABELS[seam.type] }}: a precise seam places the seam inside its volume and has no settings of its own.</p>
+    <p v-else-if="!keys.length" class="osp__empty">No per-object overrides — this object uses the process preset. Add a setting to change it for this object only.</p>
+    <div v-if="schema && !seam" class="osp__rows">
       <template v-for="k in keys" :key="k">
         <SettingRow v-if="schema.options[k]" :opt-key="k" :def="schema.options[k]" :value="overrides[k]" :preset-value="processValue(k)"
                     :modified="differs(k)" revert-to="Process" removable
+                    :disabled="states.get(k)?.disabled" :reason="states.get(k)?.reason" :label-override="states.get(k)?.label"
                     @change="(v) => change(k, v)" @revert="change(k, processValue(k) ?? '')" @remove="set(k, undefined)" />
         <div v-else class="osp__unknown">
           <code>{{ k }}</code> = {{ overrides[k] }} <small>(not an option of this engine)</small>

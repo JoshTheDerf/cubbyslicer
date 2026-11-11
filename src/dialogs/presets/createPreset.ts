@@ -4,9 +4,10 @@
  * a custom filament (vendor, type, serial) as a user preset on top of a
  * template preset. Pure.
  */
+import { asList } from '../../lib/configValue';
 import type { ConfigSchema } from '../../engine/types';
 import type { PresetValues } from '../../presets/types';
-import { asArray } from '../../presets/values';
+
 
 export const NOZZLES = ['0.2', '0.25', '0.3', '0.35', '0.4', '0.5', '0.6', '0.75', '0.8', '1.0', '1.2'];
 
@@ -64,7 +65,7 @@ export function filamentOverrides(f: FilamentForm, schema: ConfigSchema | null, 
   const has = (k: string) => !schema || !!schema.options[k];
   const out: PresetValues = {};
   if (has('filament_vendor')) out.filament_vendor = [f.vendor.trim() || 'Generic'];
-  if (has('filament_type') && f.type && asArray(base.filament_type)[0] !== f.type) out.filament_type = [f.type];
+  if (has('filament_type') && f.type && asList(base.filament_type)[0] !== f.type) out.filament_type = [f.type];
   // Chosen printers only; none = every printer (no list, no condition).
   out.compatible_printers = f.printers.slice();
   out.compatible_printers_condition = '';

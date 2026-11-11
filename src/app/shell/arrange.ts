@@ -8,6 +8,8 @@ import { activeEngine, resolvedConfig } from '../state';
 import { toast } from '../../ui';
 import { orcaArrange } from '../../engine/client';
 import type { FlatConfig } from '../../engine/types';
+import { isOrcaConfig } from '../../engine/capabilities';
+import { cfgString, SCALAR } from '../../lib/configValue';
 import { activePlate, applyArrange, arrangeInputs, bed, objects, selectedIds, type ArrangeOutcome } from '../../project/store';
 import { activeArrangeSet, arrangeSettings, type ArrangeRunOptions } from '../arrangeSettings';
 import { currentPresets } from '../../presets/store';
@@ -15,11 +17,9 @@ import { ui } from './uiState';
 
 export type ArrangeMode = 'all' | 'plate' | 'selection';
 
-const scalar = (v: FlatConfig[string] | undefined): string => String(Array.isArray(v) ? v[0] ?? '' : v ?? '');
-
 /** The global print sequence is by object (Orca picks the "seq print" arrange settings then). */
 export function arrangeSeqPrint(cfg: FlatConfig = resolvedConfig.value): boolean {
-  return scalar(cfg.print_sequence) === 'by object' || scalar(cfg.complete_objects) === '1';
+  return cfgString(cfg, 'print_sequence', SCALAR) === 'by object' || cfgString(cfg, 'complete_objects', SCALAR) === '1';
 }
 
 /** Orca's BBL vendor check (the "Avoid extrusion calibration region" option). */
@@ -34,7 +34,7 @@ export function isBblPrinter(): boolean {
  */
 function orcaConfig(): FlatConfig {
   const cfg = resolvedConfig.value;
-  if (activeEngine.value !== 'preflight') return cfg;
+  if (isOrcaConfig(activeEngine.value)) return cfg;
   const b = bed.value;
   const pt = (p: [number, number]) => `${p[0]}x${p[1]}`;
   return {
@@ -47,8 +47,6 @@ function orcaConfig(): FlatConfig {
 }
 
 let running: Promise<ArrangeOutcome | null> | null = null;
-
-export function arrangeRunning(): boolean { return !!running; }
 
 /** Arrange; resolves when the result is applied (null if nothing ran). Errors are reported, not thrown. */
 export function runArrange(mode: ArrangeMode, opts: ArrangeRunOptions = {}): Promise<ArrangeOutcome | null> {
@@ -80,7 +78,12 @@ async function doArrange(mode: ArrangeMode, opts: ArrangeRunOptions): Promise<Ar
     });
     const out = applyArrange(inputs.ids, r, mode);
     for (const w of r.warnings) toast.warn(w.split('\n')[0], { detail: w.split('\n').slice(1).join('\n') || undefined });
-    if (out.unplaced) {
+    if (out.unplaced && r.imex) {
+      // IDEX/IQEX Copy / Mirror: parts go inside T0's zone, out of the carriage collision strips (ImexArranger).
+      toast.warn('Arranging is done but some parts don\u2019t fit the first head\u2019s zone of the parallel print mode.', {
+        detail: `Placed beside the plates: ${r.unplaced.join(', ')}. Make them smaller, print them on another plate, or set the plate back to Primary mode.`,
+      });
+    } else if (out.unplaced) {
       toast.warn('Arranging is done but there are unpacked items. Reduce spacing and try again.', {
         detail: `Placed beside the plates: ${r.unplaced.join(', ')}`,
       });

@@ -18,20 +18,27 @@ import {
   addShapeCmd, cadChild, cadObject, cadUi, groupSelectionCmd, lockTarget, selectionHoleState, setHoleCmd, toggleLockCmd, ungroupSelectionCmd,
 } from './commands';
 import { exportCubbyCmd } from './files';
+import { preferences } from '../app/preferences';
+import { getObject } from '../project/store';
+import { addShapeToDesignCmd, convertToDesignCmd, meshToDesignCmd } from '../design/shapeBodies';
 
 const prepare = () => activeView.value === 'prepare';
+/** The shape palette also adds design bodies in the Design tab (one CAD entry point). */
+const shapesHere = () => prepare() || activeView.value === 'design';
+const one = () => (selectedIds.value.length === 1 ? getObject(selectedIds.value[0]) : undefined);
 const selectedCad = () => objects.value.some((o) => o.cad && selectedIds.value.includes(o.id));
 
 export function cadActions(): Action[] {
   return [
     { id: 'cad.palette', title: 'Add shape…', icon: 'i-lucide-shapes', category: 'Object',
-      aliases: ['primitive', 'add primitive', 'cubbycad', 'box', 'cylinder', 'sphere', 'modelling', 'shape palette'],
-      when: () => prepare(), state: () => (cadUi.paletteOpen ? 'active' : undefined),
+      aliases: ['primitive', 'add primitive', 'cubbycad', 'box', 'cylinder', 'sphere', 'modelling', 'shape palette', 'design body'],
+      when: () => shapesHere(), state: () => (cadUi.paletteOpen ? 'active' : undefined),
       run: () => { cadUi.paletteOpen = !cadUi.paletteOpen; } },
     ...paletteShapes().map((s): Action => ({
       id: `cad.add.${s.id}`, title: `Add ${s.label.toLowerCase()}`, icon: s.icon, category: 'Object',
       aliases: ['primitive', 'shape', s.label.toLowerCase(), 'cubbycad'],
-      when: () => prepare(), run: () => addShapeCmd(s.id),
+      dynamicTitle: () => (activeView.value === 'design' ? `Add ${s.label.toLowerCase()} body` : `Add ${s.label.toLowerCase()}`),
+      when: () => shapesHere(), run: () => (activeView.value === 'design' ? addShapeToDesignCmd(s.id) : addShapeCmd(s.id)),
     })),
     { id: 'object.group', title: 'Group', icon: 'i-lucide-folder-plus', category: 'Object',
       aliases: ['combine', 'union', 'boolean group', 'manifold group', 'csg'],
@@ -54,6 +61,14 @@ export function cadActions(): Action[] {
     { id: 'cad.edit-tree', title: 'Edit shape tree', icon: 'i-lucide-list-tree', category: 'Object', aliases: ['node tree', 'outliner', 'shape parameters'],
       when: () => prepare() && !!cadObject.value, state: () => (cadUi.panelOpen ? 'active' : undefined),
       run: () => { cadUi.panelOpen = !cadUi.panelOpen; } },
+    { id: 'object.to-design', title: 'Convert to Design body', icon: 'i-lucide-pencil-ruler', category: 'Object',
+      aliases: ['edit in design', 'b-rep', 'brep', 'exact', 'parametric', 'fillet', 'cad kernel', 'design tab'],
+      description: 'Rebuild this CubbyCAD shape as a body in the Design tab: exact for boxes, cylinders, spheres, cones, tori, prisms and their groups; a mesh body otherwise.',
+      when: () => prepare() && preferences.designTab && !!one()?.cad, run: () => convertToDesignCmd(one()!.id) },
+    { id: 'object.mesh-to-design', title: 'Import as a mesh body', icon: 'i-lucide-file-input', category: 'Object',
+      aliases: ['design body', 'mesh to brep', 'design tab', 'convert mesh'],
+      description: 'Bring this object’s mesh into the Design tab as a body (flat regions become faces; no exact curves).',
+      when: () => prepare() && preferences.designTab && !!one() && !one()!.cad && !one()!.design, run: () => meshToDesignCmd(one()!.id) },
     { id: 'export.cubby', title: 'Export as .cubby (CubbyCAD)…', icon: 'i-lucide-file-box', category: 'Export',
       aliases: ['cubbycad', 'cad scene', 'export cad', 'cubby'],
       when: () => objects.value.some((o) => o.cad), run: () => exportCubbyCmd() },

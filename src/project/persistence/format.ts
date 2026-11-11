@@ -4,7 +4,10 @@
  */
 import { ImportError } from '../mesh';
 import type { Quat, Vec3 } from '../math';
-import type { LayerRange, MeshData, ObjectPart, PartType, ProjectObject } from '../types';
+import type {
+  ElementPassthrough, LayerRange, MeshData, ObjectPart, ObjectPassthrough, PartType, PreciseSeam, ProjectObject, VolumePassthrough,
+} from '../types';
+import { PRECISE_SEAM_TYPES } from '../types';
 import { MAX_PLATES, type PlateMeta } from '../plates';
 import type { CustomGcodeItem } from '../../engine/types';
 import { sanitizeProfile } from '../../layers/profile';
@@ -12,6 +15,7 @@ import { computeBBox } from '../mesh';
 import { sanitizeBrimPoints, sanitizeEmboss } from './toolsFormat';
 import { sanitizeCadNodes } from '../../cad/cubby';
 import type { CadObjectData } from '../types';
+import { sanitizeDesignLink } from '../../design/link';
 
 // tools metadata (text / SVG emboss source, brim ears)
 const optEmboss = (raw: unknown) => { const e = sanitizeEmboss(raw); return e ? { emboss: e } : {}; };
@@ -24,6 +28,68 @@ function optCad(raw: unknown): { cad?: CadObjectData } {
     const [node] = sanitizeCadNodes([(raw as { node?: unknown }).node], 'A CubbyCAD tree');
     return node ? { cad: { node } } : {};
   } catch { return {}; }
+}
+
+/** A Design tab link (src/design/link.ts); never together with a CubbyCAD tree. */
+function optDesign(raw: unknown, cad: boolean) { const d = cad ? undefined : sanitizeDesignLink(raw); return d ? { design: d } : {}; }
+
+// ---- 3MF passthrough (src/project/persistence/passthrough.ts) ----
+
+const MAX_PAIRS = 4096;
+const MAX_TEXT = 1 << 20;
+const pairs = (raw: unknown): Array<[string, string]> | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.slice(0, MAX_PAIRS).filter((e): e is [string, string] => Array.isArray(e) && e.length === 2
+    && typeof e[0] === 'string' && e[0].length > 0 && e[0].length < 256 && typeof e[1] === 'string' && e[1].length < MAX_TEXT);
+  return out.length ? out.map(([k, v]) => [k, v]) : undefined;
+};
+const strings = (raw: unknown): string[] | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.slice(0, 256).filter((e): e is string => typeof e === 'string' && e.startsWith('<') && e.length < MAX_TEXT);
+  return out.length ? out : undefined;
+};
+
+/** Validate an untrusted element passthrough (undefined when empty). Frozen: it is shared, never mutated. */
+export function sanitizeElementPassthrough(raw: unknown): ElementPassthrough | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const out: ElementPassthrough = {};
+  const metadata = pairs(o.metadata), attrs = pairs(o.attrs), elements = strings(o.elements);
+  if (metadata) out.metadata = metadata;
+  if (attrs) out.attrs = attrs;
+  if (elements) out.elements = elements;
+  return Object.keys(out).length ? Object.freeze(out) : undefined;
+}
+
+export function sanitizeVolumePassthrough(raw: unknown): VolumePassthrough | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.meshId !== 'string' || !o.meshId) return undefined;
+  const base = sanitizeElementPassthrough(raw) ?? {};
+  const out: VolumePassthrough = { ...base, meshId: o.meshId.slice(0, 64) };
+  const meshMetadata = pairs(o.meshMetadata);
+  if (meshMetadata) out.meshMetadata = meshMetadata;
+  if (typeof o.subtype === 'string' && /^[\w-]{1,64}$/.test(o.subtype)) out.subtype = o.subtype;
+  return Object.keys(out).length > 1 ? Object.freeze(out) : undefined;
+}
+
+function sanitizeObjectPassthrough(raw: unknown): { passthrough?: ObjectPassthrough } {
+  if (!raw || typeof raw !== 'object') return {};
+  const o = raw as Record<string, unknown>;
+  const out: ObjectPassthrough = {};
+  const object = sanitizeElementPassthrough(o.object), volume = sanitizeVolumePassthrough(o.volume);
+  if (object) out.object = object;
+  if (volume) out.volume = volume;
+  if (typeof o.cutInfo === 'string' && o.cutInfo.startsWith('<') && o.cutInfo.length < MAX_TEXT) out.cutInfo = o.cutInfo;
+  return Object.keys(out).length ? { passthrough: Object.freeze(out) } : {};
+}
+
+/** Validate an untrusted precise seam record. */
+export function sanitizePreciseSeam(raw: unknown): PreciseSeam | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (!(PRECISE_SEAM_TYPES as readonly unknown[]).includes(o.type)) return undefined;
+  return Object.freeze({ type: o.type as PreciseSeam['type'], config: Object.freeze(sanitizeOverrides(o.config)) });
 }
 
 /** Project 3MFs keep the trees apart from project.json (they can hold large baked meshes). */
@@ -59,6 +125,8 @@ export function sanitizePlates(raw: unknown): PlateMeta[] | undefined {
     if (Object.keys(config).length) plate.config = config;
     const gcodes = sanitizeCustomGcodes(o.customGcodes);
     if (gcodes.length) plate.customGcodes = gcodes;
+    const passthrough = sanitizeElementPassthrough(o.passthrough);
+    if (passthrough) plate.passthrough = passthrough;
     return plate;
   });
 }
@@ -93,15 +161,27 @@ function sanitizeLayerRanges(raw: unknown): LayerRange[] {
     const o = r as Record<string, unknown>;
     const min = Number(o.min), max = Number(o.max);
     if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max <= min || max > 100000) continue;
+    const keep = Array.isArray(o.passthrough)
+      ? o.passthrough.slice(0, 4096).filter((e): e is [string, string] => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && typeof e[1] === 'string')
+      : [];
     out.push({
       id: typeof o.id === 'string' && o.id ? o.id.slice(0, 64) : `lr_${Math.random().toString(36).slice(2, 12)}`,
       min, max, overrides: sanitizeOverrides(o.overrides),
+      ...(keep.length ? { passthrough: Object.freeze(keep.map(([k, v]) => [k, v] as const)) } : {}),
     });
   }
   return out;
 }
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+/** Orca's assemble state of an instance (ProjectObject.assemble): 12 matrix numbers + an offset. */
+function optAssemble(raw: unknown): Pick<ProjectObject, 'assemble'> {
+  if (!raw || typeof raw !== 'object') return {};
+  const a = raw as Record<string, unknown>;
+  const finite = (v: unknown, n: number) => Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number' && Number.isFinite(x));
+  if (!finite(a.matrix, 12) || !finite(a.offset, 3)) return {};
+  return { assemble: Object.freeze({ matrix: Object.freeze([...(a.matrix as number[])]), offset: [...(a.offset as number[])] as Vec3 }) };
+}
 const vec = (v: unknown, d: number[]): number[] =>
   Array.isArray(v) && v.length === d.length ? v.map((x, i) => num(x, d[i])) : d.slice();
 
@@ -137,6 +217,8 @@ export function sanitizeObjects(raw: unknown, meshIds: Set<string>): ProjectObje
       for (const pr of (r.parts as Array<Record<string, unknown>>).slice(0, 1024)) {
         if (!pr || typeof pr !== 'object' || !meshIds.has(String(pr.meshId ?? ''))) continue;
         const type = PART_TYPES.includes(pr.type as PartType) ? (pr.type as PartType) : 'part';
+        const seam = type === 'modifier' ? sanitizePreciseSeam(pr.preciseSeam) : undefined;
+        const passthrough = sanitizeVolumePassthrough(pr.passthrough);
         parts.push({
           id: typeof pr.id === 'string' && pr.id ? pr.id.slice(0, 64) : `p_${Math.random().toString(36).slice(2, 12)}`,
           name: typeof pr.name === 'string' && pr.name ? pr.name.slice(0, 200) : 'Part',
@@ -146,6 +228,9 @@ export function sanitizeObjects(raw: unknown, meshIds: Set<string>): ProjectObje
           scale: vec(pr.scale, [1, 1, 1]) as Vec3,
           overrides: sanitizeOverrides(pr.overrides),
           ...optEmboss(pr.emboss),
+          ...(seam ? { preciseSeam: seam } : {}),
+          ...(passthrough ? { passthrough } : {}),
+          ...optDesign(pr.design, false),
         });
       }
     }
@@ -158,6 +243,9 @@ export function sanitizeObjects(raw: unknown, meshIds: Set<string>): ProjectObje
       ...optEmboss(r.emboss),
       ...optBrim(r.brimPoints),
       ...optCad(r.cad),
+      ...optDesign(r.design, !!optCad(r.cad).cad),
+      ...sanitizeObjectPassthrough(r.passthrough),
+      ...optAssemble(r.assemble),
       ...(r.assembly && typeof r.assembly === 'object' ? { assembly: {
         position: vec((r.assembly as Record<string, unknown>).position, [0, 0, 0]) as Vec3,
         rotation: vec((r.assembly as Record<string, unknown>).rotation, [0, 0, 0, 1]) as Quat,

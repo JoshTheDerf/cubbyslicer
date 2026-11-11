@@ -5,8 +5,11 @@
  * (the WASM bridges export with a null thumbnail callback, so the blocks are
  * added here after the slice, at the exact spot the engine would have).
  */
-import type { ConfigValue, EngineId, FlatConfig } from '../../engine/types';
-import { isOrcaFamily } from '../../engine/types';
+import type { EngineId, FlatConfig } from '../../engine/types';
+import { engineCaps } from '../../engine/capabilities';
+import { joinValue } from '../../lib/configValue';
+
+const orcaWriter = (e: EngineId) => engineCaps(e).gcodeWriter === 'orca';
 
 export type ThumbnailFormat = 'PNG' | 'JPG' | 'QOI' | 'BTT_TFT' | 'COLPIC';
 const FORMATS: readonly ThumbnailFormat[] = ['PNG', 'JPG', 'QOI', 'BTT_TFT', 'COLPIC'];
@@ -14,8 +17,6 @@ const FORMATS: readonly ThumbnailFormat[] = ['PNG', 'JPG', 'QOI', 'BTT_TFT', 'CO
 export interface ThumbnailSpec { width: number; height: number; format: ThumbnailFormat }
 
 export interface ThumbnailList { specs: ThumbnailSpec[]; errors: Array<'InvalidVal' | 'OutOfRange' | 'InvalidExt'> }
-
-const scalar = (v: ConfigValue | undefined): string => (v === undefined ? '' : Array.isArray(v) ? v.join(',') : v);
 
 /**
  * make_and_check_thumbnail_list(): "96x96/PNG, 300x300/PNG" → specs. An entry
@@ -47,7 +48,7 @@ export function parseThumbnailList(thumbnails: string, defaultFormat = '', engin
     let format = FORMATS.find((f) => f === ext.trim());
     if (!format) {
       err('InvalidExt');
-      if (!isOrcaFamily(engine)) continue;
+      if (!orcaWriter(engine)) continue;
       format = 'PNG';
     }
     specs.push({ width: Math.round(w), height: Math.round(h), format });
@@ -63,8 +64,8 @@ function leadingNumber(s: string): number {
 
 /** The thumbnails a resolved config asks for (none when `thumbnails` is empty or absent). */
 export function thumbnailSpecs(config: FlatConfig, engine: EngineId): ThumbnailList {
-  const fmt = scalar(config.thumbnails_format).trim();
-  return parseThumbnailList(scalar(config.thumbnails).trim(), fmt, engine);
+  const fmt = joinValue(config.thumbnails_format).trim();
+  return parseThumbnailList(joinValue(config.thumbnails).trim(), fmt, engine);
 }
 
 /**
@@ -72,9 +73,9 @@ export function thumbnailSpecs(config: FlatConfig, engine: EngineId): ThumbnailL
  * 3MF instead); the bridge flags those by printer_model, as does this.
  */
 export function engineWritesGcodeThumbnails(config: FlatConfig, engine: EngineId): boolean {
-  if (isOrcaFamily(engine) && scalar(config.printer_model).startsWith('Bambu Lab')) return false;
+  if (orcaWriter(engine) && joinValue(config.printer_model).startsWith('Bambu Lab')) return false;
   // preFlight binary G-code carries thumbnails in its own blocks (not supported here).
-  if (!isOrcaFamily(engine) && scalar(config.binary_gcode) === '1') return false;
+  if (!orcaWriter(engine) && joinValue(config.binary_gcode) === '1') return false;
   return true;
 }
 
@@ -93,7 +94,7 @@ const MAX_ROW = 78;
 
 /** export_thumbnails_to_file() of the engine's flavour: the text that goes into the G-code. */
 export function formatThumbnailBlocks(list: EncodedThumbnail[], engine: EngineId, toBase64: (b: Uint8Array) => string): string {
-  const orca = isOrcaFamily(engine);
+  const orca = orcaWriter(engine);
   const out: string[] = [];
   let firstColPic = true;
   list.forEach((t, i) => {
@@ -137,7 +138,7 @@ export function thumbnailInsertOffset(gcode: Uint8Array, engine: EngineId): numb
   // The header is at the very top; a few KB covers any file_start_gcode.
   const head = dec.decode(gcode.subarray(0, Math.min(gcode.length, 256 * 1024)));
   const at = (charIdx: number) => enc.encode(head.slice(0, charIdx)).length;
-  if (isOrcaFamily(engine)) {
+  if (orcaWriter(engine)) {
     const end = head.indexOf('; HEADER_BLOCK_END\n');
     if (end >= 0) {
       let i = end + '; HEADER_BLOCK_END\n'.length;

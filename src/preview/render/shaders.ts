@@ -18,13 +18,16 @@ uniform int uBase;
 uniform int uRangeMin;
 uniform int uRangeMax;
 uniform float uFeatVis[32];
+uniform vec4 uSection;     // Orca 2.5 section view: cut where dot(xyz, p) > w (by segment centre, as desktop's markers)
 `;
 
 export const EXTRUSION_VERT = /* glsl */ `
 ${COMMON}
 uniform vec3 uFeatColor[32];
-uniform vec3 uToolColor[16];
+uniform vec4 uToolColor[32]; // rgb + opacity (Orca 2.5 translucent filaments)
 uniform int uScheme;        // 0 feature, 1 tool, 2 numeric
+uniform float uTranslucentOn; // 1: filament opacity applies (Filament scheme only, as in Orca)
+uniform int uPass;          // 0 opaque instances, 1 translucent instances (per material)
 uniform float uVMin;
 uniform float uVMax;
 uniform vec3 uRamp[11];
@@ -44,6 +47,7 @@ out vec4 vQ;            // (along, across, 0, 1) * clip.w  → screen-linear aft
 flat out vec4 vCap;     // start radius px, end radius px, length px, -
 flat out vec2 vT;       // screen-space direction
 flat out vec3 vColor;
+flat out float vAlpha;
 
 // Constant-index form (unrolled) — avoids dynamic uniform-array indexing.
 vec3 ramp(float t) {
@@ -55,18 +59,26 @@ vec3 ramp(float t) {
 
 void hide() {
   gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  vQ = vec4(0.0); vCap = vec4(0.0); vT = vec2(1.0, 0.0); vColor = vec3(0.0);
+  vQ = vec4(0.0); vCap = vec4(0.0); vT = vec2(1.0, 0.0); vColor = vec3(0.0); vAlpha = 0.0;
 }
 
 void main() {
   int idx = uBase + gl_InstanceID;
   int feat = int(aMeta.x + 0.5);
   if (idx < uRangeMin || idx > uRangeMax || uFeatVis[feat] < 0.5 || aWH.x <= 0.0) { hide(); return; }
+  // Each instance is drawn in exactly one pass: translucent filament colours in pass 1.
+  vec4 toolCol = uToolColor[int(aMeta.y + 0.5) & 31];
+  float alpha = uScheme == 1 && uTranslucentOn > 0.5 ? toolCol.a : 1.0;
+  if ((uPass == 1) != (alpha < 0.999)) { hide(); return; }
 
-  vec3 d = aEnd - aStart;
+  // World space: copies (IDEX/IQEX carriages) and the belt designed view draw the same buffers under a model matrix.
+  vec3 wS = (modelMatrix * vec4(aStart, 1.0)).xyz;
+  vec3 wE = (modelMatrix * vec4(aEnd, 1.0)).xyz;
+  vec3 d = wE - wS;
   float len = length(d);
   vec3 dir = len > 1e-6 ? d / len : vec3(1.0, 0.0, 0.0);
-  vec3 mid = 0.5 * (aStart + aEnd);
+  vec3 mid = 0.5 * (wS + wE);
+  if (dot(uSection.xyz, mid) > uSection.w) { hide(); return; }
   vec3 viewDir = isOrthographic
     ? -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2])
     : normalize(mid - cameraPosition);
@@ -83,8 +95,8 @@ void main() {
   float hw = aWH.x * 0.0005, hh = max(aWH.y, 1.0) * 0.0005;
   float R = max(length(vec2(hw * dot(p, hp), hh * dot(p, upp))), 0.005);
 
-  vec4 vs = modelViewMatrix * vec4(aStart, 1.0);
-  vec4 ve = modelViewMatrix * vec4(aEnd, 1.0);
+  vec4 vs = viewMatrix * vec4(wS, 1.0);
+  vec4 ve = viewMatrix * vec4(wE, 1.0);
   float zc = -uNear * 1.001;
   if (vs.z > zc && ve.z > zc) { hide(); return; }
   if (vs.z > zc) vs = mix(vs, ve, (vs.z - zc) / (vs.z - ve.z));
@@ -116,10 +128,12 @@ void main() {
 
   vec3 col;
   if (uScheme == 0) col = uFeatColor[feat];
-  else if (uScheme == 1) col = uToolColor[int(aMeta.y + 0.5) & 15];
+  else if (uScheme == 1) col = toolCol.rgb;
   else col = ramp((aValue - uVMin) / max(uVMax - uVMin, 1e-9));
   if (uDimBelow > 0.0 && idx < uTopStart) col *= 1.0 - uDimBelow;
   vColor = col;
+  // Never fully invisible: Orca keeps a clear filament faintly visible.
+  vAlpha = max(alpha, 0.12);
 }
 `;
 
@@ -129,6 +143,7 @@ in vec4 vQ;
 flat in vec4 vCap;
 flat in vec2 vT;
 flat in vec3 vColor;
+flat in float vAlpha;
 
 void main() {
   vec2 q = vQ.xy / vQ.w;
@@ -152,7 +167,7 @@ void main() {
   vec3 H = normalize(L1 + vec3(0.0, 0.0, 1.0));
   float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.18;
   vec3 col = vColor * (0.28 + 0.52 * diff + 0.28 * N.z) + vec3(spec);
-  outColor = vec4(col, 1.0);
+  outColor = vec4(col, vAlpha);
 }
 `;
 
@@ -169,6 +184,7 @@ void main() {
   int feat = int(aFeat + 0.5);
   if (idx < uRangeMin || idx > uRangeMax || uFeatVis[feat] < 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vColor = vec3(0.0); return; }
   vColor = feat == 19 ? uWipeColor : uTravelColor;
+  if (dot(uSection.xyz, (modelMatrix * vec4(position, 1.0)).xyz) > uSection.w) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -193,6 +209,7 @@ void main() {
   int k = int(aKind + 0.5);
   if (idx < uRangeMin || idx > uRangeMax || uKindVis[k] < 0.5) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vColor = vec3(0.0); return; }
   vColor = uKindColor[k];
+  if (dot(uSection.xyz, (modelMatrix * vec4(position, 1.0)).xyz) > uSection.w) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
   gl_Position.z -= 0.0005 * gl_Position.w; // stay on top of the bead it sits on

@@ -7,11 +7,13 @@
  */
 import { computed, ref, shallowRef, watch } from 'vue';
 import { mobileDialog } from '../ui/mobileDialog';
+import AppDialog from '../ui/AppDialog.vue';
 import { confirmAction } from '../app/shell/uiState';
 import { toast } from '../ui';
 import { isModelFileName } from '../project/import';
 import { SAVE_EXT } from '../project/persistence/orca3mfWriter';
 import { exportPayload, suggestedProjectName } from '../cloud/commands';
+import { gcodeForOutput } from '../plugins/gcode';
 import {
   addFolder, deleteInFolder, ensurePermission, existsInFolder, folderAccessSupported, forget, listFolder, loadSaved, local,
   type FolderEntry, type SavedHandle,
@@ -105,7 +107,14 @@ async function commit(): Promise<void> {
     else {
       const p = exportPayload(exportKind.value);
       if (!p) { toast.info(exportKind.value === 'gcode' ? 'Slice the plate before exporting G-code.' : 'The plate is empty.'); return; }
-      ok = await exportInFolder(dir, target.value, p.blob);
+      let blob = p.blob;
+      if (exportKind.value === 'gcode') {
+        // Post-processing plugins run on a copy for every export (Orca).
+        const out = await gcodeForOutput(new Uint8Array(await blob.arrayBuffer()), 'File', target.value);
+        if (!out) return;
+        blob = new Blob([out as BlobPart], { type: 'text/x-gcode' });
+      }
+      ok = await exportInFolder(dir, target.value, blob);
     }
     if (ok) folderDialog.value = null;
   } finally { busy.value = false; }
@@ -124,8 +133,9 @@ const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-3xl', body: 'flex flex-col gap-3' }">
-    <template #body>
+  <AppDialog v-model:open="open" :title="title" size="3xl" fullscreen body-class="flex flex-col gap-3"
+             :confirm-label="mode !== 'open' && folderAccessSupported ? (mode === 'save' ? 'Save' : 'Export') : undefined"
+             :confirm-loading="busy" :confirm-disabled="!cwd || needsGrant || !validName" @confirm="commit">
       <p v-if="!folderAccessSupported" class="text-sm text-muted">This browser can't open local folders (the File System Access API is available in Chrome, Edge and other Chromium browsers). Use Open / Import instead.</p>
       <template v-else>
         <UTabs v-if="mode === 'open'" v-model="tab" :items="[{ value: 'folders', label: 'Folders' }, { value: 'recent', label: `Recent (${local.recent.length})` }]" :content="false" size="xs" />
@@ -183,14 +193,7 @@ const icon = (e: FolderEntry) => e.kind === 'directory' ? 'i-lucide-folder' : e.
           </div>
         </div>
       </template>
-    </template>
-    <template v-if="mode !== 'open' && folderAccessSupported" #footer>
-      <div class="flex justify-end gap-2 w-full">
-        <UButton color="neutral" variant="ghost" label="Cancel" @click="open = false" />
-        <UButton color="primary" :label="mode === 'save' ? 'Save' : 'Export'" :loading="busy" :disabled="!cwd || needsGrant || !validName" @click="commit" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

@@ -30,8 +30,11 @@ export interface BuiltPage {
   id: string;
   title: string;
   groups: BuiltGroup[];
-  /** Extruder index for per-extruder pages. */
-  extruder?: number;
+  /**
+   * Per-extruder page (Orca 2.5: one "Extruder" page with the extruder switch at the top): its vector rows
+   * show the element of the extruder selected on the switch (presets/variantEdit `variantEdit.extruder`).
+   */
+  perExtruder?: boolean;
 }
 
 export interface BuiltTab {

@@ -10,9 +10,13 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import {
   activePlate, getMesh, objectIssues, objectPlate, objects, overrideCount, plates, removePart, renameObject, renamePart, renamePlate, select,
-  selectedIds, selectedPart, setActivePlate, setPartType, setPrintable, setVisible,
+  selectedIds, selectedPart, setActivePlate, setPartType, setPreciseSeamType, setPrintable, setVisible,
 } from '../../project/store';
-import { PART_TYPE_LABELS, type ObjectPart, type PartType } from '../../project/types';
+import {
+  PART_TYPE_LABELS, PRECISE_SEAM_LABELS, PRECISE_SEAM_TYPES, type ObjectPart, type PartType, type PreciseSeamType,
+} from '../../project/types';
+import { SEAM_COLORS, SEAM_ICONS } from '../../viewport/partStyle';
+import { intToCss } from '../../lib/colour';
 import { plateLabel } from '../../project/plates';
 import { ISSUE_LABELS } from '../../project/validate';
 import type { ProjectObject } from '../../project/types';
@@ -35,8 +39,8 @@ const listOpen = computed(() => !settingsUi.collapsedSections.includes('objects'
 function toggleList() {
   settingsUi.collapsedSections = listOpen.value ? [...settingsUi.collapsedSections, 'objects'] : settingsUi.collapsedSections.filter((s) => s !== 'objects');
 }
-/** CubbyCAD shapes show their shape's icon (a hole: dashed); meshes a box. */
-const objectIcon = (o: ProjectObject) => (o.cad ? (o.cad.node.contribution === 'subtract' ? 'i-lucide-circle-dashed' : nodeIcon(o.cad.node)) : 'i-lucide-box');
+/** CubbyCAD shapes show their shape's icon (a hole: dashed); design bodies (src/design) the Design tab's; meshes a box. */
+const objectIcon = (o: ProjectObject) => (o.cad ? (o.cad.node.contribution === 'subtract' ? 'i-lucide-circle-dashed' : nodeIcon(o.cad.node)) : o.design ? 'i-lucide-pencil-ruler' : 'i-lucide-box');
 const anchor = ref<string | null>(null);
 const listEl = ref<HTMLElement | null>(null);
 const menuOpen = ref(false);
@@ -57,16 +61,37 @@ const PART_ICONS: Record<PartType, string> = {
   support_blocker: 'i-lucide-shield-off', support_enforcer: 'i-lucide-shield-plus',
 };
 
-/** Right-click on a part row: type, rename, settings, delete (Orca's part context menu). */
+/** A part row's icon, label and (for precise seams) colour. */
+const partIcon = (p: ObjectPart) => (p.preciseSeam ? SEAM_ICONS[p.preciseSeam.type] : PART_ICONS[p.type]);
+const partTypeLabel = (p: ObjectPart) => (p.preciseSeam ? PRECISE_SEAM_LABELS[p.preciseSeam.type] : PART_TYPE_LABELS[p.type]);
+const partIconStyle = (p: ObjectPart) => (p.preciseSeam ? { color: intToCss(SEAM_COLORS[p.preciseSeam.type]) } : undefined);
+
+/**
+ * Right-click on a part row: type, rename, settings, delete (Orca's part context menu).
+ * Orca 2.5: "Change type" has one "Precise Seam" entry (an existing seam keeps
+ * its subtype), a seam gets a "Precise Seam Type" submenu with the six
+ * subtypes, and seams have no settings of their own.
+ */
 function partMenu(objectId: string, part: ObjectPart): DropdownMenuItem[][] {
+  const seam = part.preciseSeam;
+  const types = (Object.keys(PART_TYPE_LABELS) as PartType[]).map((t) => ({
+    label: PART_TYPE_LABELS[t], icon: PART_ICONS[t], type: 'checkbox' as const, checked: !seam && part.type === t,
+    onSelect: () => setPartType(objectId, part.id, t),
+  }));
+  const seamEntry = {
+    label: 'Precise Seam', icon: SEAM_ICONS.precise_seam_center, type: 'checkbox' as const, checked: !!seam,
+    onSelect: () => setPreciseSeamType(objectId, part.id, 'precise_seam_center', true),
+  };
+  const seamTypes = PRECISE_SEAM_TYPES.map((t: PreciseSeamType) => ({
+    label: PRECISE_SEAM_LABELS[t], icon: SEAM_ICONS[t], type: 'checkbox' as const, checked: seam?.type === t,
+    onSelect: () => setPreciseSeamType(objectId, part.id, t),
+  }));
   return [
-    [{ label: 'Change type', icon: 'i-lucide-replace', children: [(Object.keys(PART_TYPE_LABELS) as PartType[]).map((t) => ({
-      label: PART_TYPE_LABELS[t], icon: PART_ICONS[t], type: 'checkbox' as const, checked: part.type === t,
-      onSelect: () => setPartType(objectId, part.id, t),
-    }))] },
-    { label: 'Rename', icon: 'i-lucide-text-cursor-input', onSelect: () => { renamingPart.value = part.id; } },
-    { label: part.type === 'modifier' ? 'Modifier settings' : 'Part settings', icon: 'i-lucide-sliders-horizontal',
-      onSelect: () => { pickPart(objectId, part.id); revealObjectSettings(); } }],
+    [{ label: 'Change type', icon: 'i-lucide-replace', children: [[...types, seamEntry]] },
+      ...(seam ? [{ label: 'Precise Seam Type', icon: 'i-lucide-locate', children: [seamTypes] }] : []),
+      { label: 'Rename', icon: 'i-lucide-text-cursor-input', onSelect: () => { renamingPart.value = part.id; } },
+      ...(seam ? [] : [{ label: part.type === 'modifier' ? 'Modifier settings' : 'Part settings', icon: 'i-lucide-sliders-horizontal',
+        onSelect: () => { pickPart(objectId, part.id); revealObjectSettings(); } }])],
     [{ label: 'Delete part', icon: 'i-lucide-trash-2', color: 'error', onSelect: () => removePart(objectId, part.id) }],
   ];
 }
@@ -353,12 +378,13 @@ watch(selectedIds, async (ids) => {
             <UIcon :name="collapsed.has(foldKey(r)) ? 'i-lucide-chevron-right' : 'i-lucide-chevron-down'" class="size-3" />
           </button>
           <span v-else class="ol__twist" aria-hidden="true" />
-          <UIcon :name="r.kind in LAYER_ROW_ICONS ? LAYER_ROW_ICONS[r.kind as LayerRowKind] : r.kind === 'plate' ? (r.plate! < 0 ? 'i-lucide-square-dashed' : 'i-lucide-grid-2x2') : r.kind === 'group' ? 'i-lucide-boxes' : r.kind === 'part' ? PART_ICONS[r.part!.type] : objectIcon(r.obj)"
-                 class="ol__icon size-3.5" :class="r.kind === 'part' ? `ol__icon--${r.part!.type}` : ''" />
+          <UIcon :name="r.kind in LAYER_ROW_ICONS ? LAYER_ROW_ICONS[r.kind as LayerRowKind] : r.kind === 'plate' ? (r.plate! < 0 ? 'i-lucide-square-dashed' : 'i-lucide-grid-2x2') : r.kind === 'group' ? 'i-lucide-boxes' : r.kind === 'part' ? partIcon(r.part!) : objectIcon(r.obj)"
+                 class="ol__icon size-3.5" :class="r.kind === 'part' && !r.part!.preciseSeam ? `ol__icon--${r.part!.type}` : ''"
+                 :style="r.kind === 'part' ? partIconStyle(r.part!) : undefined" />
           <template v-if="r.kind === 'part'">
             <UInput v-if="renamingPart === r.part!.id" v-model="partDraft" class="ol__rename flex-1 min-w-0" size="xs" :maxlength="200"
                     @click.stop @keydown.enter.prevent="commitPartRename(r.obj.id)" @keydown.esc.prevent.stop="renamingPart = null" @blur="commitPartRename(r.obj.id)" />
-            <span v-else class="ol__name" :title="`${PART_TYPE_LABELS[r.part!.type]}: ${r.part!.name}`" @dblclick.stop="renamingPart = r.part!.id">{{ r.part!.name }}</span>
+            <span v-else class="ol__name" :title="`${partTypeLabel(r.part!)}: ${r.part!.name}`" @dblclick.stop="renamingPart = r.part!.id">{{ r.part!.name }}</span>
             <UTooltip v-if="Object.keys(r.part!.overrides).length" :text="`${Object.keys(r.part!.overrides).length} setting${Object.keys(r.part!.overrides).length > 1 ? 's' : ''}`">
               <UButton icon="i-lucide-sliders-horizontal" :label="String(Object.keys(r.part!.overrides).length)" color="warning" variant="soft" size="xs"
                        class="h-5 px-1.5 rounded-full" aria-label="Part settings" @click.stop="pickPart(r.obj.id, r.part!.id); revealObjectSettings()" />

@@ -5,7 +5,9 @@ import type { CommandPaletteGroup, CommandPaletteItem } from '@nuxt/ui';
 import { currentPresets } from '../presets/store';
 import { buildSearchIndex, searchSettings } from './search';
 import { jumpToSetting, settingsLayout } from './useLayout';
-import { panelRequest } from './uiState';
+import { rowStates } from './useRules';
+import { panelRequest, settingsUi } from './uiState';
+import type { SettingsTabId } from './layout/types';
 
 const open = defineModel<boolean>('open', { default: false });
 const term = ref('');
@@ -15,7 +17,8 @@ const TAB_LABEL = { process: 'Process', filament: 'Filament', printer: 'Printer'
 const TAB_ICON = { process: 'i-lucide-layers', filament: 'i-lucide-disc', printer: 'i-lucide-printer' } as const;
 const index = computed(() => {
   const s = currentPresets.value.schema.value;
-  return s && settingsLayout.value && open.value ? buildSearchIndex(s, settingsLayout.value) : [];
+  const stateOf = (k: string, tab: SettingsTabId) => rowStates(tab, tab === 'filament' ? settingsUi.filamentSlot : 0).get(k);
+  return s && settingsLayout.value && open.value ? buildSearchIndex(s, settingsLayout.value, stateOf) : [];
 });
 
 interface Hit extends CommandPaletteItem { key: string }
@@ -25,7 +28,8 @@ const groups = computed<CommandPaletteGroup<Hit>[]>(() => {
     id: 'settings', label: term.value.trim() ? `${hits.length === 60 ? '60+' : hits.length} matching settings` : undefined, ignoreFilter: true,
     items: hits.map((h) => ({
       key: h.key, label: h.label, icon: TAB_ICON[h.tab],
-      suffix: `${TAB_LABEL[h.tab]} › ${h.pageTitle}${h.groupTitle ? ` › ${h.groupTitle}` : ''}`,
+      suffix: `${TAB_LABEL[h.tab]} › ${h.pageTitle}${h.groupTitle ? ` › ${h.groupTitle}` : ''}${h.hidden !== undefined ? ` · Hidden${h.hidden ? `: ${h.hidden}` : ''}` : ''}`,
+      class: h.hidden !== undefined ? 'opacity-60' : undefined,
     })),
   }];
 });

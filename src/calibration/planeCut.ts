@@ -10,6 +10,7 @@
  * (three.js ShapeUtils).
  */
 import { ShapeUtils, Vector2 } from 'three';
+import { compactMesh } from '../tools/geom/meshUtil';
 
 export interface CutMesh { positions: Float32Array; indices: Uint32Array }
 
@@ -94,7 +95,7 @@ export function cutHorizontal(mesh: CutMesh, z: number, keep: 'lower' | 'upper')
     }
   }
 
-  return compact(new Float32Array(outPos), outIdx);
+  return compactMesh(new Float32Array(outPos), outIdx, { dropDegenerate: true });
 }
 
 /** Chain undirected segments into closed loops of point ids. Open chains are dropped. */
@@ -138,29 +139,4 @@ function pointInPolygon(pt: Pt, poly: Pt[]): boolean {
     if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
-}
-
-/** Drop unreferenced vertices and degenerate triangles. */
-function compact(pos: Float32Array, idx: number[]): CutMesh {
-  const used = new Int32Array(pos.length / 3).fill(-1);
-  const out: number[] = [];
-  const indices: number[] = [];
-  for (let t = 0; t < idx.length; t += 3) {
-    const a = idx[t], b = idx[t + 1], c = idx[t + 2];
-    if (a === b || b === c || a === c) continue;
-    for (const v of [a, b, c]) {
-      if (used[v] < 0) { used[v] = out.length / 3; out.push(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]); }
-      indices.push(used[v]);
-    }
-  }
-  return { positions: new Float32Array(out), indices: new Uint32Array(indices) };
-}
-
-/** Axis-aligned bounds of a mesh. */
-export function meshBounds(positions: Float32Array): { min: [number, number, number]; max: [number, number, number] } {
-  const min: [number, number, number] = [Infinity, Infinity, Infinity], max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < positions.length; i += 3) {
-    for (let k = 0; k < 3; k++) { const v = positions[i + k]; if (v < min[k]) min[k] = v; if (v > max[k]) max[k] = v; }
-  }
-  return { min, max };
 }

@@ -17,8 +17,9 @@ export const activeEngine = ref<EngineId>('orca');
  */
 export const resolvedConfig = shallowRef<FlatConfig>({});
 
-/** Which centre view is showing. */
-export const activeView = ref<'prepare' | 'preview'>('prepare');
+/** Which centre view is showing (Design: the experimental parametric CAD tab, src/design). */
+export type CenterView = 'design' | 'prepare' | 'preview';
+export const activeView = ref<CenterView>('prepare');
 
 /** Latest slice output, written by the slice orchestrator (src/app/slice.ts). */
 export const lastSlice = shallowRef<SliceResult | null>(null);

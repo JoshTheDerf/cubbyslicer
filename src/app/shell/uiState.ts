@@ -1,5 +1,7 @@
 /** Shell-level UI state (not persisted with the project). */
 import { markRaw, reactive, ref, watch } from 'vue';
+import { dialogRequest } from '../../ui/dialogRequest';
+import { readJson, writeJson } from '../../lib/storage';
 import type { ObjectClipboard } from '../../project/store';
 
 const LS_KEY = 'cubby-slicer:layout';
@@ -13,19 +15,16 @@ interface Layout { sidebarWidth: number; sidebarCollapsed: boolean }
 
 function loadLayout(): Layout {
   const d: Layout = { sidebarWidth: SIDEBAR_DEFAULT, sidebarCollapsed: false };
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) {
-      const p = JSON.parse(raw) as Partial<Layout>;
-      if (typeof p.sidebarWidth === 'number') d.sidebarWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, p.sidebarWidth));
-      d.sidebarCollapsed = !!p.sidebarCollapsed;
-    }
-  } catch { /* defaults */ }
+  const p = readJson<Partial<Layout>>(LS_KEY);
+  if (p && typeof p === 'object') {
+    if (typeof p.sidebarWidth === 'number') d.sidebarWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, p.sidebarWidth));
+    d.sidebarCollapsed = !!p.sidebarCollapsed;
+  }
   return d;
 }
 
 export const layout = reactive(loadLayout());
-watch(layout, (l) => { try { localStorage.setItem(LS_KEY, JSON.stringify(l)); } catch { /* ignore */ } });
+watch(layout, (l) => { writeJson(LS_KEY, l); });
 
 /** Below 1100px the sidebar becomes a slide-over drawer. */
 export const compact = ref(false);
@@ -37,11 +36,8 @@ export const phone = ref(false);
 export const touch = ref(typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches);
 export const drawerOpen = ref(false);
 
+/** Shell state that isn't a dialog (dialogs: src/dialogs/state.ts). */
 export const ui = reactive({
-  shortcutsOpen: false,
-  paletteOpen: false,
-  aboutOpen: false,
-  instancesOpen: false,
   renamingId: null as string | null,
   /** Bumped when the per-object settings should be revealed (sidebar opens, Objects mode). */
   revealObjectSettings: 0,
@@ -53,6 +49,12 @@ export const ui = reactive({
   /** In-app object clipboard (Ctrl+C / Ctrl+V). Raw: it holds mesh typed arrays. */
   clipboard: null as ObjectClipboard | null,
 });
+
+/** Show `label` in the busy pill while `fn` runs. */
+export async function withBusy<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  ui.busy = label;
+  try { return await fn(); } finally { ui.busy = null; }
+}
 
 export function setClipboard(c: ObjectClipboard | null): void {
   ui.clipboard = c ? markRaw(c) : null;
@@ -67,28 +69,37 @@ export function toggleSidebar(open = !sidebarOpen()): void {
   else layout.sidebarCollapsed = !open;
 }
 
-export interface ConfirmRequest {
+export interface ConfirmOptions {
   title: string;
   message: string;
   confirmLabel: string;
   danger?: boolean;
   /** Optional second choice next to the confirm button. */
   altLabel?: string;
-  resolve: (answer: boolean | 'alt') => void;
+  /** Cancel button label ('' = none; default "Cancel"). */
+  cancelLabel?: string;
+  /** Optional checkbox under the message (its state comes back with the answer). */
+  checkLabel?: string;
+  /** false: only the buttons answer (no Esc / outside click). */
+  dismissible?: boolean;
+  /** data-testid prefix for the buttons (`<id>-ok`, `<id>-cancel`, `<id>-check`). */
+  testId?: string;
 }
-export const confirmRequest = ref<ConfirmRequest | null>(null);
+export interface ConfirmAnswer { choice: 'confirm' | 'alt' | null; checked: boolean }
 
-export function confirmAction(opts: Omit<ConfirmRequest, 'resolve' | 'altLabel'>): Promise<boolean> {
-  return new Promise((resolve) => {
-    confirmRequest.value?.resolve(false);
-    confirmRequest.value = { ...opts, resolve: (a) => resolve(a === true) };
-  });
+/** The one confirm dialog (ShellDialogs.vue), also used by the AI agent bridge. */
+export const confirmDialog = dialogRequest<ConfirmOptions, ConfirmAnswer>({ choice: null, checked: false });
+/** The pending confirmation (the bridge reports it to the agent; e2e scripts answer it). */
+export const confirmRequest = confirmDialog.current;
+
+/** Ask for a full answer (choice + checkbox). */
+export function askConfirm(opts: ConfirmOptions): Promise<ConfirmAnswer> { return confirmDialog.ask(opts); }
+
+export async function confirmAction(opts: Omit<ConfirmOptions, 'altLabel' | 'checkLabel'>): Promise<boolean> {
+  return (await confirmDialog.ask(opts)).choice === 'confirm';
 }
 
 /** Confirm with two choices: 'confirm', 'alt', or null (cancelled). */
-export function chooseAction(opts: Omit<ConfirmRequest, 'resolve'> & { altLabel: string }): Promise<'confirm' | 'alt' | null> {
-  return new Promise((resolve) => {
-    confirmRequest.value?.resolve(false);
-    confirmRequest.value = { ...opts, resolve: (a) => resolve(a === true ? 'confirm' : a === 'alt' ? 'alt' : null) };
-  });
+export async function chooseAction(opts: Omit<ConfirmOptions, 'checkLabel'> & { altLabel: string }): Promise<'confirm' | 'alt' | null> {
+  return (await confirmDialog.ask(opts)).choice;
 }

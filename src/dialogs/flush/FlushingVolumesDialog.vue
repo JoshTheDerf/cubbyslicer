@@ -2,14 +2,19 @@
 /**
  * Orca WipingDialog: flushing volume (mm³) for every filament pair (row =
  * from, column = to), the multiplier, Re-calculate from the filament colours,
- * one matrix per extruder on multi-nozzle printers.
+ * one matrix per extruder on multi-nozzle printers. Orca 2.5 purge mode
+ * (PurgeModeDialog: Standard / Fast with `flush_multiplier_fast`, or Prime
+ * saving on printers with a nozzle rack) is chosen here too.
  */
 import { computed, ref, watch } from 'vue';
 import { mobileDialog } from '../../ui/mobileDialog';
+import AppDialog from '../../ui/AppDialog.vue';
+import { contrastText as textOn } from '../../lib/colour';
 import { preferences } from '../../app/preferences';
 import { MAX_FLUSH_VOLUME } from './flushCalc';
 import { autoMatrixFor, readFlush, writeFlush, type FlushState } from './flushStore';
 import { dialogs } from '../state';
+import { engineCaps } from '../../engine/types';
 
 const state = ref<FlushState | null>(null);
 const tab = ref('0');
@@ -26,6 +31,7 @@ const multiplier = computed({
 });
 const outOfRange = computed(() => matrix.value.some((r, i) => r.some((v, j) => i !== j && (v < 0 || v > 700))));
 const badMult = computed(() => multiplier.value < 0 || multiplier.value > 3);
+const hasMultiplier = computed(() => !!state.value && !!engineCaps(state.value.engine).flush.multiplier);
 
 function setCell(i: number, j: number, v: number | null): void {
   if (!state.value || v === null || !Number.isFinite(v)) return;
@@ -40,7 +46,7 @@ function apply(): void {
   const s = state.value;
   // Orca clamps each entry to max_flush_volume / multiplier.
   const m = s.matrices.map((mx, z) => mx.map((r) => r.map((v) => Math.max(0, Math.min(v, MAX_FLUSH_VOLUME / Math.max(0.01, s.multipliers[z] || 1))))));
-  writeFlush({ matrices: m, multipliers: s.multipliers });
+  writeFlush({ matrices: m, multipliers: s.multipliers, purgeMode: s.purgeMode, purgeModes: s.purgeModes, fastMultipliers: s.fastMultipliers });
   dialogs.flushing = false;
 }
 /** Phones with more than 4 filaments: one "from" row at a time instead of the whole matrix. */
@@ -49,18 +55,27 @@ const fromIdx = ref(0);
 watch(() => matrix.value.length, (n) => { if (fromIdx.value >= n) fromIdx.value = 0; });
 const fromItems = computed(() => matrix.value.map((_, i) => ({ value: i, label: `From filament ${i + 1}` })));
 
-const textOn = (hex: string) => {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
-  return r * 0.299 + g * 0.587 + b * 0.114 > 150 ? '#111' : '#fff';
-};
+const PURGE_TEXT = {
+  Default: { label: 'Standard', text: 'Full purging with speed and temperature transition for the best print quality.' },
+  Fast: { label: 'Fast', text: 'Optimised purge temperature, multiplier and stronger extrusion for faster purging. May cause slight colour mixing in extreme cases.' },
+  Saving: { label: 'Prime saving', text: 'Reduces prime waste and prints faster. May cause slight colour mixing or small surface defects.' },
+} as const;
+const fastMultiplier = computed({
+  get: () => state.value?.fastMultipliers[nozzle.value] ?? 1.2,
+  set: (v: number) => { if (state.value) state.value.fastMultipliers[nozzle.value] = v; },
+});
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.flushing" title="Flushing volumes for filament change" :fullscreen="mobileDialog"
-          :ui="{ content: 'sm:max-w-3xl', body: 'flex flex-col gap-3' }">
-    <template #body>
+  <AppDialog v-model:open="dialogs.flushing" title="Flushing volumes for filament change" size="3xl" fullscreen body-class="flex flex-col gap-3"
+             confirm-label="OK" :confirm-disabled="badMult" test-id="flushing" @confirm="apply">
       <template v-if="state">
+        <div v-if="state.purgeModes.length > 1" class="fv__modes" role="radiogroup" aria-label="Purge mode">
+          <button v-for="m in state.purgeModes" :key="m" type="button" role="radio" :aria-checked="state.purgeMode === m"
+                  class="fv__mode" :class="{ on: state.purgeMode === m }" @click="state.purgeMode = m">
+            <strong>{{ PURGE_TEXT[m].label }}</strong><span>{{ PURGE_TEXT[m].text }}</span>
+          </button>
+        </div>
         <UTabs v-if="tabs.length" v-model="tab" :items="tabs" :content="false" size="xs" />
         <p class="text-sm text-muted">Flushing volume (mm³) for each filament pair. Suggestion: flushing volume in range [0, 700].</p>
         <div v-if="rowPicker && state" class="fv__rows">
@@ -103,25 +118,21 @@ const textOn = (hex: string) => {
           </table>
         </div>
         <div class="fv__row">
-          <UFormField v-if="state.engine !== 'preflight'" label="Multiplier" :error="badMult ? 'The multiplier should be in range [0.00, 3.00].' : undefined" orientation="horizontal">
+          <UFormField v-if="hasMultiplier" label="Multiplier" :error="badMult ? 'The multiplier should be in range [0.00, 3.00].' : undefined" orientation="horizontal">
             <UInputNumber :step-snapping="false" v-model="multiplier" :min="0" :max="3" :step="0.05" :format-options="{ maximumFractionDigits: 2 }" size="sm" class="w-28" />
+          </UFormField>
+          <UFormField v-if="hasMultiplier && state.purgeMode === 'Fast'" label="Fast mode multiplier" orientation="horizontal">
+            <UInputNumber :step-snapping="false" v-model="fastMultiplier" :min="0" :max="3" :step="0.05" :format-options="{ maximumFractionDigits: 2 }" size="sm" class="w-28" />
           </UFormField>
           <span class="flex-1" />
           <UButton icon="i-lucide-refresh-cw" label="Re-calculate" variant="outline" size="sm" @click="recalc" />
         </div>
-        <p v-if="state.engine !== 'preflight'" class="text-xs text-dimmed">Actual flushing volume = matrix value × multiplier.
+        <p v-if="hasMultiplier" class="text-xs text-dimmed">Actual flushing volume = matrix value × multiplier.
           <template v-if="preferences.autoFlush !== 'off'">Volumes are re-calculated whenever filament colours{{ preferences.autoFlush === 'all' ? ' or filaments' : '' }} change (Preferences → Auto flush).</template>
         </p>
         <p v-if="outOfRange" class="text-xs text-warning">Some volumes are outside the suggested range.</p>
       </template>
-    </template>
-    <template #footer>
-      <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="dialogs.flushing = false" />
-        <UButton color="primary" label="OK" :disabled="badMult" @click="apply" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -145,5 +156,10 @@ const textOn = (hex: string) => {
 .fv__rowgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px 12px; }
 .fv__to { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fv__chip--sm { min-width: 20px; height: 18px; font-size: 11px; }
+.fv__modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fv__mode { display: flex; flex-direction: column; gap: 4px; padding: 10px; text-align: left; cursor: pointer; font-size: 12px; color: var(--ui-text-toned);
+  border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-bg-elevated); }
+.fv__mode strong { color: var(--ui-text-highlighted); font-size: 13px; }
+.fv__mode.on { border-color: var(--ui-primary); box-shadow: 0 0 0 1px var(--ui-primary) inset; }
 .fv__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 </style>

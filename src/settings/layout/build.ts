@@ -6,12 +6,18 @@
  */
 import type { ConfigSchema, EngineId } from '../../engine/types';
 import { tabOfScope } from '../../presets/resolve';
-import { orcaLayout } from './orca';
+import { ORCA_UNPLACED, orcaLayout } from './orca';
 import { preflightLayout } from './preflight';
 import type { BuiltGroup, BuiltLayout, BuiltPage, BuiltTab, EngineLayoutSource, SettingsTabId } from './types';
 
-// FullSpectrum is OrcaSlicer-based: Orca's layout; its extra (mixed filament) keys land in the auto groups.
-export const LAYOUTS: Record<EngineId, EngineLayoutSource> = { orca: orcaLayout, preflight: preflightLayout, fullspectrum: orcaLayout };
+export const LAYOUTS: Record<EngineId, EngineLayoutSource> = { orca: orcaLayout, preflight: preflightLayout };
+
+/**
+ * Per engine: preset keys its Tab.cpp doesn't place, `more` (auto "More" page) or `hidden` (never a row).
+ * Keys in neither the layout nor this list still land in "More" at runtime (a newer engine schema),
+ * but the layout test fails for them.
+ */
+export const UNPLACED: Record<EngineId, Readonly<Record<string, 'more' | 'hidden'>>> = { orca: ORCA_UNPLACED, preflight: {} };
 
 /** Keys that are preset bookkeeping, never shown as editable settings. */
 export const HIDDEN_KEYS: ReadonlySet<string> = new Set([
@@ -26,33 +32,29 @@ const TITLES: Record<SettingsTabId, string> = { process: 'Process', filament: 'F
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'x';
 
 export function tabIdOfScope(scope: string | undefined): SettingsTabId | null {
-  const k = tabOfScope(scope as never);
+  const k = tabOfScope(scope);
   return k === 'printer' ? 'printer' : k === 'process' ? 'process' : k === 'filament' ? 'filament' : null;
 }
 
-export function buildLayout(schema: ConfigSchema, engine: EngineId, extruders = 1): BuiltLayout {
+export function buildLayout(schema: ConfigSchema, engine: EngineId): BuiltLayout {
   const src = LAYOUTS[engine];
   const out = {} as BuiltLayout;
   for (const tab of ['process', 'filament', 'printer'] as SettingsTabId[]) {
-    const belongs = (k: string) => !!schema.options[k] && tabIdOfScope(schema.options[k].scope) === tab && !HIDDEN_KEYS.has(k);
+    const unplaced = UNPLACED[engine] ?? {};
+    const belongs = (k: string) => !!schema.options[k] && tabIdOfScope(schema.options[k].scope) === tab && !HIDDEN_KEYS.has(k) && unplaced[k] !== 'hidden';
     const used = new Set<string>();
     const pages: BuiltPage[] = [];
     for (const p of src[SOURCE_OF[tab]]) {
-      const groups = (idx?: number): BuiltGroup[] => p.groups.map((g, gi) => ({
-        id: `${tab}:${slug(p.title)}${idx !== undefined ? `-${idx}` : ''}:${gi}-${slug(g.title)}`,
+      const groups = (): BuiltGroup[] => p.groups.map((g, gi) => ({
+        id: `${tab}:${slug(p.title)}:${gi}-${slug(g.title)}`,
         title: g.title,
         keys: g.keys.filter(belongs),
       })).filter((g) => g.keys.length);
       const base = groups();
       if (!base.length) continue;
       for (const g of base) for (const k of g.keys) used.add(k);
-      if (p.extruder && tab === 'printer') {
-        for (let i = 0; i < Math.max(1, extruders); i++) {
-          pages.push({ id: `${tab}:${slug(p.title)}-${i}`, title: extruders > 1 || p.title === 'Extruder' ? `Extruder ${i + 1}` : p.title, groups: groups(i), extruder: i });
-        }
-      } else {
-        pages.push({ id: `${tab}:${slug(p.title)}`, title: p.title, groups: base });
-      }
+      // One page per Tab.cpp page; a per-extruder page edits the extruder chosen on its switch (Orca 2.5).
+      pages.push({ id: `${tab}:${slug(p.title)}`, title: p.title, groups: base, ...(p.extruder && tab === 'printer' ? { perExtruder: true } : {}) });
     }
     // Everything else of this scope → "More", grouped by category (Orca already has an "Others" page).
     const rest = Object.keys(schema.options).filter((k) => belongs(k) && !used.has(k));

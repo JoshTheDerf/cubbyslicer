@@ -23,13 +23,16 @@ import { bindingMatchesKey, isTextInputFocused } from '@cubby/shared/actions';
 export { isTextInputFocused };
 
 let activeScope: ActionScope = 'prepare';
+let refine: ((s: ActionScope) => ActionScope) | null = null;
 export function setActionScope(s: ActionScope): void { activeScope = s; }
-export function getActionScope(): ActionScope { return activeScope; }
+export function getActionScope(): ActionScope { return refine ? refine(activeScope) : activeScope; }
+/** A mode inside a view narrows its scope (the Design tab's sketcher: `design` → `sketch`). */
+export function setActionScopeRefiner(fn: ((s: ActionScope) => ActionScope) | null): void { refine = fn; }
 
 const TYPING_SAFE = new Set(['s', 'o', 'i', 'k', 'e', 'g', 'p']);
 
 function scopeAllows(s: ActionScope | undefined): boolean {
-  return !s || s === 'global' || s === activeScope;
+  return !s || s === 'global' || s === getActionScope();
 }
 
 export function actionMatchesKey(a: Action, e: KeyboardEvent): boolean { return bindingMatchesKey(a.binding, e); }

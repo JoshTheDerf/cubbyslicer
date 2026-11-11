@@ -66,6 +66,49 @@ export function escapeXml(s: string): string {
   return s.replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]!));
 }
 
+/**
+ * Escape an attribute value, including tab / CR / LF as character references:
+ * XML readers normalise literal whitespace in attributes, which would change
+ * the value (Orca's xml_escape_double_quotes_attribute_value).
+ */
+export function escapeAttr(s: string): string {
+  return escapeXml(s).replace(/[\t\n\r]/g, (c) => `&#x${c.charCodeAt(0).toString(16).toUpperCase()};`);
+}
+
+/** Re-serialise a scanned tag (attribute text kept exactly as in the file, so still escaped). */
+export function tagXml(t: XmlTag): string {
+  return t.close ? `</${t.qname}>` : `<${t.qname}${t.attrs}${t.selfClosing ? '/' : ''}>`;
+}
+
+/** Attribute pairs of a scanned tag in file order (values decoded). */
+export function attrList(raw: string): Array<[string, string]> {
+  return Object.entries(parseAttrs(raw));
+}
+
+/**
+ * `<metadata name="…">text</metadata>` items of a 3MF model file, in order
+ * (they come before `<resources>`, so only the head of the file is decoded).
+ */
+export function readModelMetadata(bytes: Uint8Array): Array<[string, string]> {
+  const dec = new TextDecoder();
+  let head = '';
+  for (let off = 0; off < bytes.length && off < 64 * CHUNK_HEAD; off += CHUNK_HEAD) {
+    const end = Math.min(bytes.length, off + CHUNK_HEAD);
+    head += dec.decode(bytes.subarray(off, end), { stream: end < bytes.length });
+    const r = head.search(/<(\w+:)?resources[\s>/]/);
+    if (r >= 0) { head = head.slice(0, r); break; }
+  }
+  const out: Array<[string, string]> = [];
+  const re = /<(?:\w+:)?metadata\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?metadata\s*>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(head))) {
+    const name = parseAttrs(m[1]).name;
+    if (name) out.push([name, decodeEntities(m[2] ?? '')]);
+  }
+  return out;
+}
+const CHUNK_HEAD = 256 * 1024;
+
 const CHUNK = 4 * 1024 * 1024;
 
 /** Scan all tags in `bytes`, calling `onTag` in document order. */

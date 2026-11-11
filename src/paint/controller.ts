@@ -12,19 +12,17 @@ import { watch } from 'vue';
 import {
   BufferAttribute, BufferGeometry, DoubleSide, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, RingGeometry, Vector3,
 } from 'three';
-import { engineTool } from '../engine/client';
-import type { EngineId, PaintLayer, PaintMap, ToolMesh } from '../engine/types';
-import { currentPresets } from '../presets/store';
+import { engineCaps, type PaintLayer, type ToolMesh } from '../engine/types';
 import {
   getMesh, getMeshPaint, getObject, meshPaint, objects, selectedIds, setMeshPaint, setObjectOverride,
 } from '../project/store';
 import { activeEngine, resolvedConfig } from '../app/state';
-import { filamentColourOf, mixedFilaments } from '../mixed/store';
+import { filamentColourOf, filamentColours } from '../mixed/store';
 import { closeTool, toolScene } from '../tools/state';
 import type { ToolHandler, ToolPointerEvent } from '../viewport/scene';
 import { toast } from '../ui';
-import { maxStateFor, paintUi, stateFor } from './state';
-import { isOrcaFamily } from '../engine/types';
+import { applyToSession, closeSession, decodePaint, openSession, sessionPaint } from './session';
+import { paintUi, stateFor } from './state';
 
 /** Orca TriangleSelectorGUI colours: enforcers blue, blockers red. */
 const ENFORCER = 0x7878ff, BLOCKER = 0xff7070, FUZZY = 0xffa040;
@@ -34,18 +32,13 @@ let session: Session | null = null;
 /** One brush request in flight; drags coalesce into the next one. */
 let inFlight: Promise<void> | null = null;
 let pending: (() => Promise<void>) | null = null;
-let stroke: { button: number; shift: boolean; prev: [number, number, number] | null; changed: boolean } | null = null;
+let stroke: { button: number; shift: boolean; prev: number[] | null; changed: boolean } | null = null;
 let cursor: Mesh | null = null;
 
 function scene() { return toolScene.value; }
 
-/**
- * Painting runs in an Orca-family engine's TriangleSelector: Full Spectrum's
- * own when it is active (its states go to 255, for mixed filaments), else Orca.
- */
-export function paintEngine(): EngineId { return activeEngine.value === 'fullspectrum' ? 'fullspectrum' : 'orca'; }
-function paintTool<T>(op: string, args: unknown, meshes: ToolMesh[] = []) { return engineTool<T>(op, args, meshes, paintEngine()); }
-// A session lives in one engine: switching engines closes it.
+// Painting always runs in Orca's TriangleSelector; switching engines still closes the tool
+// (the support key and colours change with the engine).
 watch(activeEngine, () => { if (paintUi.layer) void closePaint(); });
 
 function toolMesh(meshId: string): ToolMesh | null {
@@ -55,7 +48,7 @@ function toolMesh(meshId: string): ToolMesh | null {
 
 function stateColor(layer: PaintLayer, state: number): number {
   if (layer === 'color') {
-    const c = filamentColourOf(state); // physical or Full Spectrum mixed filament
+    const c = filamentColourOf(state); // physical or mixed filament slot
     return parseInt((c || '#888888').replace('#', '').slice(0, 6), 16) || 0x888888;
   }
   if (layer === 'fuzzy') return FUZZY;
@@ -88,14 +81,14 @@ function showOverlay(objectId: string, layer: PaintLayer, states: number[], mesh
 
 // ---- engine calls ------------------------------------------------------------------
 
-async function apply(args: Record<string, unknown>): Promise<boolean> {
+async function apply(args: BrushArgs): Promise<boolean> {
   if (!session) return false;
   const s = session;
-  const r = await paintTool<{ states: number[] }>('paint_apply', { handle: s.handle, ...args });
+  const r = await applyToSession(s.handle, args);
   if (session !== s) return false;
-  showOverlay(s.objectId, s.layer, r.result.states, r.meshes);
+  showOverlay(s.objectId, s.layer, r.states, r.meshes);
   // Other instances of the mesh show the same paint.
-  for (const o of objects.value) if (o.meshId === s.meshId && o.id !== s.objectId) showOverlay(o.id, s.layer, r.result.states, r.meshes);
+  for (const o of objects.value) if (o.meshId === s.meshId && o.id !== s.objectId) showOverlay(o.id, s.layer, r.states, r.meshes);
   return true;
 }
 
@@ -112,16 +105,18 @@ function schedule(job: () => Promise<void>): void {
 async function commitStroke(): Promise<void> {
   if (!session) return;
   const s = session;
-  const r = await paintTool<{ paint: PaintMap }>('paint_get', { handle: s.handle });
+  const paint = await sessionPaint(s.handle);
   if (session !== s) return;
   const labels: Record<PaintLayer, string> = { support: 'Paint supports', seam: 'Paint seam', color: 'Paint color', fuzzy: 'Paint fuzzy skin' };
-  setMeshPaint(s.meshId, s.layer, r.result.paint, labels[s.layer]);
+  setMeshPaint(s.meshId, s.layer, paint, labels[s.layer]);
   lastPaintRef.set(`${s.meshId}|${s.layer}`, getMeshPaint(s.meshId)[s.layer]);
 }
 
 // ---- pointer handling ---------------------------------------------------------------
 
-function brushArgs(e: ToolPointerEvent, state: number): Record<string, unknown> | null {
+type BrushArgs = Parameters<typeof applyToSession>[1];
+
+function brushArgs(e: ToolPointerEvent, state: number): (BrushArgs & { point: number[] }) | null {
   const s = session, sc = scene();
   if (!s || !sc || !e.hit || e.hit.objectId !== s.objectId || e.hit.partId) return null;
   const mw = sc.objectMatrixWorld(s.objectId);
@@ -130,13 +125,12 @@ function brushArgs(e: ToolPointerEvent, state: number): Record<string, unknown> 
   const local = e.hit.point.clone().applyMatrix4(inv);
   const cam = sc.camera.position.clone().applyMatrix4(inv);
   const tool = paintUi.tool;
-  const args: Record<string, unknown> = {
+  return {
     kind: tool, facet: e.hit.faceIndex, point: local.toArray(), camera: cam.toArray(), state,
     radius: tool === 'height' ? paintUi.height : paintUi.radius, trafo: mw.elements.slice(),
     angle: paintUi.angle, zWorld: e.hit.point.z,
     overhang: s.layer === 'support' && paintUi.onOverhangsOnly ? paintUi.overhang : 0,
   };
-  return args;
 }
 
 function placeCursor(e: ToolPointerEvent): void {
@@ -170,7 +164,7 @@ const handler: ToolHandler = {
       const state = stateFor(session.layer, e.button ?? 0, e.shift);
       const args = brushArgs(e, state);
       if (!args) return false; // not on the painted object: let the camera orbit
-      stroke = { button: e.button ?? 0, shift: e.shift, prev: args.point as [number, number, number], changed: true };
+      stroke = { button: e.button ?? 0, shift: e.shift, prev: args.point, changed: true };
       schedule(async () => { await apply(args); });
       return true;
     }
@@ -182,7 +176,7 @@ const handler: ToolHandler = {
       const args = brushArgs(e, stateFor(session.layer, stroke.button, stroke.shift));
       if (!args) { stroke.prev = null; return true; }
       if (stroke.prev && (paintUi.tool === 'circle' || paintUi.tool === 'sphere')) args.prev = stroke.prev;
-      stroke.prev = args.point as [number, number, number];
+      stroke.prev = args.point;
       stroke.changed = true;
       schedule(async () => { await apply(args); });
       return true;
@@ -224,14 +218,12 @@ export async function openPaint(layer: PaintLayer): Promise<void> {
   paintUi.objectId = o.id;
   paintUi.error = null;
   paintUi.busy = true;
-  if (layer === 'color' && paintUi.filament > Math.max(1, currentPresets.value.selection.filaments.length)) paintUi.filament = 1;
+  if (layer === 'color' && paintUi.filament > Math.max(1, filamentColours().length)) paintUi.filament = 1;
   try {
-    const r = await paintTool<{ handle: number; states: number[] }>('paint_open', {
-      paint: getMeshPaint(o.meshId)[layer] ?? [], maxState: maxStateFor(layer),
-    }, [mesh]);
-    if (paintUi.layer !== layer || paintUi.objectId !== o.id) { void paintTool('paint_close', { handle: r.result.handle }); return; }
-    session = { handle: r.result.handle, objectId: o.id, meshId: o.meshId, layer };
-    showOverlay(o.id, layer, r.result.states, r.meshes);
+    const r = await openSession(mesh, layer, getMeshPaint(o.meshId)[layer]);
+    if (paintUi.layer !== layer || paintUi.objectId !== o.id) { closeSession(r.handle); return; }
+    session = { handle: r.handle, objectId: o.id, meshId: o.meshId, layer };
+    showOverlay(o.id, layer, r.states, r.meshes);
     scene()?.setToolHandler(handler);
     scene()?.renderer.domElement.addEventListener('wheel', onWheel, { capture: true, passive: false });
   } catch (e) {
@@ -255,7 +247,7 @@ export async function closePaint(): Promise<void> {
   sc?.renderer.domElement.removeEventListener('wheel', onWheel, { capture: true });
   if (cursor) { cursor.removeFromParent(); cursor.geometry.dispose(); (cursor.material as MeshBasicMaterial).dispose(); cursor = null; }
   if (s) {
-    void paintTool('paint_close', { handle: s.handle }).catch(() => {});
+    closeSession(s.handle);
     if (s.layer !== 'color') for (const o of objects.value) if (o.meshId === s.meshId) sc?.setObjectOverlay(o.id, `paint-${s.layer}`, null);
     sc?.setToolHandler(null);
     refreshColorOverlays(true);
@@ -269,7 +261,7 @@ export async function closePaint(): Promise<void> {
  */
 function suggestEnableSupport(meshId: string): void {
   if (!getMeshPaint(meshId).support?.length) return;
-  const key = isOrcaFamily(activeEngine.value) ? 'enable_support' : 'support_material';
+  const key = engineCaps(activeEngine.value).supportKey;
   const on = (v: unknown) => { const x = Array.isArray(v) ? v[0] : v; return x === true || x === 1 || x === '1' || x === 'true'; };
   const owners = objects.value.filter((o) => o.meshId === meshId);
   const off = owners.filter((o) => !on(o.overrides[key] ?? resolvedConfig.value[key]));
@@ -307,7 +299,7 @@ function refreshColorOverlays(force = false): void {
     try {
       const sc = scene();
       if (!sc) return;
-      const colors = [...currentPresets.value.selection.filaments.map((_, i) => currentPresets.value.filamentColour(i)), ...mixedFilaments.value.map((m) => m.color)].join(',');
+      const colors = filamentColours().join(',');
       const byMesh = new Map<string, string[]>();
       for (const o of objects.value) { const l = byMesh.get(o.meshId); if (l) l.push(o.id); else byMesh.set(o.meshId, [o.id]); }
       for (const [meshId, ids] of byMesh) {
@@ -322,9 +314,8 @@ function refreshColorOverlays(force = false): void {
         if (!force && prev && prev.ref === map && prev.colors === colors) continue;
         const mesh = toolMesh(meshId);
         if (!mesh) continue;
-        const r = await paintTool<{ handle: number; states: number[] }>('paint_open', { paint: map, maxState: maxStateFor('color') }, [mesh]);
-        void paintTool('paint_close', { handle: r.result.handle }).catch(() => {});
-        for (const id of ids) showOverlay(id, 'color', r.result.states, r.meshes);
+        const r = await decodePaint(mesh, 'color', map);
+        for (const id of ids) showOverlay(id, 'color', r.states, r.meshes);
         colorShown.set(key, { ref: map, colors });
       }
     } catch { /* engine unavailable: no overlays */ } finally {
@@ -338,7 +329,7 @@ let installed = false;
 export function installPaintOverlays(): void {
   if (installed) return;
   installed = true;
-  watch([meshPaint, () => objects.value.map((o) => `${o.id}:${o.meshId}`).join(), () => currentPresets.value.selection.filaments.map((_, i) => currentPresets.value.filamentColour(i)).join(), mixedFilaments, toolScene],
+  watch([meshPaint, () => objects.value.map((o) => `${o.id}:${o.meshId}`).join(), () => filamentColours().join(), toolScene],
     () => refreshColorOverlays(), { immediate: true });
   // The painted object went away (deleted / undone): end the session.
   watch(objects, () => { if (session && !getObject(session.objectId)) void closePaint(); });

@@ -2,14 +2,11 @@
  * Engine contract types. Mirrors docs/ENGINE-CONTRACT.md — keep in sync.
  */
 
-export type EngineId = 'orca' | 'preflight' | 'fullspectrum';
+import type { ToolOp } from './tools';
 
-/**
- * Engines built from OrcaSlicer's libslic3r (same config keys, profiles,
- * calibration and cs_tool ops): OrcaSlicer itself and the FullSpectrum fork
- * (Snapmaker Orca + mixed filaments).
- */
-export function isOrcaFamily(e: EngineId): boolean { return e === 'orca' || e === 'fullspectrum'; }
+export type EngineId = 'orca' | 'preflight';
+
+export { engineCaps } from './capabilities';
 
 /** Engine-native serialized config value. Arrays are per-extruder vectors. */
 export type ConfigValue = string | string[];
@@ -79,11 +76,17 @@ export interface CalibParams {
   freqStartX?: number; freqEndX?: number; freqStartY?: number; freqEndY?: number;
   testModel?: number;
   shaperType?: string;
+  /** 2.5: VFA tower layer height (0 = nozzle / 2). */
+  vfaLayerHeight?: number;
+  /** 2.5: scale the calibration model with the nozzle diameter (default true). */
+  nozzleBasedResize?: boolean;
   accelerations?: number[];
   speeds?: number[];
 }
 
-export type SliceVolumeType = 'part' | 'negative' | 'modifier' | 'support_blocker' | 'support_enforcer';
+export type SliceVolumeType = 'part' | 'negative' | 'modifier' | 'support_blocker' | 'support_enforcer'
+  /** Orca 2.5 precise seam modifiers (their `config` is the seam's own settings). */
+  | 'precise_seam_center' | 'precise_seam_left' | 'precise_seam_right' | 'precise_seam_enforced' | 'precise_seam_blocked' | 'precise_seam_neutral';
 
 export interface SliceVolumeInput {
   id: string;
@@ -113,6 +116,7 @@ export interface SliceJob {
   };
 }
 
+/** Codes: slicing, validate, conflict, unprintable_area, plugin (a slicing-pipeline capability's message), unknown_options (preFlight). */
 export interface SliceWarning { code: string; message: string }
 
 export interface SliceStats {
@@ -134,7 +138,11 @@ export interface SliceReport {
   substitutions?: string[];
   /** Set by the engine worker: threads the slice ran on (1 = single-threaded build). */
   threads?: number;
+  /** Orca 2.5: libslic3r lifecycle events of the slice (SliceStarted, SliceGeometryFinished, GCodeExport*), for plugins. */
+  events?: SliceEvent[];
 }
+
+export interface SliceEvent { event: string; ctx?: { name?: string; code?: string; msg?: string; id?: number; [k: string]: unknown } }
 
 export interface SliceResult {
   engine: EngineId;
@@ -172,6 +180,10 @@ export interface ConfigOptionDef {
   nullable?: boolean;
   guiType?: string;
   scope: ConfigScope;
+  /** Orca 2.5: one value per extruder variant (print / printer / filament table), see ENGINE-CONTRACT "Extruder variants". */
+  variant?: 'print' | 'printer' | 'filament';
+  /** Values per variant column (2 for the normal / silent machine limits). */
+  variantStride?: number;
 }
 
 export interface ConfigSchema {
@@ -194,8 +206,8 @@ export type WorkerRequest =
   | { type: 'describe'; id: number }
   | { type: 'evalCondition'; id: number; expr: string; config: FlatConfig }
   | { type: 'orient'; id: number; object: SliceObjectInput }
-  /** Engine tools (cs_tool): painting sessions, cut, layer height profiles, … */
-  | { type: 'tool'; id: number; op: string; args: unknown; meshes: ToolMesh[] }
+  /** Engine tools (cs_tool): painting sessions, cut, layer height profiles, … (see tools.ts) */
+  | { type: 'tool'; id: number; op: ToolOp; args: unknown; meshes: ToolMesh[] }
   /** Orca auto arrange (cs_tool "arrange"): the objects as in a slice job. */
   | { type: 'arrange'; id: number; config: FlatConfig; objects: SliceObjectInput[]; args: ArrangeArgs };
 
@@ -212,7 +224,11 @@ export type WorkerResponse =
 export interface ArrangeArgs {
   mode: 'all' | 'plate' | 'selection';
   currentPlate: number;
-  plates: Array<{ locked: boolean; seq: '' | 'by layer' | 'by object'; toolChanges: number[] }>;
+  /**
+   * `imexMode`: the plate's own IDEX/IQEX parallel mode (plate config `imex_parallel_mode`;
+   * "" = none of its own, the process preset's mode applies: PartPlate::get_effective_imex_mode).
+   */
+  plates: Array<{ locked: boolean; seq: '' | 'by layer' | 'by object'; toolChanges: number[]; imexMode: string }>;
   items: Array<{ plate: number; printable: boolean; selected: boolean }>;
   settings: { distance: number; enableRotation: boolean; alignToYAxis: boolean; allowMultiMaterials: boolean; avoidCaliRegion: boolean };
   /** BBL vendor printer (offers "Avoid extrusion calibration region"). */
@@ -229,6 +245,8 @@ export interface ArrangeResult {
   /** Object indices in arrange order (Orca's by-object print order). */
   order: number[];
   seqPrint: boolean;
+  /** (orca 2.5) A plate had an IDEX/IQEX zone: parts were kept inside T0's zone (unplaced = didn't fit it). */
+  imex?: boolean;
 }
 
 /** A mesh passed to / returned from an engine tool (mesh-local float32 xyz + uint32 triangles). */

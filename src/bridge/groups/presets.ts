@@ -10,7 +10,9 @@ import type { ConfigValue, EngineId } from '../../engine/types';
 import { currentPresets, ENGINES, presetsSettled, setActiveEngine, type EnginePresets } from '../../presets/store';
 import type { PresetKind } from '../../presets/types';
 import { valuesEqual } from '../../presets/values';
-import { lsSet } from '../../presets/kv';
+import { writeJson } from '../../lib/storage';
+import { normaliseHex } from '../../lib/colour';
+import { MAX_FILAMENT_SLOTS } from '../../mixed/model';
 import { panelRequest, SETUP_DONE_KEY, setupWizardState } from '../../settings/uiState';
 import { oneOf } from '../logic';
 import { bridge } from '../store';
@@ -18,7 +20,8 @@ import { presetSummary } from './core';
 import { bool, filamentRows, num, obj, oneOfS, presetRow, settled, str, strList } from './util';
 
 const KINDS: PresetKind[] = ['printer', 'process', 'filament'];
-const HEX = /^#[0-9a-f]{6}$/i;
+/** A filament colour argument: "#RRGGBB" / "#RRGGBBAA" (normalised), "" = the preset's colour, null = invalid. */
+const colourArg = (c: unknown): string | null => (c === '' ? '' : typeof c === 'string' ? normaliseHex(c) : null);
 
 /** Filament slot from `filament` (1-based) or the older `filamentIndex` (0-based). Default slot 1. */
 export function slotArg(args: Record<string, unknown>, p: EnginePresets): number {
@@ -35,7 +38,10 @@ async function findPreset(p: EnginePresets, kind: PresetKind, name: string): Pro
   const found = pool.find((x) => x.name === name) ?? pool.find((x) => x.name.toLowerCase() === name.toLowerCase());
   if (found) return found.id;
   if (kind === 'printer') return (await p.catalog.findByName('printer', name).catch(() => null))?.id;
-  return undefined;
+  // An old name (`renamed_from`, e.g. Orca 2.5 renamed "Prusa Generic PETG @MK4" to "Generic PETG @Prusa MK4"),
+  // as long as the current preset is compatible.
+  const renamed = await p.catalog.findByName(kind, name, p.selectedInfo('printer').vendor, false).catch(() => null);
+  return renamed && pool.some((x) => x.id === renamed.id) ? renamed.id : undefined;
 }
 
 async function selectById(p: EnginePresets, kind: PresetKind, id: string, index: number, keep: boolean): Promise<void> {
@@ -161,10 +167,12 @@ export function presetTools(): BridgeTool[] {
     {
       name: 'set_filaments',
       description:
-        'Filament slots (multi-material / multi-tool): set the slot count, slot colours ("#RRGGBB", "" = the preset’s colour) and remove a slot. ' +
-        'New slots copy the last slot’s preset; pick presets per slot with select_preset. Colours drive the preview, colour painting and flushing volumes.',
+        'Physical filament slots (multi-material / multi-tool): set the slot count, slot colours ("#RRGGBB", "" = the preset’s colour) and remove a slot. ' +
+        'New slots copy the last slot’s preset; pick presets per slot with select_preset. Colours drive the preview, colour painting and flushing volumes. ' +
+        'Mixed filaments (edit_mixed_filaments) always follow the physical slots; physical + mixed slots are at most 32. ' +
+        'Removing a slot renumbers objects, parts, height ranges, colour paint and plate settings like Orca: references to the removed slot go to filament 1 (paint: unpainted), later ones move down.',
       inputSchema: obj({
-        count: num('Number of filament slots (1–64).'),
+        count: num('Number of physical filament slots (1–32, less the mixed filaments).'),
         colors: strList('Colour per slot, in order; entries you leave out keep their colour.'),
         color: str('Colour for one slot (with "filament").'),
         filament: num('Slot for "color", 1-based.'),
@@ -182,18 +190,21 @@ export function presetTools(): BridgeTool[] {
           await p.removeFilament(remove - 1);
         }
         if (count !== undefined) {
-          if (!Number.isInteger(count) || count < 1 || count > 64) throw new Error('"count" must be a whole number from 1 to 64.');
+          const max = MAX_FILAMENT_SLOTS - p.mixedDefs().length;
+          if (!Number.isInteger(count) || count < 1 || count > max) throw new Error(`"count" must be a whole number from 1 to ${max}.`);
           await p.setFilamentCount(count);
         }
         const colors = Array.isArray(args.colors) ? args.colors : [];
         for (const [i, c] of colors.entries()) {
-          if (typeof c !== 'string' || (c && !HEX.test(c))) throw new Error(`colors[${i}] must be "#RRGGBB" or "".`);
-          if (i < p.selection.filaments.length) p.setFilamentColour(i, c);
+          const hex = colourArg(c);
+          if (hex === null) throw new Error(`colors[${i}] must be "#RRGGBB", "#RRGGBBAA" or "".`);
+          if (i < p.selection.filaments.length) p.setFilamentColour(i, hex);
         }
         const one = argString(args, 'color', { optional: true });
         if (one !== undefined) {
-          if (one && !HEX.test(one)) throw new Error('"color" must be "#RRGGBB" or "".');
-          p.setFilamentColour(slotArg(args, p), one);
+          const hex = colourArg(one);
+          if (hex === null) throw new Error('"color" must be "#RRGGBB", "#RRGGBBAA" or "".');
+          p.setFilamentColour(slotArg(args, p), hex);
         }
         await settled();
         return { data: { ok: true, filaments: filamentRows() } };
@@ -376,7 +387,7 @@ export function presetTools(): BridgeTool[] {
           await p.selectFilament(i, id);
         }
         await settled();
-        lsSet(SETUP_DONE_KEY, true);
+        writeJson(SETUP_DONE_KEY, true);
         if (setupWizardState.open) panelRequest.closeSetupWizard++;
         return { data: { ok: true, ...presetSummary() } };
       },

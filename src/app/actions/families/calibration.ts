@@ -8,38 +8,39 @@ import { activeEngine } from '../../state';
 import { calibUi, type CalibDialogId } from '../../../calibration/state';
 import { openDialog } from '../../../dialogs/state';
 import { filamentCount, isMultiNozzle } from '../../../dialogs/gates';
-import { isOrcaFamily } from '../../../engine/types';
+import { engineCaps } from '../../../engine/capabilities';
 
-/** Orca's handy models (kept in sync with calibration/run.ts HANDY_MODELS; ids only here so the table stays pure). */
+/** Orca's handy models (kept in sync with calibration/handyModels.ts HANDY_MODELS; ids only here so the table stays pure). */
 export const HANDY_MODEL_IDS: Array<[string, string]> = [
-  ['orca-cube', 'Orca Cube'], ['orca-sliced', 'OrcaSliced Combo'], ['tolerance', 'Orca Tolerance Test'], ['benchy', '3DBenchy'],
+  ['orca-cube', 'Orca Cube'], ['orca-sliced', 'OrcaSliced Combo'], ['orca-badge', 'Orca Badge'], ['tolerance', 'Orca Tolerance Test'], ['benchy', '3DBenchy'],
   ['calicat', 'Cali Cat'], ['fdm-test', 'Autodesk FDM Test'], ['voron-cube', 'Voron Cube'], ['bunny', 'Stanford Bunny'], ['string-hell', 'Orca String Hell'],
 ];
 
-const orca = () => isOrcaFamily(activeEngine.value);
+const orca = () => engineCaps(activeEngine.value).calibration;
 const calib = (id: CalibDialogId) => () => { calibUi.open = id; };
+const WIKI = 'https://www.orcaslicer.com/wiki/';
 
 export function calibrationActions(): Action[] {
   return [
     // ---- Calibration (Orca MainFrame calibration menu) ----
     { id: 'calib.temp', title: 'Temperature…', icon: 'i-lucide-thermometer', category: 'Calibration', aliases: ['temperature tower', 'temp tower', 'calibrate'],
-      when: orca, run: calib('temp') },
+      helpUrl: `${WIKI}temp_calib`, when: orca, run: calib('temp') },
     { id: 'calib.flow', title: 'Flow ratio…', icon: 'i-lucide-waves', category: 'Calibration', aliases: ['flow rate', 'extrusion multiplier', 'yolo', 'pass 1', 'pass 2'],
-      when: orca, run: calib('flow') },
+      helpUrl: `${WIKI}flow_ratio_calib`, when: orca, run: calib('flow') },
     { id: 'calib.pa', title: 'Pressure advance…', icon: 'i-lucide-gauge', category: 'Calibration', aliases: ['linear advance', 'pa tower', 'pa line', 'pa pattern', 'k factor'],
-      when: orca, run: calib('pa') },
+      helpUrl: `${WIKI}pressure_advance_calib`, when: orca, run: calib('pa') },
     { id: 'calib.retraction', title: 'Retraction…', icon: 'i-lucide-arrow-up-from-line', category: 'Calibration', aliases: ['retraction tower', 'stringing'],
-      when: orca, run: calib('retraction') },
+      helpUrl: `${WIKI}retraction_calib`, when: orca, run: calib('retraction') },
     { id: 'calib.volumetric', title: 'Max flowrate…', icon: 'i-lucide-chevrons-up', category: 'Calibration', aliases: ['max volumetric speed', 'volumetric speed tower', 'mvs'],
-      when: orca, run: calib('volumetric') },
+      helpUrl: `${WIKI}volumetric_speed_calib`, when: orca, run: calib('volumetric') },
     { id: 'calib.vfa', title: 'VFA…', icon: 'i-lucide-audio-waveform', category: 'Calibration', aliases: ['vertical fine artifacts', 'speed tower'],
-      when: orca, run: calib('vfa') },
+      helpUrl: `${WIKI}vfa_calib`, when: orca, run: calib('vfa') },
     { id: 'calib.cornering', title: 'Cornering…', icon: 'i-lucide-corner-down-right', category: 'Calibration', aliases: ['jerk', 'junction deviation', 'square corner velocity'],
-      when: orca, run: calib('cornering') },
+      helpUrl: `${WIKI}cornering_calib`, when: orca, run: calib('cornering') },
     { id: 'calib.is-freq', title: 'Input shaping frequency…', icon: 'i-lucide-activity', category: 'Calibration', aliases: ['input shaper', 'resonance', 'ringing'],
-      when: orca, run: calib('is_freq') },
+      helpUrl: `${WIKI}input_shaping_calib`, when: orca, run: calib('is_freq') },
     { id: 'calib.is-damp', title: 'Input shaping damping / zeta factor…', icon: 'i-lucide-activity', category: 'Calibration', aliases: ['input shaper', 'damping ratio', 'zeta'],
-      when: orca, run: calib('is_damp') },
+      helpUrl: `${WIKI}input_shaping_calib`, when: orca, run: calib('is_damp') },
     { id: 'calib.tolerance', title: 'Orca tolerance test', icon: 'i-lucide-ruler', category: 'Calibration', aliases: ['tolerance', 'fit test', 'handy model'],
       run: async () => { await (await import('../../../calibration/run')).addToleranceTest(); } },
     ...HANDY_MODEL_IDS.map(([id, label]): Action => ({

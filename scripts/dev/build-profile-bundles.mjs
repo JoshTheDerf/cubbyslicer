@@ -35,6 +35,15 @@ for (const id of ids) {
       try { bundle[e.sub_path] = JSON.parse(readFileSync(f, 'utf8')); } catch { console.warn(`skip invalid ${f}`); }
     }
   }
+  // Orca 2.5 `include` templates are looked up in the same vendor and list only
+  // (PresetBundle install.include_maps); they are ordinary list entries, so they're bundled above.
+  for (const list of ['machine_list', 'process_list', 'filament_list']) {
+    const names = new Set((vendor[list] ?? []).map((e) => e?.name));
+    for (const e of vendor[list] ?? []) {
+      const inc = bundle[e?.sub_path]?.include;
+      for (const name of [].concat(inc ?? [])) if (!names.has(name)) console.warn(`${id}: ${e.name} includes "${name}", not in ${list}`);
+    }
+  }
   writeFileSync(join(out, `${id}.json`), JSON.stringify(bundle));
   total += Object.keys(bundle).length;
 }

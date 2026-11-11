@@ -15,14 +15,19 @@ export interface ValidateItem {
 
 const TOL = 0.01; // mm
 
-export function validatePlate(items: ValidateItem[], bed: BedShape): Map<string, ObjectIssue[]> {
+/**
+ * `openY`: belt printers with an infinite Y axis (Orca PartPlate::open_belt_y)
+ * — a part may run past the bed's front and back edges.
+ */
+export function validatePlate(items: ValidateItem[], bed: BedShape, opts: { openY?: boolean } = {}): Map<string, ObjectIssue[]> {
   const out = new Map<string, ObjectIssue[]>();
   const add = (id: string, i: ObjectIssue) => {
     const l = out.get(id);
     if (!l) out.set(id, [i]); else if (!l.includes(i)) l.push(i);
   };
   for (const it of items) {
-    if (it.hull.some((p) => !pointInPolygon(p, bed.polygon, TOL))) add(it.id, 'outside');
+    const inBed = (p: Pt): boolean => pointInPolygon(opts.openY ? [p[0], Math.min(Math.max(p[1], bed.min[1]), bed.max[1])] : p, bed.polygon, TOL);
+    if (it.hull.some((p) => !inBed(p))) add(it.id, 'outside');
     else if (it.min[2] < -TOL) add(it.id, 'outside');
     if (bed.maxHeight > 0 && it.max[2] - Math.min(0, it.min[2]) > bed.maxHeight + TOL) add(it.id, 'height');
     for (const ex of bed.excludeAreas) if (polygonsOverlap(it.hull, ex)) add(it.id, 'exclude');
@@ -42,5 +47,6 @@ export const ISSUE_LABELS: Record<ObjectIssue, string> = {
   outside: 'Outside the printable area',
   height: 'Taller than the printer’s max height',
   exclude: 'Touches an excluded bed area',
+  zone: 'Outside T0’s zone (IDEX/IQEX parallel mode)',
   overlap: 'Overlaps another object',
 };

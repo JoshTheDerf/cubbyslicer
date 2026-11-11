@@ -1,6 +1,8 @@
 /**
- * The pure action table. Registration ORDER is the dispatcher's first-match
- * tie-breaker: slice (Esc = cancel) comes before edit (Esc = clear selection).
+ * The built-in action table. Registration ORDER is the dispatcher's first-match
+ * tie-breaker: the open tool's keys (Esc = close it, Delete = its selection)
+ * come before slice (Esc = cancel), which comes before edit (Esc = clear
+ * selection, Delete = delete objects).
  */
 import type { Action } from './types';
 import { fileActions } from './families/file';
@@ -17,9 +19,18 @@ import { toolActions } from '../../tools/actions';
 import { calibrationActions } from './families/calibration';
 import { paintActions } from './families/paint';
 import { cadActions } from '../../cad/actions';
+import { designActions } from '../../design/actions';
+import { sketchActions } from '../../design/sketch/actions';
+import { toolKeyActions } from './families/toolKeys';
+import { previewActions } from '../../preview/actions';
+import { settingsActions } from '../../settings/actions';
+import { printhostActions } from '../../printhost/actions';
+import { bridgeActions } from '../../bridge/actions';
+import { pluginsActions } from '../../plugins/actions';
 
 export function buildActions(): Action[] {
   return [
+    ...toolKeyActions(),
     ...fileActions(),
     ...cloudActions(),
     ...localFileActions(),
@@ -34,6 +45,26 @@ export function buildActions(): Action[] {
     ...layerActions(),
     ...toolActions(),
     ...cadActions(),
+    ...designActions(),
+    ...sketchActions(),
     ...calibrationActions(),
+  ];
+}
+
+/**
+ * Everything the app registers at boot (src/app/shell/actionContext.ts): the
+ * core table plus every area's commands, so the palette and shortcuts help
+ * list them before the lazily mounted panels exist. The registry lint covers
+ * exactly this list.
+ */
+export function builtinActions(): Action[] {
+  return [
+    ...buildActions(),
+    ...previewActions,
+    // settings/actions.ts mirrors the Action shape with `ctx: unknown`.
+    ...settingsActions,
+    ...printhostActions,
+    ...bridgeActions,
+    ...pluginsActions,
   ];
 }

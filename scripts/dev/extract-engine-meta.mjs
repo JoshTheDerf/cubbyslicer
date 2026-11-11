@@ -1,23 +1,33 @@
 #!/usr/bin/env node
 /**
- * Dev-only extractor for engine metadata the settings UI needs before the
- * engine builds publish `public/wasm/<engine>/schema.json`.
+ * Dev-only extractor for engine metadata the settings UI needs and the engine
+ * builds don't publish.
  *
- * Parses the C++ sources of both engines and writes:
- *   src/settings/__fixtures__/orca-schema.sample.json       (Schema JSON shape, ENGINE-CONTRACT.md)
+ * From an OrcaSlicer source tree it writes:
+ *   src/settings/__fixtures__/orca-schema.sample.json   (Schema JSON shape, ENGINE-CONTRACT.md; test fixture / fallback only)
+ *   src/settings/layout/orca.generated.ts                (Tab.cpp pages → groups → keys)
+ *   src/settings/rules/orca.generated.ts                 (ConfigManipulation / Tab toggle_* calls: enable / show rules)
+ *   src/dialogs/gcode/placeholders.generated.ts          (G-code placeholder catalogue: PrintConfig.cpp *ConfigDef classes)
+ * and from a preFlight git checkout:
  *   src/settings/__fixtures__/preflight-schema.sample.json
- *   src/settings/layout/orca.generated.ts                    (Tab.cpp pages → groups → keys)
  *   src/settings/layout/preflight.generated.ts
- *   src/presets/preflight/orcaKeyMap.generated.ts            (OrcaKeyMapping.cpp tables)
+ *   src/presets/preflight/orcaKeyMap.generated.ts        (OrcaKeyMapping.cpp tables)
  *
- * The schema fixtures are only a fallback / test fixture. At runtime the real
- * `schema.json` produced by `cs_describe_config` always wins.
+ * At runtime the real `schema.json` produced by `cs_describe_config` always wins.
  *
  * Usage:
- *   node scripts/dev/extract-engine-meta.mjs [--orca <orca src dir>] [--preflight <preflight git dir>] [--ref v1.3.0]
+ *   node scripts/dev/extract-engine-meta.mjs [--orca <OrcaSlicer checkout>] [--orca-ref <git ref>] [--orca-version 2.5.0]
+ *                                            [--schema <engine schema.json>] [--preflight <preflight git dir>] [--ref v1.3.0]
+ *                                            [--only orca|preflight]
+ *
+ * `--orca` is the checkout root (or its src/). It defaults to the reference tree of the
+ * 2.5.0 upgrade when that exists; never point it at the engine port's live working tree.
+ * With `--orca-ref` files are read with `git show <ref>:src/…` instead of the working tree.
+ * `--schema` adds the keys of a real engine schema.json to the set the layout may reference
+ * (keys defined in ways the schema extractor can't see).
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,11 +35,40 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../..');
 const args = process.argv.slice(2);
 const arg = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : dflt; };
-const ORCA = arg('--orca', '/server/thederf/slicers/orcaslicer-wasm/orca/src');
+
+const ORCA_REFERENCE = '/tmp/claude-1000/-server-thederf-cubby-slicer/4027ee31-2060-4d01-9d24-351965a18832/scratchpad/orca-2.5.0';
+const ORCA_ARG = arg('--orca', existsSync(ORCA_REFERENCE) ? ORCA_REFERENCE : null);
+const ORCA_REF = arg('--orca-ref', null);
+const ORCA_VERSION_ARG = arg('--orca-version', null);
+const SCHEMA_JSON = arg('--schema', null);
 const PF_GIT = arg('--preflight', '/server/thederf/slicers/preflight');
 const PF_REF = arg('--ref', 'v1.3.0');
+const ONLY = arg('--only', null);
 
-const orcaFile = (p) => readFileSync(resolve(ORCA, p), 'utf8');
+/** Orca checkout root (accepts either the root or its src/). */
+function orcaRoot() {
+  if (!ORCA_ARG) throw new Error('No OrcaSlicer source: pass --orca <checkout>.');
+  const r = resolve(ORCA_ARG);
+  if (ORCA_REF) return r.replace(/\/src\/?$/, '');
+  return existsSync(resolve(r, 'src/libslic3r')) ? r : resolve(r, '..');
+}
+const orcaFile = (p) => {
+  if (ORCA_REF) return execFileSync('git', ['-C', orcaRoot(), 'show', `${ORCA_REF}:src/${p}`], { encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'] });
+  return readFileSync(resolve(orcaRoot(), 'src', p), 'utf8');
+};
+const orcaRootFile = (p) => {
+  try {
+    if (ORCA_REF) return execFileSync('git', ['-C', orcaRoot(), 'show', `${ORCA_REF}:${p}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return readFileSync(resolve(orcaRoot(), p), 'utf8');
+  } catch { return ''; }
+};
+function orcaVersion() {
+  if (ORCA_VERSION_ARG) return ORCA_VERSION_ARG;
+  const m = /SoftFever_VERSION\s+"?([\d.]+)/.exec(orcaRootFile('version.inc'));
+  if (m) return m[1];
+  if (ORCA_REF) return ORCA_REF.replace(/^v/, '');
+  return '2.5.0';
+}
 const pfFile = (p) => execFileSync('git', ['-C', PF_GIT, 'show', `${PF_REF}:src/${p}`], { encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'ignore'] });
 
 // ---------------------------------------------------------------------------
@@ -53,6 +92,22 @@ function stripComments(src) {
   return out;
 }
 
+/** Drop `#if 0 … #endif` blocks (keeps the `#else` branch). */
+function stripIfZero(src) {
+  const lines = src.split('\n');
+  const out = [];
+  const stack = []; // true = skipping
+  for (const line of lines) {
+    const t = line.trim();
+    if (/^#\s*if\b/.test(t)) { stack.push(/^#\s*if\s+0\b/.test(t) ? 'zero' : 'other'); out.push(''); continue; }
+    if (/^#\s*else\b/.test(t) && stack.length) { const top = stack[stack.length - 1]; stack[stack.length - 1] = top === 'zero' ? 'zero-else' : top === 'other' ? 'other-else' : top; out.push(''); continue; }
+    if (/^#\s*endif\b/.test(t) && stack.length) { stack.pop(); out.push(''); continue; }
+    const skipping = stack.some((s) => s === 'zero' || s === 'other-else');
+    out.push(skipping ? '' : line);
+  }
+  return out.join('\n');
+}
+
 function unescapeC(s) {
   return s.replace(/\\(n|t|r|"|'|\\|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})/g, (_, e) => {
     if (e === 'n') return '\n'; if (e === 't') return '\t'; if (e === 'r') return '\r';
@@ -71,6 +126,12 @@ function literals(expr) {
   return out;
 }
 const joined = (expr) => literals(expr).join('');
+/** A translated label: L("a" "b") → "ab"; L_CONTEXT("X", "Axis") → "X" (the second literal is the context). */
+function labelOf(expr) {
+  const ctx = /\b_?L_CONTEXT\s*\(/.exec(expr);
+  if (ctx) return literals(splitTop(balanced(expr, ctx.index + ctx[0].length - 1))[0] ?? '').join('');
+  return joined(expr);
+}
 
 /** Split a code region into top-level statements (by ';' outside strings / brackets). */
 function statements(src) {
@@ -92,7 +153,7 @@ function balanced(src, idx) {
   let depth = 0;
   for (let i = idx; i < src.length; i++) {
     const c = src[i];
-    if (c === '"') { i++; while (i < src.length && src[i] !== '"') { if (src[i] === '\\') i++; i++; } continue; }
+    if (c === '"' || c === '\'') { const q = c; i++; while (i < src.length && src[i] !== q) { if (src[i] === '\\') i++; i++; } continue; }
     if (c === open) depth++;
     else if (c === close) { depth--; if (depth === 0) return src.slice(idx + 1, i); }
   }
@@ -106,6 +167,47 @@ function stringListNamed(src, name) {
   if (!m) return [];
   const body = balanced(src, m.index + m[0].length - 1);
   return literals(body);
+}
+
+/** Body of `<qualified name>(…) [const] {` in a source file (comments stripped), or null. */
+function functionBody(code, name) {
+  const re = new RegExp(`\\n[\\w:<>*&, ]*\\b${name}\\s*\\(`, 'g');
+  let m;
+  while ((m = re.exec(code))) {
+    const open = code.indexOf('(', m.index + m[0].length - 1);
+    const params = balanced(code, open);
+    let i = open + params.length + 2;
+    const rest = code.slice(i, i + 200);
+    const head = /^\s*(?:const\s*)?(?:override\s*)?\{/.exec(rest);
+    if (!head) continue;
+    i += head[0].length - 1;
+    return balanced(code, i);
+  }
+  return null;
+}
+
+/** Expand simple function-like macros (`#define NAME(A, B) body`) defined in the source. */
+function expandMacros(code) {
+  const defs = [...code.matchAll(/#define\s+(\w+)\(([^)]*)\)[ \t]*(.*)/g)].map((m) => ({ name: m[1], params: m[2].split(',').map((s) => s.trim()), body: m[3] }));
+  let out = code;
+  for (const d of defs) {
+    const re = new RegExp(`\\b${d.name}\\s*\\(`, 'g');
+    let res = ''; let last = 0; let m;
+    while ((m = re.exec(out))) {
+      const lineStart = out.lastIndexOf('\n', m.index) + 1;
+      if (/^\s*#define/.test(out.slice(lineStart, m.index + 1))) continue;
+      const open = m.index + m[0].length - 1;
+      const inner = balanced(out, open);
+      const argv = splitTop(inner);
+      let body = d.body;
+      d.params.forEach((p, i) => { body = body.replace(new RegExp(`\\b${p}\\b`, 'g'), argv[i] ?? ''); });
+      res += out.slice(last, m.index) + body;
+      last = open + inner.length + 2;
+      re.lastIndex = last;
+    }
+    out = res + out.slice(last);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +313,6 @@ function serializeDefault(expr, type, enumMaps, localVectors) {
     case 'Enum': return enumOf(items[0] ?? '');
     case 'EnumsGeneric': { let parts = items; if (parts.length === 1 && /^\{/.test(parts[0].trim())) parts = splitTop(balanced(parts[0].trim(), 0)); return parts.filter((p) => p.trim()).map((p) => num(p) ?? enumOf(p)).join(','); }
     default:
-      if (type) return '';
       return '';
   }
 }
@@ -220,9 +321,11 @@ function splitTop(s) {
   const out = []; let depth = 0; let start = 0;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
-    if (c === '"') { i++; while (i < s.length && s[i] !== '"') { if (s[i] === '\\') i++; i++; } continue; }
-    if (c === '(' || c === '{' || c === '[' || c === '<') depth++;
-    else if (c === ')' || c === '}' || c === ']' || c === '>') depth--;
+    if (c === '"' || c === '\'') { const q = c; i++; while (i < s.length && s[i] !== q) { if (s[i] === '\\') i++; i++; } continue; }
+    if (c === '(' || c === '{' || c === '[') depth++;
+    else if (c === ')' || c === '}' || c === ']') depth--;
+    else if (c === '<' && /[\w:]$/.test(s.slice(0, i)) && /^\s*[\w:]+\s*>/.test(s.slice(i + 1))) depth++; // template args
+    else if (c === '>' && depth > 0 && /[\w:\s]$/.test(s.slice(0, i)) && s.slice(0, i).lastIndexOf('<') > s.slice(0, i).lastIndexOf('>')) depth--;
     else if (c === ',' && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
   }
   out.push(s.slice(start));
@@ -237,7 +340,7 @@ function applyStmt(def, st, ctx) {
     const v = rhs(st);
     if (/^it_opt->second\./.test(v)) return; // copied later
     const lits = literals(v);
-    if (lits.length) def[key] = lits.join('');
+    if (lits.length) def[key] = key === 'label' || key === 'fullLabel' ? labelOf(v) : lits.join('');
     else if (/boost::format/.test(v)) def[key] = '';
     return;
   }
@@ -286,8 +389,62 @@ function blankDef(type, nullable) {
   };
 }
 
+/**
+ * Inline keys that are defined indirectly, so the `this->add("key", …)` scan sees them:
+ * - helper lambdas `auto add_x = [this](const char *key, …) { auto def = this->add(key, coEnum); … }`
+ *   called as `add_x("key", L("Label"), …)` (Orca 2.5 `add_belt_remap`);
+ * - `for (const char* key : {"a", "b"}) { def = this->add(key, coX); … }` loops.
+ * The `filament_extruder_override_keys` loop (`add_nullable(opt_key, it_opt->second.type)`) is handled separately.
+ */
+function inlineIndirectDefs(code) {
+  let out = code;
+  // Helper lambdas.
+  for (const m of [...code.matchAll(/auto\s+(\w+)\s*=\s*\[[^\]]*\]\s*\(/g)]) {
+    const name = m[1];
+    const pOpen = m.index + m[0].length - 1;
+    const params = balanced(code, pOpen);
+    const bOpen = code.indexOf('{', pOpen + params.length + 1);
+    const body = balanced(code, bOpen);
+    if (!/this->add(?:_nullable)?\(\s*\w+\s*,/.test(body)) continue;
+    const pnames = splitTop(params).map((p) => /(\w+)\s*$/.exec(p)?.[1] ?? '');
+    const calls = [];
+    const re = new RegExp(`\\b${name}\\s*\\(`, 'g');
+    let c;
+    while ((c = re.exec(out))) {
+      if (c.index > 0 && /[\w.>]/.test(out[c.index - 1])) continue;
+      const inner = balanced(out, c.index + c[0].length - 1);
+      const argv = splitTop(inner);
+      if (!/^"/.test(argv[0] ?? '')) continue; // the definition itself
+      let expanded = body;
+      pnames.forEach((p, i) => { if (p) expanded = expanded.replace(new RegExp(`(?<![\\w.>])${p}\\b`, 'g'), argv[i] ?? ''); });
+      expanded = expanded.replace(/auto\s+def\s*=/, 'def =');
+      calls.push({ start: c.index, end: c.index + c[0].length + inner.length + 1, text: `${expanded}\n` });
+    }
+    for (const cl of calls.reverse()) out = out.slice(0, cl.start) + cl.text + out.slice(cl.end);
+  }
+  // for (const char* key : { "a", "b" }) { … this->add(key, …) … }
+  out = out.replace(/for\s*\(\s*(?:const\s+)?(?:char\s*\*|auto\s*&?|std::string\s*&?)\s*(\w+)\s*:\s*\{([^}]*)\}\s*\)\s*\{/g, (all, v, list, off) => {
+    const bodyOpen = off + all.length - 1;
+    const body = balanced(out, bodyOpen);
+    if (!new RegExp(`this->add(?:_nullable)?\\(\\s*${v}\\s*,`).test(body) || /it_opt/.test(body)) return all;
+    const keys = literals(list);
+    return `{ /*__loop:${keys.length}:${v}:${keys.join(',')}*/`;
+  });
+  // Expand the loop markers left above: duplicate the loop body per key.
+  for (;;) {
+    const m = /\{ \/\*__loop:(\d+):(\w+):([^*]*)\*\//.exec(out);
+    if (!m) break;
+    const body = balanced(out, m.index);
+    const inner = body.slice(m[0].length - 1);
+    const keys = m[3].split(',');
+    const expanded = keys.map((k) => inner.replace(new RegExp(`\\b${m[2]}\\b`, 'g'), `"${k}"`)).join('\n');
+    out = out.slice(0, m.index) + `{${expanded}}` + out.slice(m.index + body.length + 2);
+  }
+  return out;
+}
+
 function extractSchema(src, { overrideKeys, axisDefaults, prefixForOverride }) {
-  const code = stripComments(src);
+  const code = inlineIndirectDefs(expandMacros(stripComments(src)));
   const enumMaps = parseEnumMaps(code);
   const options = {};
   // Every `def = this->add(...)` starts a block; the block runs to the next one.
@@ -354,47 +511,113 @@ function assignScopes(options, { print, filament, machine, objectKeys }) {
 // Tab.cpp layout extraction
 // ---------------------------------------------------------------------------
 
+/**
+ * Named string lists a loop can iterate: local `std::vector<std::string> NAME{…}` /
+ * `NAME = {…}` in the function, and functions returning `{ { "key", "icon" }, … }`
+ * tables (Orca 2.5 `publishable_printer_retraction_options()`), first literal per row.
+ */
+function namedLists(body, tables) {
+  const lists = { ...tables };
+  for (const m of body.matchAll(/std::vector<std::string>\s+(\w+)\s*(?:=\s*)?\{/g)) lists[m[1]] = literals(balanced(body, m.index + m[0].length - 1));
+  return lists;
+}
+function tableFunctions(code) {
+  const out = {};
+  for (const m of code.matchAll(/\n[\w:<>&*\s]+?\b(\w+)\s*\(\s*\)\s*\{/g)) {
+    const body = balanced(code, m.index + m[0].length - 1);
+    const t = /=\s*\{([\s\S]*)\}\s*;/.exec(body);
+    if (!t) continue;
+    const rows = [...t[1].matchAll(/\{\s*"([a-z][a-z0-9_]*)"/g)].map((r) => r[1]);
+    if (rows.length) out[`${m[1]}()`] = rows;
+  }
+  return out;
+}
+
 const OPTION_CALL = /(append_single_option_line|get_option|create_line_with_widget|append_option_line|Option\s*\(\s*def\s*,|add_option_line)\s*\(?/;
 
-function extractLayout(tabSrc, fnNames, schemaKeys) {
-  const code = stripComments(tabSrc);
+/**
+ * Pages → groups → keys of the given Tab.cpp build functions.
+ * - optgroups are tracked per variable (`auto belt_og = page->new_optgroup(…)`), so keys appended
+ *   to an earlier group after another group was created land in the right one;
+ * - a page is per-extruder when its option lines take the extruder index (`…, extruder_idx)`),
+ *   or (PrusaSlicer style) its title is not a literal;
+ * - keys come from string literals on option lines, and from loops over a named list / table
+ *   function (`for (… opt : publishable_printer_retraction_options()) og->append_single_option_line(opt.key, …)`).
+ */
+function extractLayout(tabSrc, fnNames, schemaKeys, tables = {}) {
+  const code = stripIfZero(stripComments(tabSrc));
   const pages = [];
   for (const fn of fnNames) {
-    const re = new RegExp(`\\n[\\w:<>*& ]*\\b${fn.replace(/::/g, '::')}\\s*\\([^)]*\\)\\s*(?:const\\s*)?\\{`);
-    const m = re.exec(code);
-    if (!m) { console.warn(`layout: function ${fn} not found`); continue; }
-    const body = balanced(code, m.index + m[0].length - 1);
-    let page = null, group = null;
+    const body = functionBody(code, fn);
+    if (body === null) { console.warn(`layout: function ${fn} not found`); continue; }
+    const lists = namedLists(body, tables);
+    // The list declarations themselves are not option lines (their keys are placed where the loop runs).
+    const lines = body.replace(/(std::vector<std::string>\s+\w+\s*(?:=\s*)?)\{([^}]*)\}/g, (_, head, list) => `${head}{${list.replace(/[^\n]/g, '')}}`).split('\n');
+    let page = null;
+    const groupVars = {};
+    let currentVar = null;
+    let loop = null; // { v, values, depth }
     const seen = new Set(pages.flatMap((p) => p.groups.flatMap((g) => g.keys)));
-    const push = (key) => {
+    const push = (group, key) => {
       if (!schemaKeys.has(key) || !group) return;
       if (group.keys.includes(key)) return;
       if (!page.extruder && seen.has(key)) return;
       group.keys.push(key); seen.add(key);
     };
-    for (const line of body.split('\n')) {
+    for (let li = 0; li < lines.length; li++) {
+      let line = lines[li];
       let mm;
       if ((mm = /add_options_page\(\s*(?:_?L\(\s*)?(?:"([^"]+)"|(\w+))/.exec(line))) {
-        const extruder = !mm[1];
         const title = mm[1] ?? 'Extruder';
         page = pages.find((p) => p.title === title) ?? null;
-        if (!page) { page = { title, extruder, groups: [] }; pages.push(page); }
-        group = null;
+        if (!page) { page = { title, extruder: !mm[1], groups: [] }; pages.push(page); }
+        for (const k of Object.keys(groupVars)) delete groupVars[k];
+        currentVar = null;
         continue;
       }
       if (!page) continue;
-      if ((mm = /new_optgroup\w*\(\s*(?:_?L\(\s*)?(?:"([^"]*)"|(\w+))?/.exec(line))) {
-        const title = mm[1] ?? '';
-        group = page.groups.find((g) => g.title === title) ?? null;
+      if ((mm = /(?:(\w+)\s*=\s*)?\w+->new_optgroup\w*\(\s*(?:_?L\(\s*)?(?:"([^"]*)"|(\w+))?/.exec(line))) {
+        const title = mm[2] ?? '';
+        let group = page.groups.find((g) => g.title === title) ?? null;
         if (!group) { group = { title, keys: [] }; page.groups.push(group); }
+        const v = mm[1] ?? 'optgroup';
+        groupVars[v] = group;
+        currentVar = v;
+        continue;
+      }
+      // for (… v : NAME) / for (… v : table()) / for (… v : { "a", "b", … }) — the list may span lines.
+      if ((mm = /\bfor\s*\(.*?(?<![:\w])(\w+)\s*:(?!:)\s*(\{)?/.exec(line))) {
+        if (mm[2]) {
+          let text = line.slice(line.indexOf('{', mm.index));
+          while (!/\}\s*\)/.test(text) && li + 1 < lines.length) text += `\n${lines[++li]}`;
+          loop = { v: mm[1], values: literals(text.slice(0, text.search(/\}\s*\)/))) };
+          line = text.slice(text.search(/\}\s*\)/)).replace(/^\}\s*\)/, '');
+        } else {
+          const named = /:\s*([\w:]+(?:\(\))?)\s*\)/.exec(line);
+          if (named && lists[named[1]]) loop = { v: mm[1], values: lists[named[1]] };
+          continue;
+        }
+      }
+      // A key from the active loop variable: `opt.key`, `speed_axis`, `"machine_max_acceleration_" + axis`,
+      // `append_retraction_option(retraction_optgroup, opt_key, …)`.
+      if (loop && new RegExp(`(?:[(,]\\s*${loop.v}(?:\\.key)?\\s*[,)]|\\+\\s*${loop.v}\\b)`).test(line)) {
+        const target = /(\w+)(?:\.get\(\))?\s*->\s*\w+\(/.exec(line)?.[1] ?? /\w+\(\s*(\w+)\s*,/.exec(line)?.[1];
+        const group = groupVars[target] ?? groupVars[currentVar];
+        const prefix = new RegExp(`"([a-z][a-z0-9_]*_)"\\s*\\+\\s*${loop.v}\\b`).exec(line);
+        for (const v of loop.values) push(group, prefix ? prefix[1] + v : v);
+        loop = null;
         continue;
       }
       const isCall = OPTION_CALL.test(line);
       const bare = /^\s*"[a-z][a-z0-9_]*"\s*,?\s*$/.test(line) || /^\s*(?:"[a-z][a-z0-9_]*"\s*,\s*)+"[a-z][a-z0-9_]*"?\s*,?\s*$/.test(line);
       if (!isCall && !bare) continue;
-      // "machine_max_acceleration_" + axis  → expand over x/y/z/e
-      for (const pm of line.matchAll(/"([a-z][a-z0-9_]*_)"\s*\+\s*\w+/g)) for (const a of ['x', 'y', 'z', 'e']) push(pm[1] + a);
-      for (const km of line.matchAll(/"([a-z][a-z0-9_]*)"/g)) push(km[1]);
+      if (isCall && /\bextruder_idx\b/.test(line)) page.extruder = true;
+      const target = /(\w+)(?:\.get\(\))?\s*->\s*(?:append_single_option_line|get_option|append_line|append_option_line)\b/.exec(line)?.[1]
+        ?? /(?:create_line_with_widget|append_option_line)\(\s*(\w+)/.exec(line)?.[1]
+        ?? currentVar;
+      const group = groupVars[target] ?? groupVars[currentVar];
+      for (const pm of line.matchAll(/"([a-z][a-z0-9_]*_)"\s*\+\s*\w+/g)) for (const a of ['x', 'y', 'z', 'e']) push(group, pm[1] + a);
+      for (const km of line.matchAll(/"([a-z][a-z0-9_]*)"/g)) push(group, km[1]);
     }
   }
   return pages.map((p) => ({ ...p, groups: p.groups.filter((g) => g.keys.length) })).filter((p) => p.groups.length);
@@ -409,6 +632,274 @@ import type { EngineLayoutSource } from './types';
 
 export const ${name.replace(/[^a-z]/gi, '')}Generated: EngineLayoutSource = ${JSON.stringify(tabs, null, 2)};
 `;
+}
+
+// ---------------------------------------------------------------------------
+// Enable / show rules: ConfigManipulation::toggle_print_fff_options, Tab*::toggle_options
+// ---------------------------------------------------------------------------
+
+const norm = (s) => s.replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
+
+/** A reason / label expression: literal, a named wxString, or a ternary of those. */
+function parseText(expr, names) {
+  const e = expr.trim().replace(/^\((.*)\)$/s, '$1').trim();
+  // top-level ternary
+  let depth = 0, q = -1, colon = -1;
+  for (let i = 0; i < e.length; i++) {
+    const c = e[i];
+    if (c === '"') { i++; while (i < e.length && e[i] !== '"') { if (e[i] === '\\') i++; i++; } continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    else if (depth === 0 && c === '?' && q < 0) q = i;
+    else if (depth === 0 && c === ':' && q >= 0 && e[i + 1] !== ':' && e[i - 1] !== ':') { colon = i; break; }
+  }
+  if (q >= 0 && colon > q) return { if: norm(e.slice(0, q)), then: parseText(e.slice(q + 1, colon), names), else: parseText(e.slice(colon + 1), names) };
+  if (/^\w+$/.test(e)) {
+    if (names[e] !== undefined) return names[e];
+    throw new Error(`rules: unknown text name ${e}`);
+  }
+  if (/^(?:_L|L|_u8L|_)\s*\(/.test(e) || /^"/.test(e)) return literals(e).join('');
+  if (e === '{}' || e === '') return '';
+  throw new Error(`rules: unsupported text expression ${e}`);
+}
+
+/**
+ * Walk a C++ function body and collect its toggle calls in order, with the `if` guards that
+ * enclose them, plus the local variables they read (initialiser text, for drift checks).
+ */
+function extractToggles(body) {
+  const toggles = [];
+  const locals = {};
+  const texts = {}; // wxString name → text
+  const lists = {}; // std::vector<std::string> name → keys
+  const PAGE_GUARD = /^!?m_active_page->title\(\)\s*[!=]=\s*(?:_?L\()?"[^"]*"\)?$/;
+  const cleanGuard = (g) => {
+    const terms = splitBool(g, '&&').filter((t) => !PAGE_GUARD.test(norm(t)) && norm(t) !== 'm_extruders_count > 0');
+    return terms.length ? norm(terms.join(' && ')) : null;
+  };
+
+  function splitBool(s, op) {
+    const out = []; let depth = 0; let start = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === '"') { i++; while (i < s.length && s[i] !== '"') { if (s[i] === '\\') i++; i++; } continue; }
+      if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') depth--;
+      else if (depth === 0 && s.startsWith(op, i)) { out.push(s.slice(start, i)); start = i + op.length; i += op.length - 1; }
+    }
+    out.push(s.slice(start));
+    return out.map((x) => x.trim());
+  }
+
+  function statement(st, guards, loopVar, loopKey) {
+    let m;
+    const subst = (s) => (loopVar ? s.replace(new RegExp(`\\b${loopVar}\\b`, 'g'), '$key') : s);
+    if ((m = /^(?:\w+\.)?(toggle_field|toggle_line|toggle_option|set_option_label)\s*\(([\s\S]*)\)$/.exec(st))) {
+      const argv = splitTop(m[2]);
+      const keyArg = argv[0];
+      const key = loopVar && keyArg === loopVar ? loopKey : literals(keyArg)[0];
+      if (!key) throw new Error(`rules: no key in ${st}`);
+      if (m[1] === 'set_option_label') {
+        toggles.push({ kind: 'label', key, ...(guards.length ? { guards } : {}), text: parseText(subst(argv[1]), texts) });
+        return;
+      }
+      const kind = m[1] === 'toggle_line' ? 'show' : 'enable';
+      const idx = argv[2] ?? '-1';
+      const entry = { kind, key, when: norm(subst(argv[1])) };
+      if (guards.length) entry.guards = guards;
+      if (/variant_index/.test(idx)) entry.perVariant = true;
+      if (argv[3] !== undefined) {
+        const r = parseText(argv[3], texts);
+        if (r !== '') entry.reason = r;
+      }
+      toggles.push(entry);
+      return;
+    }
+    // const wxString name = _L("…") / ternary
+    if ((m = /^(?:const\s+)?wxString\s+(\w+)\s*=\s*([\s\S]+)$/.exec(st))) { texts[m[1]] = parseText(m[2], texts); return; }
+    // std::vector<std::string> name = {…} / name = {…}
+    if ((m = /^(?:(?:const\s+)?std::vector<std::string>\s+)?(\w+)\s*=?\s*\{([\s\S]*)\}$/.exec(st)) && (/std::vector/.test(st) || lists[m[1]] !== undefined)) {
+      lists[m[1]] = literals(m[2]); return;
+    }
+    if (/^\w+\.resize\(0\)$/.test(st)) return;
+    // Local scalar declarations / reassignments (the rule conditions read them).
+    // (First declaration wins: a later one is a shadowing local in an unrelated block.)
+    if ((m = /^(?:const\s+)?(?:bool|int|double|float|auto|size_t|unsigned int|std::string|[A-Z]\w*(?:::\w+)?)\s*[&*]?\s+(\w+)\s*=\s*([\s\S]+)$/.exec(st))) {
+      if (locals[m[1]] === undefined) locals[m[1]] = norm(m[2]);
+      return;
+    }
+    if ((m = /^(?:const\s+)?(?:bool|int|double|float)\s+(\w+)$/.exec(st))) { locals[m[1]] = ''; return; }
+    if ((m = /^(\w+)\s*=\s*([\s\S]+)$/.exec(st)) && locals[m[1]] !== undefined) { locals[m[1]] = `${locals[m[1]]} ; = ${norm(m[2])}`; }
+  }
+
+  function walk(src, guards, loopVar, loopKey) {
+    let i = 0;
+    const n = src.length;
+    const skipWs = () => { while (i < n && /\s/.test(src[i])) i++; };
+    while (i < n) {
+      skipWs();
+      if (i >= n) break;
+      const rest = src.slice(i);
+      let m;
+      if (src[i] === '{') { const b = balanced(src, i); walk(b, guards, loopVar, loopKey); i += b.length + 2; continue; }
+      if ((m = /^if\s*\(/.exec(rest))) {
+        const open = i + m[0].length - 1;
+        const cond = balanced(src, open);
+        i = open + cond.length + 2;
+        const thenStart = i;
+        i = skipStatement(src, i);
+        const thenSrc = src.slice(thenStart, i);
+        const g = cleanGuard(cond);
+        walk(thenSrc, g ? [...guards, g] : guards, loopVar, loopKey);
+        const save = i; skipWs();
+        if (/^else\b/.test(src.slice(i))) {
+          i += 4;
+          const elseStart = i;
+          i = skipStatement(src, i);
+          walk(src.slice(elseStart, i), g ? [...guards, `!(${g})`] : guards, loopVar, loopKey);
+        } else i = save;
+        continue;
+      }
+      if ((m = /^for\s*\(/.exec(rest))) {
+        const open = i + m[0].length - 1;
+        const head = balanced(src, open);
+        i = open + head.length + 2;
+        const bodyStart = i;
+        i = skipStatement(src, i);
+        const loopBody = src.slice(bodyStart, i);
+        const h = /(\w+)\s*:\s*([\s\S]+)$/.exec(head);
+        if (!h) continue;
+        const listExpr = h[2].trim();
+        const keys = listExpr.startsWith('{') ? literals(listExpr) : lists[listExpr];
+        if (!keys) continue; // a loop over something else (values, extruders): no toggles of ours
+        for (const k of keys) walk(loopBody, guards, h[1], k);
+        continue;
+      }
+      const end = skipStatement(src, i);
+      const st = src.slice(i, end).trim().replace(/;$/, '').trim();
+      i = end;
+      if (st) statement(st, guards, loopVar, loopKey);
+    }
+  }
+
+  function skipStatement(src, i) {
+    const n = src.length;
+    while (i < n && /\s/.test(src[i])) i++;
+    if (src[i] === '{') return i + balanced(src, i).length + 2;
+    const rest = src.slice(i);
+    if (/^(if|for|while)\s*\(/.test(rest)) {
+      const open = src.indexOf('(', i);
+      let j = open + balanced(src, open).length + 2;
+      j = skipStatement(src, j);
+      const k = j; let t = k; while (t < n && /\s/.test(src[t])) t++;
+      if (/^if/.test(rest) && /^else\b/.test(src.slice(t))) return skipStatement(src, t + 4);
+      return j;
+    }
+    let depth = 0;
+    for (let j = i; j < n; j++) {
+      const c = src[j];
+      if (c === '"' || c === '\'') { const q = c; j++; while (j < n && src[j] !== q) { if (src[j] === '\\') j++; j++; } continue; }
+      if (c === '(' || c === '{' || c === '[') depth++;
+      else if (c === ')' || c === '}' || c === ']') depth--;
+      else if (c === ';' && depth === 0) return j + 1;
+    }
+    return n;
+  }
+
+  walk(body, [], null, null);
+  return { toggles, locals };
+}
+
+function extractRules(tabSrc, cmSrc) {
+  const tab = stripIfZero(stripComments(tabSrc));
+  const cm = stripIfZero(stripComments(cmSrc));
+  const out = {};
+  const parts = {
+    print: [functionBody(cm, 'ConfigManipulation::toggle_print_fff_options'), functionBody(tab, 'TabPrint::toggle_options')],
+    printer: [functionBody(tab, 'TabPrinter::toggle_options')],
+    filament: [functionBody(tab, 'TabFilament::toggle_options')],
+  };
+  for (const [family, bodies] of Object.entries(parts)) {
+    const toggles = []; const locals = {};
+    for (const b of bodies) {
+      if (b === null) { console.warn(`rules: a ${family} toggle function was not found`); continue; }
+      const r = extractToggles(b);
+      toggles.push(...r.toggles);
+      for (const [k, v] of Object.entries(r.locals)) if (locals[k] === undefined) locals[k] = v;
+    }
+    // Only locals a condition can read.
+    const used = new Set();
+    const texts = toggles.flatMap((t) => [t.when ?? '', ...(t.guards ?? []), ...textConds(t.reason), ...textConds(t.text)]);
+    // (Identifiers used as a receiver — `printer_cfg.opt_bool(…)` — are configs, not values.)
+    const scan = (s) => { for (const m of s.matchAll(/\b([a-zA-Z_]\w*)\b(?!\s*(?:\.|->))/g)) { const id = m[1]; if (locals[id] !== undefined && !used.has(id)) { used.add(id); scan(locals[id]); } } };
+    texts.forEach(scan);
+    out[family] = { toggles, locals: Object.fromEntries(Object.entries(locals).filter(([k]) => used.has(k)).sort(([a], [b]) => a.localeCompare(b))) };
+  }
+  return out;
+}
+
+/**
+ * Enum constants the rule conditions compare against (`InfillPattern::ipGyroid`, `btNoBrim`), mapped to
+ * the config value strings through PrintConfig.cpp's s_keys_map_* tables.
+ */
+function ruleEnums(rules, enumMaps) {
+  const out = {};
+  const texts = Object.values(rules).flatMap((r) => [...Object.values(r.locals), ...r.toggles.flatMap((t) => [t.when ?? '', ...(t.guards ?? []), ...textConds(t.reason), ...textConds(t.text)])]);
+  const lookup = (name) => {
+    const parts = name.split('::');
+    const c = parts.pop();
+    if (parts.length && enumMaps[parts[parts.length - 1]]?.[c] !== undefined) return enumMaps[parts[parts.length - 1]][c];
+    const hits = Object.values(enumMaps).filter((mm) => mm[c] !== undefined).map((mm) => mm[c]);
+    if (!hits.length) return undefined;
+    if (new Set(hits).size > 1 && !parts.length) throw new Error(`rules: ambiguous enum constant ${name}`);
+    return hits[0];
+  };
+  for (const t of texts) {
+    for (const m of t.matchAll(/\b(?:[A-Z]\w*::)?(?:[a-z]{1,4}[A-Z0-9]\w*|[A-Z]\w*)\b/g)) {
+      const name = m[0];
+      if (out[name] !== undefined || !/::|^[a-z]/.test(name)) continue;
+      const v = lookup(name);
+      if (v !== undefined) out[name] = v;
+    }
+  }
+  return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
+}
+const textConds = (t) => (t && typeof t === 'object' ? [t.if, ...textConds(t.then), ...textConds(t.else)] : []);
+
+// ---------------------------------------------------------------------------
+// G-code placeholders (EditGCodeDialog::init_params_list)
+// ---------------------------------------------------------------------------
+
+const PLACEHOLDER_CLASSES = [
+  ['readOnlyStates', 'ReadOnlySlicingStatesConfigDef'],
+  ['readWriteStates', 'ReadWriteSlicingStatesConfigDef'],
+  ['otherStates', 'OtherSlicingStatesConfigDef'],
+  ['statistics', 'PrintStatisticsConfigDef'],
+  ['objects', 'ObjectsInfoConfigDef'],
+  ['dimensions', 'DimensionsConfigDef'],
+  ['temperatures', 'TemperaturesConfigDef'],
+  ['timestamps', 'TimestampsConfigDef'],
+  ['presets', 'OtherPresetsConfigDef'],
+  ['specific', 'CustomGcodeSpecificConfigDef'],
+];
+const VECTOR_TYPES = new Set(['floats', 'ints', 'strings', 'bools', 'percents', 'floatsOrPercents', 'points']);
+
+function extractPlaceholders(pcSrc) {
+  const code = expandMacros(stripComments(pcSrc));
+  const groups = {};
+  for (const [id, cls] of PLACEHOLDER_CLASSES) {
+    const body = functionBody(code, `${cls}::${cls}`);
+    if (body === null) { console.warn(`placeholders: ${cls} not found`); groups[id] = []; continue; }
+    const opts = extractSchema(`\n${body}\n`, { overrideKeys: [], axisDefaults: null, prefixForOverride: (k) => k });
+    groups[id] = Object.entries(opts).map(([key, d]) => [key, VECTOR_TYPES.has(d.type), d.label || d.fullLabel || key, d.tooltip]);
+  }
+  const mapM = /s_CustomGcodeSpecificPlaceholders\s*\{/.exec(code);
+  const specificFor = {};
+  if (mapM) {
+    const body = balanced(code, mapM.index + mapM[0].length - 1);
+    for (const row of body.matchAll(/\{\s*"(\w+)"\s*,\s*\{([^}]*)\}\s*\}/g)) specificFor[row[1]] = literals(row[2]);
+  }
+  return { groups, specificFor };
 }
 
 // ---------------------------------------------------------------------------
@@ -465,17 +956,23 @@ function loadConstants(texts) {
 }
 
 function buildOrca() {
+  const version = orcaVersion();
+  const note = `OrcaSlicer ${version}${ORCA_REF ? ` (${ORCA_REF})` : ''}`;
   for (const k of Object.keys(CONSTANTS)) delete CONSTANTS[k];
   try { loadConstants([orcaFile('libslic3r/PrintConfigConstants.hpp'), orcaFile('libslic3r/PrintConfig.hpp'), orcaFile('libslic3r/libslic3r.h')]); } catch { /* optional */ }
   const pc = orcaFile('libslic3r/PrintConfig.cpp');
   const hpp = stripComments(orcaFile('libslic3r/PrintConfig.hpp'));
   const preset = stripComments(orcaFile('libslic3r/Preset.cpp'));
-  const overrideKeys = stringListNamed(stripComments(pc), 'filament_extruder_override_keys');
-  const options = extractSchema(pc, {
+  // Only PrintConfigDef, like cs_describe_config: the CLI / slicing-state / placeholder ConfigDefs
+  // further down are not preset options.
+  const pcCode = stripComments(pc);
+  const cliStart = pcCode.search(/\nCLIActionsConfigDef::CLIActionsConfigDef\(\)/);
+  const overrideKeys = stringListNamed(pcCode, 'filament_extruder_override_keys');
+  const options = extractSchema(cliStart > 0 ? pcCode.slice(0, cliStart) : pcCode, {
     overrideKeys, axisDefaults: orcaAxisDefaults,
     prefixForOverride: (k) => k.replace(/^filament_/, ''),
   });
-  const extruderKeys = stringListNamed(stripComments(pc), 'm_extruder_option_keys');
+  const extruderKeys = stringListNamed(pcCode, 'm_extruder_option_keys');
   const objectKeys = new Set([...classMembers(hpp, 'PrintObjectConfig'), ...classMembers(hpp, 'PrintRegionConfig')]);
   assignScopes(options, {
     print: stringListNamed(preset, 's_Preset_print_options'),
@@ -483,17 +980,67 @@ function buildOrca() {
     machine: [...stringListNamed(preset, 's_Preset_printer_options'), ...stringListNamed(preset, 's_Preset_machine_limits_options'), ...extruderKeys],
     objectKeys,
   });
-  const schema = { engine: 'orca', version: '2.4.2', options };
-  writeJson('src/settings/__fixtures__/orca-schema.sample.json', schema);
+  writeJson('src/settings/__fixtures__/orca-schema.sample.json', { engine: 'orca', version, options });
 
   const keys = new Set(Object.keys(options));
+  if (SCHEMA_JSON) for (const k of Object.keys(JSON.parse(readFileSync(SCHEMA_JSON, 'utf8')).options ?? {})) keys.add(k);
   const tab = orcaFile('slic3r/GUI/Tab.cpp');
+  let tables = {};
+  try { tables = tableFunctions(stripComments(orcaFile('libslic3r/PublishSettings.cpp'))); } catch { /* pre-2.5 */ }
   const layout = {
-    print: extractLayout(tab, ['TabPrint::build'], keys),
-    filament: extractLayout(tab, ['TabFilament::build', 'TabFilament::add_filament_overrides_page'], keys),
-    machine: extractLayout(tab, ['TabPrinter::build_fff', 'TabPrinter::build_kinematics_page', 'TabPrinter::build_unregular_pages'], keys),
+    print: extractLayout(tab, ['TabPrint::build'], keys, tables),
+    filament: extractLayout(tab, ['TabFilament::build', 'TabFilament::add_filament_overrides_page'], keys, tables),
+    machine: extractLayout(tab, ['TabPrinter::build_fff', 'TabPrinter::build_kinematics_page', 'TabPrinter::build_unregular_pages'], keys, tables),
   };
-  writeText('src/settings/layout/orca.generated.ts', emitLayoutTs('orca', layout, 'OrcaSlicer v2.4.2 src/slic3r/GUI/Tab.cpp'));
+  writeText('src/settings/layout/orca.generated.ts', emitLayoutTs('orca', layout, `${note} src/slic3r/GUI/Tab.cpp`));
+
+  const rules = extractRules(tab, orcaFile('slic3r/GUI/ConfigManipulation.cpp'));
+  rules.enums = ruleEnums(rules, parseEnumMaps(pcCode));
+  writeText('src/settings/rules/orca.generated.ts', `/**
+ * GENERATED by scripts/dev/extract-engine-meta.mjs from ${note} src/slic3r/GUI/ConfigManipulation.cpp
+ * (toggle_print_fff_options) and Tab.cpp (TabPrint / TabPrinter / TabFilament ::toggle_options) — do not edit.
+ *
+ * Every toggle_field / toggle_option (\`enable\`), toggle_line (\`show\`) and set_option_label (\`label\`) call in
+ * source order, loops expanded per key (\`$key\` in a condition is the loop's key), with the \`if\` guards around
+ * it. \`when\` / \`guards\` are the C++ conditions verbatim (whitespace collapsed): ./orca.ts ports each one, and
+ * ./rules.test.ts fails when a condition or a local it reads has no port or its C++ text changed.
+ */
+import type { RulesSource } from './types';
+
+export const orcaRulesGenerated: RulesSource = ${JSON.stringify(rules, null, 2)};
+`);
+
+  const ph = extractPlaceholders(pc);
+  writeText('src/dialogs/gcode/placeholders.generated.ts', `/**
+ * GENERATED by scripts/dev/extract-engine-meta.mjs from ${note} src/libslic3r/PrintConfig.cpp — do not edit.
+ * The *ConfigDef classes EditGCodeDialog lists (slicing states, statistics, objects, dimensions,
+ * temperatures, timestamps, presets, G-code specific) as [key, vector, label, tooltip], and
+ * s_CustomGcodeSpecificPlaceholders (which specific placeholders each G-code option gets).
+ */
+export type PlaceholderDef = [key: string, vector: boolean, label: string, tooltip: string];
+export const orcaPlaceholderGroups: Record<${PLACEHOLDER_CLASSES.map(([id]) => `'${id}'`).join(' | ')}, PlaceholderDef[]> = ${JSON.stringify(ph.groups, null, 1)};
+export const orcaSpecificPlaceholders: Record<string, string[]> = ${JSON.stringify(ph.specificFor, null, 1)};
+`);
+}
+
+/**
+ * MaterialType.cpp's table (name, nozzle min / max, chamber min / max, …) and its defaults, for the
+ * filament checks ConfigManipulation runs (recommended nozzle / chamber temperature ranges).
+ */
+function buildOrcaMaterials() {
+  const version = orcaVersion();
+  const src = stripComments(orcaFile('libslic3r/MaterialType.cpp'));
+  const rows = [...src.matchAll(/\{\s*"([^"]+)"\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,/g)]
+    .map((m) => [m[1], +m[2], +m[3], +m[4], +m[5]]);
+  const c = (name) => { const m = new RegExp(`${name}\\s*=\\s*(-?[\\d.]+)`).exec(src); return m ? +m[1] : undefined; };
+  if (!rows.length) throw new Error('MaterialType.cpp: no table rows found');
+  writeText('src/settings/rules/materialTypes.generated.ts', `/**
+ * GENERATED by scripts/dev/extract-engine-meta.mjs from OrcaSlicer ${version}${ORCA_REF ? ` (${ORCA_REF})` : ''} src/libslic3r/MaterialType.cpp — do not edit.
+ * [filament type, nozzle min °C, nozzle max °C, chamber min °C, chamber max °C]; lookups are by exact name.
+ */
+export const MATERIAL_DEFAULTS = { minTemp: ${c('DEFAULT_MIN_TEMP')}, maxTemp: ${c('DEFAULT_MAX_TEMP')}, chamberMin: ${c('DEFAULT_CHAMBER_MIN_TEMP')}, chamberMax: ${c('DEFAULT_CHAMBER_MAX_TEMP')} };
+export const MATERIAL_TYPES: Array<[string, number, number, number, number]> = ${JSON.stringify(rows)};
+`);
 }
 
 function buildPreflight() {
@@ -547,5 +1094,6 @@ export const orcaKeyMapGenerated: Record<'machine' | 'filament' | 'process', Rec
 `);
 }
 
-buildOrca();
-try { buildPreflight(); } catch (e) { console.warn(`preflight extraction failed: ${e.message}`); }
+if (ONLY === 'materials') buildOrcaMaterials();
+else if (ONLY !== 'preflight') { buildOrca(); buildOrcaMaterials(); }
+if (ONLY !== 'orca' && ONLY !== 'materials') { try { buildPreflight(); } catch (e) { console.warn(`preflight extraction failed: ${e.message}`); } }

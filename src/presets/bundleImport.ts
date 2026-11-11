@@ -5,6 +5,14 @@
  *   - flat bundle `{ "<name>": {type, inherits, ...}, ... }` (orca_system_profiles.json style)
  *   - zip archives (.zip, .orca_printer, .orca_filament, .bbscfg, .bbsflmt) → every .json inside
  * Returns raw presets with a known kind; the store resolves parents and converts keys.
+ *
+ * Printer config bundles may carry the printer's custom bed texture / model
+ * (Orca 2.5.0 append_printer_bed_assets / pending_bed_assets, PresetBundle.cpp):
+ * files `bed/<n>/texture.png|svg` and `bed/<n>/model.stl`, listed in
+ * bundle_structure.json as
+ *   "printer_asset": { "printer/<name>.json": { "bed_custom_texture": "bed/0/texture.png", ... } }.
+ * They come back on that printer's ImportedRaw.bedAssets; the importer stores
+ * them and points the printer's option at the stored copy.
  */
 import type { RawPreset } from './inherit';
 import { kindFromJsonType, type PresetKind } from './types';
@@ -16,6 +24,63 @@ export interface ImportedRaw {
   raw: RawPreset;
   /** Source file (inside an archive) for messages. */
   source: string;
+  /** Bed texture / model packed for this printer in a printer config bundle. */
+  bedAssets?: Partial<Record<BedAssetOption, BedAssetFile>>;
+}
+
+/** The two bed files a printer bundle can carry (Orca k_bed_asset_slots). */
+export type BedAssetOption = 'bed_custom_texture' | 'bed_custom_model';
+export const BED_ASSET_SLOTS: ReadonlyArray<{ option: BedAssetOption; stem: string }> = [
+  { option: 'bed_custom_texture', stem: 'texture' },
+  { option: 'bed_custom_model', stem: 'model' },
+];
+/** A bed file inside a bundle: its file name (texture.png, model.stl…) and bytes. */
+export interface BedAssetFile { name: string; data: Uint8Array }
+
+/**
+ * Extension (with the dot) of `path` when the bed dialog accepts it for
+ * `option` (texture: .png / .svg, model: .stl, any case); '' otherwise
+ * (Orca bed_asset_extension).
+ */
+export function bedAssetExtension(path: string, option: BedAssetOption): string {
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  const dot = path.lastIndexOf('.');
+  if (dot < 0 || dot <= slash || dot + 1 >= path.length) return '';
+  const ext = path.slice(dot);
+  const ok = option === 'bed_custom_texture' ? /^\.(png|svg)$/i.test(ext) : /^\.stl$/i.test(ext);
+  return ok ? ext : '';
+}
+
+/** Orca accepted_bed_zip_name: only bed/<digits>/<stem><ext>, no "..". Returns the normalised name or null. */
+export function acceptedBedZipName(raw: string, option: BedAssetOption): string | null {
+  const name = raw.replace(/\\/g, '/');
+  if (name.includes('..')) return null;
+  const m = /^bed\/(\d+)\/([^/]+)$/.exec(name);
+  if (!m) return null;
+  const stem = BED_ASSET_SLOTS.find((s) => s.option === option)!.stem;
+  const ext = bedAssetExtension(m[2], option);
+  return ext && m[2] === stem + ext ? name : null;
+}
+
+/** Bed files per printer zip entry, from bundle_structure.json "printer_asset" (Orca pending_bed_assets + stage_bed_asset). */
+function bundleBedAssets(manifest: unknown, files: Record<string, Uint8Array>, warnings: string[]): Map<string, Partial<Record<BedAssetOption, BedAssetFile>>> {
+  const out = new Map<string, Partial<Record<BedAssetOption, BedAssetFile>>>();
+  if (!isRecord(manifest) || !isRecord(manifest.printer_asset)) return out;
+  const entries = new Map(Object.entries(files).map(([k, v]) => [k.replace(/\\/g, '/'), v]));
+  for (const [printerKey, perPrinter] of Object.entries(manifest.printer_asset)) {
+    if (!entries.has(printerKey) || !isRecord(perPrinter)) continue;
+    const got: Partial<Record<BedAssetOption, BedAssetFile>> = {};
+    for (const { option } of BED_ASSET_SLOTS) {
+      const raw = perPrinter[option];
+      if (typeof raw !== 'string') continue;
+      const zipName = acceptedBedZipName(raw, option);
+      const data = zipName ? entries.get(zipName) : undefined;
+      if (!zipName || !data) { warnings.push(`${printerKey}: bed file "${raw}" ${zipName ? 'is missing from the bundle' : 'is not a bed texture / model'}, skipped`); continue; }
+      got[option] = { name: zipName.slice(zipName.lastIndexOf('/') + 1), data };
+    }
+    if (Object.keys(got).length) out.set(printerKey, got);
+  }
+  return out;
 }
 
 export interface ImportReadResult {
@@ -72,9 +137,14 @@ export async function readPresetFile(name: string, data: Uint8Array): Promise<Im
     if (!unzipSync) return { presets, warnings: ['Zip import is unavailable (fflate not bundled)'] };
     let files: Record<string, Uint8Array>;
     try { files = unzipSync(data); } catch (e) { return { presets, warnings: [`${name}: not a readable zip (${(e as Error).message})`] }; }
+    let manifest: unknown = null;
     for (const [path, bytes] of Object.entries(files)) {
+      if (path === 'bundle_structure.json') { try { manifest = JSON.parse(dec.decode(bytes)); } catch { /* no manifest */ } continue; }
       if (!/\.json$/i.test(path) || /bundle_structure\.json$/i.test(path) || /(^|\/)\._/.test(path)) continue;
       try { collect(JSON.parse(dec.decode(bytes)), path, presets, warnings); } catch { warnings.push(`${path}: invalid JSON`); }
+    }
+    for (const [entry, assets] of bundleBedAssets(manifest, files, warnings)) {
+      for (const p of presets) if (p.kind === 'printer' && p.source.replace(/\\/g, '/') === entry) p.bedAssets = assets;
     }
     if (!presets.length) warnings.push(`${name}: no presets found in archive`);
     return { presets, warnings };

@@ -6,6 +6,7 @@
  */
 import { toast } from '../ui';
 import { activeGcode } from '../app/slice';
+import { gcodeForOutput } from '../plugins/gcode';
 import { importBuffer } from '../app/shell/actions';
 import { safeFileName } from '../app/shell/download';
 import { activePlate, getMesh, objectsOnPlate, plates, projectName } from '../project/store';
@@ -95,6 +96,12 @@ export async function exportTo(kind: 'gcode' | '3mf', workspaceId: string, path:
   if (!payload) {
     toast.info(kind === 'gcode' ? 'Slice the plate before exporting G-code.' : 'The plate is empty. Import a model first.');
     return false;
+  }
+  if (kind === 'gcode') {
+    // Post-processing plugins run on a copy for every export (Orca).
+    const out = await gcodeForOutput(new Uint8Array(await payload.blob.arrayBuffer()), 'File', path.split('/').pop() || payload.name);
+    if (!out) return false;
+    payload = { ...payload, blob: new Blob([out as BlobPart], { type: 'text/x-gcode' }) };
   }
   const ok = await writeOrReport(workspaceId, path, payload.blob, path.split('/').pop() || path);
   if (ok) toast.success(`Exported to ${workspaceName(workspaceId)}.`, { detail: path, timeout: 2200 });

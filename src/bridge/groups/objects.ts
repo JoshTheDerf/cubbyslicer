@@ -274,7 +274,7 @@ export function objectTools(): BridgeTool[] {
       name: 'update_objects',
       description:
         'Change object properties: name (one object), visible, printable (false = not sliced), color (CSS "#rrggbb" for the 3D view, "" = default) and filament ' +
-        '(1-based filament / extruder the object prints with; Full Spectrum mixed filaments follow the physical ones). Each property is one undo step.',
+        '(1-based filament / extruder the object prints with; mixed filaments follow the physical ones). Each property is one undo step.',
       inputSchema: obj({
         ids: strList('Object ids.'), name: str('New name (one object).'), visible: bool('Show / hide.'), printable: bool('Print / skip.'),
         color: str('"#rrggbb" or "".'), filament: num('Filament number.'),

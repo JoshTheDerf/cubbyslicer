@@ -7,22 +7,30 @@
  * Orca/Bambu `Metadata/model_settings.config` or Prusa
  * `Metadata/Slic3r_PE_model.config` when present.
  */
-import { unzipSync, type Unzipped } from 'fflate';
+import type { Unzipped } from 'fflate';
 import { GrowF32, GrowU32, ImportError, LIMITS, checkTriangleBudget } from '../mesh';
 import { mat4Identity, mat4Multiply, type Mat4 } from '../math';
 import type { ParsedObject } from '../types';
 import type { PaintLayer, PaintMap } from '../../engine/types';
 import { attr, parseAttrs, scanXml } from './xml';
+import { findEntry, normPath, unzipArchive } from './archive';
+
+export { findEntry, normPath };
 
 const UNIT_SCALE: Record<string, number> = {
   micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000,
 };
 
 /** Orca / Bambu / Prusa per-triangle paint attributes → paint layers. */
-const PAINT_ATTRS: Array<[string, PaintLayer]> = [
-  ['paint_supports', 'support'], ['paint_seam', 'seam'], ['paint_color', 'color'], ['paint_fuzzy_skin', 'fuzzy'],
-  ['slic3rpe:custom_supports', 'support'], ['slic3rpe:custom_seam', 'seam'], ['slic3rpe:mmu_segmentation', 'color'],
-];
+const PAINT_ATTRS: Record<string, PaintLayer> = {
+  paint_supports: 'support', paint_seam: 'seam', paint_color: 'color', paint_fuzzy_skin: 'fuzzy',
+  'slic3rpe:custom_supports': 'support', 'slic3rpe:custom_seam': 'seam', 'slic3rpe:mmu_segmentation': 'color',
+};
+/** Other per-triangle attributes Orca writes (texture displacement masks, BBS face properties): kept as-is. */
+const KEPT_TRI_ATTR = /^(paint_texture_\d+|face_property)$/;
+
+/** Per-triangle attributes CubbySlicer doesn't edit: attribute name → [triangle, value]. */
+export type TriangleAttrs = Record<string, Array<[number, string]>>;
 
 export interface ObjDef {
   id: string;
@@ -32,13 +40,16 @@ export interface ObjDef {
   indices?: Uint32Array;
   /** Painted triangles (index into `indices` / 3) per layer. */
   paint?: Partial<Record<PaintLayer, PaintMap>>;
+  /** Orca per-triangle attributes we don't edit (paint_texture_N, face_property). */
+  triangleAttrs?: TriangleAttrs;
   components: Array<{ key: string; transform: Mat4 }>;
 }
 
 export interface ModelPart {
   unit: number;
   objects: Map<string, ObjDef>;
-  build: Array<{ key: string; transform: Mat4; printable: boolean }>;
+  /** `autoDrop`: the 2.4.x Orca build-item auto_drop attribute, when present. */
+  build: Array<{ key: string; transform: Mat4; printable: boolean; autoDrop?: boolean }>;
 }
 
 /** Parse the 12-number 3MF transform ("m00 m01 m02 m10 … m32") into column-major 4x4. */
@@ -52,18 +63,6 @@ export function parse3mfTransform(s: string | undefined, warnings?: string[]): M
   return [v[0], v[1], v[2], 0, v[3], v[4], v[5], 0, v[6], v[7], v[8], 0, v[9], v[10], v[11], 1];
 }
 
-export function normPath(p: string): string {
-  let s = p.replace(/\\/g, '/');
-  if (s.startsWith('/')) s = s.slice(1);
-  try { s = decodeURIComponent(s); } catch { /* keep raw */ }
-  return s;
-}
-
-export function findEntry(files: Unzipped, path: string): string | undefined {
-  const want = normPath(path).toLowerCase();
-  return Object.keys(files).find((k) => k.toLowerCase() === want);
-}
-
 export function parseModelPart(bytes: Uint8Array, path: string, warnings: string[]): ModelPart {
   const part: ModelPart = { unit: 1, objects: new Map(), build: [] };
   let cur: ObjDef | null = null;
@@ -72,6 +71,7 @@ export function parseModelPart(bytes: Uint8Array, path: string, warnings: string
   let inMesh = false;
   let totalTris = 0;
   let paint: Partial<Record<PaintLayer, PaintMap>> | null = null;
+  let extra: TriangleAttrs | null = null;
   const keyOf = (id: string, p?: string) => `${p ? normPath(p) : path}#${id}`;
 
   scanXml(bytes, (t) => {
@@ -113,18 +113,21 @@ export function parseModelPart(bytes: Uint8Array, path: string, warnings: string
             if (bad) warnings.push(`Object ${cur.id}: skipped ${bad} triangle(s) with invalid vertex indices`);
             cur.positions = verts.toArray();
             cur.indices = w === idx.length ? idx : idx.slice(0, w);
+            const fix = (m: Array<[number, string]>) => (bad ? m.filter((e) => remap[e[0]] >= 0).map((e) => [remap[e[0]], e[1]] as [number, string]) : m);
             if (paint) {
-              for (const layer of Object.keys(paint) as PaintLayer[]) {
-                paint[layer] = bad ? paint[layer]!.filter((e) => remap[e[0]] >= 0).map((e) => [remap[e[0]], e[1]] as [number, string]) : paint[layer];
-              }
+              for (const layer of Object.keys(paint) as PaintLayer[]) paint[layer] = fix(paint[layer]!);
               cur.paint = paint;
+            }
+            if (extra) {
+              for (const name of Object.keys(extra)) extra[name] = fix(extra[name]);
+              cur.triangleAttrs = extra;
             }
           }
           verts = tris = null;
-          paint = null;
+          paint = extra = null;
         } else if (!t.selfClosing) {
           inMesh = true;
-          paint = null;
+          paint = extra = null;
           verts = new GrowF32(4096);
           tris = new GrowU32(4096);
         }
@@ -138,11 +141,13 @@ export function parseModelPart(bytes: Uint8Array, path: string, warnings: string
         if (inMesh && tris && !t.close) {
           const a = Number(attr(t.attrs, 'v1')), b = Number(attr(t.attrs, 'v2')), c = Number(attr(t.attrs, 'v3'));
           if (Number.isInteger(a) && Number.isInteger(b) && Number.isInteger(c) && a >= 0 && b >= 0 && c >= 0) {
-            if (t.attrs.includes('paint') || t.attrs.includes('custom_') || t.attrs.includes('mmu_')) {
+            if (moreThanThreeAttrs(t.attrs)) {
               const k = tris.length / 3;
-              for (const [name, layer] of PAINT_ATTRS) {
-                const v = attr(t.attrs, name);
-                if (v) ((paint ??= {})[layer] ??= []).push([k, v]);
+              for (const [name, v] of Object.entries(parseAttrs(t.attrs))) {
+                if (!v || name === 'v1' || name === 'v2' || name === 'v3') continue;
+                const layer = PAINT_ATTRS[name];
+                if (layer) ((paint ??= {})[layer] ??= []).push([k, v]);
+                else if (KEPT_TRI_ATTR.test(name)) ((extra ??= {})[name] ??= []).push([k, v]);
               }
             }
             tris.push3(a, b, c);
@@ -168,6 +173,7 @@ export function parseModelPart(bytes: Uint8Array, path: string, warnings: string
               key: keyOf(a.objectid, p),
               transform: parse3mfTransform(a.transform, warnings),
               printable: a.printable !== '0',
+              ...(a.auto_drop !== undefined ? { autoDrop: (Number.parseInt(a.auto_drop, 10) || 0) !== 0 } : {}),
             });
           }
         }
@@ -175,6 +181,13 @@ export function parseModelPart(bytes: Uint8Array, path: string, warnings: string
     }
   });
   return part;
+}
+
+/** A triangle with more than v1 / v2 / v3 (painted, or other per-triangle data). */
+function moreThanThreeAttrs(raw: string): boolean {
+  let n = 0;
+  for (let i = 0; i < raw.length; i++) if (raw.charCodeAt(i) === 61 && ++n > 3) return true;
+  return false;
 }
 
 /** Collect `{id → name}` from Orca/Bambu/Prusa metadata configs. */
@@ -205,15 +218,8 @@ function readVendorNames(files: Unzipped): Map<string, string> {
 
 export function parse3mf(buffer: ArrayBuffer, fileName = 'model.3mf'): { objects: ParsedObject[]; warnings: string[] } {
   const warnings: string[] = [];
-  let files: Unzipped;
-  try {
-    files = unzipSync(new Uint8Array(buffer), {
-      // Only decompress what we might read: model parts, rels and vendor configs.
-      filter: (f) => /\.model$|\.rels$|\.config$/i.test(f.name),
-    });
-  } catch (e) {
-    throw new ImportError(`Not a valid 3MF (zip) file: ${(e as Error).message}`);
-  }
+  // Only decompress what we might read: model parts, rels and vendor configs.
+  const files: Unzipped = unzipArchive(buffer, (f) => /\.model$|\.rels$|\.config$/i.test(f.name));
 
   // Root model from _rels/.rels, falling back to the conventional path.
   let rootPath = '3D/3dmodel.model';

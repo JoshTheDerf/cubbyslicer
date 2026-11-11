@@ -19,13 +19,15 @@ import type { DropdownMenuItem } from '@nuxt/ui';
 import { activeEngine } from '../app/state';
 import { ENGINE_LABELS, getEngineVersion, isEngineAvailable } from '../engine/client';
 import MixedFilamentsPanel from '../mixed/MixedFilamentsPanel.vue';
+import ExtruderNozzles from '../presets/ui/ExtruderNozzles.vue';
+import { mixedEnabled } from '../mixed/store';
 import type { EngineId } from '../engine/types';
 import { objects, overrideCount, primarySelection, selectedIds, selectedPart } from '../project/store';
 import { selectedRange } from '../layers/store';
 import { currentPresets, ENGINES, FILAMENT_PALETTE, setActiveEngine, startPresets } from '../presets/store';
-import { asArray } from '../presets/values';
+import { asList, SCALAR, toBool, valueAt } from '../lib/configValue';
 import { openPhysicalPrinterDialog } from '../printhost/store';
-import ColorField from './controls/ColorField.vue';
+import FilamentColorField from './controls/FilamentColorField.vue';
 import ModeSelect from './ModeSelect.vue';
 import ObjectSettingsPanel from './ObjectSettingsPanel.vue';
 import PresetRow from './PresetRow.vue';
@@ -57,7 +59,6 @@ function toggleSection(s: SidebarSection): void {
 const engineInfo = reactive<Record<EngineId, { available: boolean | null; version: string }>>({
   orca: { available: null, version: '' },
   preflight: { available: null, version: '' },
-  fullspectrum: { available: null, version: '' },
 });
 onMounted(() => {
   for (const e of ENGINES) {
@@ -85,19 +86,19 @@ const printerMenu = computed<DropdownMenuItem[][]>(() => [[
 
 // ---- printer ---------------------------------------------------------------------------
 const printerItems = computed(() => p.value.printerInfos.value);
-const nozzles = computed(() => asArray(p.value.value('printer', 'nozzle_diameter')).filter(Boolean));
+const nozzles = computed(() => asList(p.value.value('printer', 'nozzle_diameter')).filter(Boolean));
 const bedTypeDef = computed(() => p.value.bedTypeDef());
 const showBedType = computed(() => {
   if (!bedTypeDef.value?.enumValues?.length) return false;
   // Orca shows the plate type for Bambu printers and printers that declare multiple / default bed types.
-  const multi = asArray(p.value.value('printer', 'support_multi_bed_types'))[0] === '1';
+  const multi = toBool(valueAt(p.value.value('printer', 'support_multi_bed_types'), SCALAR));
   return multi || !!p.value.modelBedType.value || !!p.value.printerDefaultBedType() || p.value.infos.value.printer.vendor === 'BBL';
 });
 const bedItems = computed(() => (bedTypeDef.value?.enumValues ?? []).map((v, i) => ({ value: v, label: bedTypeDef.value?.enumLabels?.[i] || v })));
 
 // ---- filaments -------------------------------------------------------------------------
 const filamentItems = computed(() => p.value.compatible.value.filament);
-const semm = computed(() => asArray(p.value.value('printer', 'single_extruder_multi_material'))[0] === '1');
+const semm = computed(() => toBool(valueAt(p.value.value('printer', 'single_extruder_multi_material'), SCALAR)));
 const filamentCount = computed(() => p.value.selection.filaments.length);
 function addFilament(): void { void p.value.setFilamentCount(filamentCount.value + 1); }
 function removeFilament(i = filamentCount.value - 1): void {
@@ -167,6 +168,7 @@ const schemaNote = computed(() => {
           <USelect :model-value="p.bedType() ?? undefined" :items="bedItems" value-key="value" size="xs" class="min-w-0 flex-1" aria-label="Plate type"
                    @update:model-value="(v: unknown) => p.setBedType(String(v))" />
         </div>
+        <ExtruderNozzles />
       </div>
     </section>
 
@@ -179,7 +181,7 @@ const schemaNote = computed(() => {
         <div class="sp__acts" @click.stop>
           <FilamentSectionActions />
           <template v-if="semm">
-            <UButton size="xs" variant="ghost" icon="i-lucide-plus" square aria-label="Add filament" title="Add filament" :disabled="filamentCount >= 64" @click="addFilament" />
+            <UButton size="xs" variant="ghost" icon="i-lucide-plus" square aria-label="Add filament" title="Add filament" :disabled="filamentCount >= 32" @click="addFilament" />
             <UButton v-if="filamentCount > 1" size="xs" variant="ghost" icon="i-lucide-minus" square aria-label="Remove last filament" title="Remove last filament" @click="removeFilament()" />
           </template>
         </div>
@@ -189,11 +191,10 @@ const schemaNote = computed(() => {
                    group-by="filament" editable :extra-menu="filamentMenu(i)" @edit="openSettingsTab('filament', i)">
           <template #leading>
             <span class="sp__slotno">{{ i + 1 }}</span>
-            <ColorField :model-value="p.filamentColour(i)" swatch-only size="sm" resettable :palette="FILAMENT_PALETTE" :aria-label="`Filament ${i + 1} colour`"
-                        @update:model-value="(c: string) => p.setFilamentColour(i, c)" />
+            <FilamentColorField :slot-index="i" swatch-only size="sm" :palette="FILAMENT_PALETTE" :aria-label="`Filament ${i + 1} colour`" />
           </template>
         </PresetRow>
-        <MixedFilamentsPanel v-if="activeEngine === 'fullspectrum'" />
+        <MixedFilamentsPanel v-if="mixedEnabled" />
       </div>
     </section>
 

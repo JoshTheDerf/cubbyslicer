@@ -68,14 +68,14 @@ async function evaluateAll(exprs: string[], config: FlatConfig, evaluate: Condit
   return out;
 }
 
-export function withPrinterPlaceholders(printerConfig: FlatConfig, printerName: string): FlatConfig {
+function withPrinterPlaceholders(printerConfig: FlatConfig, printerName: string): FlatConfig {
   const nd = printerConfig.nozzle_diameter;
   const n = Array.isArray(nd) ? nd.length : nd ? String(nd).split(',').length : 1;
   return { ...printerConfig, printer_preset: printerName, num_extruders: String(Math.max(1, n)) };
 }
 
 /** Pure structural check (no conditions). `undefined` = needs condition evaluation. */
-export function printerListCompat(p: PresetInfo, ctx: Pick<CompatContext, 'printerName' | 'printerParentName'>): boolean | undefined {
+function printerListCompat(p: PresetInfo, ctx: Pick<CompatContext, 'printerName' | 'printerParentName'>): boolean | undefined {
   const names = [ctx.printerName, ctx.printerParentName].filter((x): x is string => !!x);
   if (p.excludedPrinters?.length && names.some((n) => p.excludedPrinters!.includes(n))) return false;
   const list = p.compatiblePrinters ?? [];
@@ -83,7 +83,7 @@ export function printerListCompat(p: PresetInfo, ctx: Pick<CompatContext, 'print
   return names.some((n) => list.includes(n));
 }
 
-export function printListCompat(p: PresetInfo, printName: string | undefined): boolean | undefined {
+function printListCompat(p: PresetInfo, printName: string | undefined): boolean | undefined {
   const list = p.compatiblePrints ?? [];
   if (list.length) return !printName || list.includes(printName);
   return p.compatiblePrintsCondition ? undefined : true;

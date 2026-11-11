@@ -8,18 +8,21 @@
 import { computed, reactive, ref, watch } from 'vue';
 import type { CalibParams } from '../engine/types';
 import { mobileDialog } from '../ui/mobileDialog';
+import AppDialog from '../ui/AppDialog.vue';
 import { resolvedConfig } from '../app/state';
+import { confirmAction } from '../app/shell/uiState';
+import { cfgString, SCALAR, valueAt } from '../lib/configValue';
 import { currentPresets } from '../presets/store';
-import { asArray } from '../presets/values';
 import { toast } from '../ui';
 import {
-  corneringDefaults, corneringParams, paDefaults, paParams, rangeDefaults, rangeParams, shaperTypesFor, shapingDampParams, shapingFreqParams, snapTemp,
-  SHAPING_DAMP_DEFAULTS, SHAPING_FREQ_DEFAULTS,
-  TEMP_FILAMENTS, tempFilamentOf, tempParams, tempRangeFor, type PAMethod, type TempFilament,
+  corneringDefaults, corneringParams, paDefaults, paMethodsFor, paParams, rangeDefaults, rangeParams, shaperTypesFor, shapingDampParams, shapingFreqParams,
+  snapTemp, SHAPING_DAMP_DEFAULTS, SHAPING_FREQ_DEFAULTS,
+  TEMP_FILAMENTS, tempFilamentOf, tempParams, tempRangeFor, vfaAdjust, type PAMethod, type TempFilament,
 } from './forms';
+import type { CalibRequest } from './plan';
 import {
   calibCornering, calibFlowRate, calibInputShapingDamp, calibInputShapingFreq, calibMaxVolSpeed, calibPA, calibPrinterFacts, calibRetraction,
-  calibTemp, calibVFA, type FlowPass,
+  calibTemp, calibVFA, compatibleLayerHeights, type FlowPass,
 } from './run';
 import { calibUi, installCalibrationState, type CalibDialogId } from './state';
 
@@ -45,10 +48,10 @@ const error = ref<string | null>(null);
 const facts = ref(calibPrinterFacts());
 
 // ---- models ---------------------------------------------------------------------------
-const temp = reactive({ filament: 'PLA' as TempFilament, start: 230, end: 190 });
+const temp = reactive({ filament: 'PLA' as TempFilament, start: 230, end: 190, resize: true, model: 0 });
 const flow = reactive({ type: 2 as 0 | 1 | 2 | 3, pattern: 'archimedeanchords' as FlowPass['pattern'] });
 const pa = reactive({ method: 'pa_tower' as PAMethod, bowden: false, start: 0, end: 0.1, step: 0.002, printNumbers: false, accels: '', speeds: '' });
-const range = reactive({ start: 0, end: 0, step: 0 });
+const range = reactive({ start: 0, end: 0, step: 0, resize: true, autoAdjust: true });
 const isf = reactive({ ...SHAPING_FREQ_DEFAULTS, shaper: 'Default' });
 const isd = reactive({ ...SHAPING_DAMP_DEFAULTS, shaper: 'Default' });
 const corner = reactive({ model: 0, start: 1, end: 15 });
@@ -62,12 +65,13 @@ function reset(which: CalibDialogId): void {
   facts.value = calibPrinterFacts();
   const cfg = resolvedConfig.value;
   if (which === 'temp') {
-    const type = asArray(currentPresets.value.value('filament', 'filament_type', 0))[0] ?? asArray(cfg.filament_type)[0] ?? 'PLA';
+    const type = valueAt(currentPresets.value.value('filament', 'filament_type', 0), SCALAR) ?? cfgString(cfg, 'filament_type', SCALAR, 'PLA');
     temp.filament = tempFilamentOf(type);
     Object.assign(temp, tempRangeFor(temp.filament));
   } else if (which === 'pa') {
-    pa.bowden = asArray(cfg.extruder_type)[0] === 'Bowden';
+    pa.bowden = cfgString(cfg, 'extruder_type', SCALAR) === 'Bowden';
     pa.accels = ''; pa.speeds = '';
+    if (facts.value.belt) pa.method = 'pa_tower';
     Object.assign(pa, paDefaults(pa.method, pa.bowden));
   } else if (which === 'retraction') Object.assign(range, rangeDefaults('retraction_tower'));
   else if (which === 'volumetric') Object.assign(range, rangeDefaults('vol_speed_tower'));
@@ -87,7 +91,9 @@ const flowItems = [
   { value: 3, label: 'YOLO (perfectionist)', description: '±0.035 flow ratio in 0.005 steps.' },
 ];
 const patternItems = [{ value: 'archimedeanchords', label: 'Archimedean chords' }, { value: 'monotonic', label: 'Monotonic' }];
-const methodItems = [{ value: 'pa_tower', label: 'PA tower' }, { value: 'pa_line', label: 'PA line' }, { value: 'pa_pattern', label: 'PA pattern' }];
+const METHOD_LABELS: Record<PAMethod, string> = { pa_tower: 'PA tower', pa_line: 'PA line', pa_pattern: 'PA pattern' };
+const methodItems = computed(() => paMethodsFor(facts.value.belt).map((m) => ({ value: m, label: METHOD_LABELS[m] })));
+const beltTempModels = [{ value: 0, label: 'Standard' }, { value: 1, label: 'Overhang' }];
 const extruderItems = [{ value: false, label: 'Direct drive' }, { value: true, label: 'Bowden' }];
 const towerItems = [{ value: 0, label: 'Ringing tower' }, { value: 1, label: 'Fast tower' }];
 const cornerModels = [{ value: 0, label: 'Ringing tower' }, { value: 1, label: 'Fast tower' }, { value: 2, label: 'SCV-V2' }];
@@ -100,16 +106,34 @@ const rangeMeta = computed(() => {
 
 const n = (v: number | null | undefined, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 
+/** VFA_Test_Dlg::on_start: keep the end speed within the filament's max volumetric speed (null: the user backed out). */
+async function vfaWithAutoAdjust(p: CalibParams): Promise<CalibRequest | null> {
+  const f = facts.value;
+  const req: CalibRequest = { ...p, nozzleBasedResize: range.resize, vfaLayerHeight: 0 };
+  const d = await vfaAdjust(p, range.resize, range.autoAdjust, { nozzle: f.nozzle, lineWidth: f.vfa.wallLineWidth, ...f.vfa }, compatibleLayerHeights);
+  if (d.kind === 'ok') return req;
+  if (d.kind === 'reduced') { toast.info(d.message); return { ...req, vfaLayerHeight: d.layerHeight }; }
+  const ok = await confirmAction({ title: 'VFA test', message: d.message, confirmLabel: 'Continue' });
+  if (!ok) return null;
+  return d.kind === 'lower-end' ? { ...req, end: d.end, vfaLayerHeight: d.layerHeight } : req;
+}
+
 async function start(): Promise<void> {
   error.value = null;
   let params: CalibParams | string | null = null;
   let runner: ((p: CalibParams) => Promise<boolean>) | null = null;
   switch (id.value) {
-    case 'temp': params = tempParams(temp.start, temp.end); runner = calibTemp; break;
+    case 'temp': params = tempParams(temp.start, temp.end, temp.resize, facts.value.belt ? temp.model : 0); runner = calibTemp; break;
     case 'pa': params = paParams({ ...pa }); runner = calibPA; break;
     case 'retraction': params = rangeParams('retraction_tower', range.start, range.end, range.step); runner = calibRetraction; break;
     case 'volumetric': params = rangeParams('vol_speed_tower', range.start, range.end, range.step); runner = calibMaxVolSpeed; break;
-    case 'vfa': params = rangeParams('vfa_tower', range.start, range.end, range.step); runner = calibVFA; break;
+    case 'vfa': {
+      const r = rangeParams('vfa_tower', range.start, range.end, range.step);
+      if (typeof r === 'string') { error.value = r; return; }
+      const adjusted = await vfaWithAutoAdjust(r);
+      if (!adjusted) return;
+      params = adjusted; runner = calibVFA; break;
+    }
     case 'is_freq': params = shapingFreqParams({ ...isf }, reprap.value); runner = calibInputShapingFreq; break;
     case 'is_damp': params = shapingDampParams({ ...isd }, reprap.value); runner = calibInputShapingDamp; break;
     case 'cornering': {
@@ -134,9 +158,8 @@ async function start(): Promise<void> {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="TITLES[id]" :fullscreen="mobileDialog" :dismissible="!calibUi.busy"
-          :ui="{ content: 'sm:max-w-lg', body: 'flex flex-col gap-4 dlg-flow' }">
-    <template #body>
+  <AppDialog v-model:open="open" :title="TITLES[id]" size="lg" fullscreen :dismissible="!calibUi.busy" body-class="flex flex-col gap-4 dlg-flow"
+             confirm-label="OK" :confirm-loading="calibUi.busy" test-id="calib" @confirm="start">
       <!-- Temperature -->
       <template v-if="id === 'temp'">
         <UFormField label="Filament type">
@@ -147,7 +170,16 @@ async function start(): Promise<void> {
           <UFormField label="End temp" hint="°C"><UInputNumber :step-snapping="false" :model-value="temp.end" :min="155" :max="500" :step="5" size="sm" @update:model-value="(v: number | null) => (temp.end = snapTemp(n(v, 190)))" /></UFormField>
           <UFormField label="Temp step" hint="°C"><UInputNumber :model-value="5" disabled size="sm" /></UFormField>
         </div>
-        <p class="cd__note dlg-span">Prints a tower of 10 mm blocks, one per temperature, from the start temperature at the bottom down to the end temperature at the top.</p>
+        <UCheckbox v-model="temp.resize" label="Auto-scale for nozzle" class="dlg-span"
+                   description="The model is designed for a 0.4 mm nozzle at 0.2 mm layers. Scaling (recommended) resizes it to your nozzle and sets a matching layer height; turn it off to print the reference model as-is." />
+        <UFormField v-if="facts.belt" label="Test model" class="dlg-span">
+          <URadioGroup v-model="temp.model" :items="beltTempModels" orientation="horizontal" size="sm" />
+        </UFormField>
+        <p class="cd__note dlg-span">
+          <template v-if="facts.belt && temp.model === 1">Prints Orca’s pre-numbered overhang samples along the belt (available for 230–190, 240–210, 250–230, 270–230, 280–240 and 320–280 °C).</template>
+          <template v-else-if="facts.belt">Prints one tower block per temperature, spaced along the belt.</template>
+          <template v-else>Prints a tower of 10 mm blocks, one per temperature, from the start temperature at the bottom down to the end temperature at the top.</template>
+        </p>
       </template>
 
       <!-- Flow ratio -->
@@ -158,7 +190,7 @@ async function start(): Promise<void> {
         <UFormField label="Top surface pattern">
           <USelect v-model="flow.pattern" :items="patternItems" value-key="value" size="sm" class="w-56" />
         </UFormField>
-        <p class="cd__note">Uses the flow ratio of the first filament ({{ asArray(currentPresets.value('filament', 'filament_flow_ratio', 0))[0] ?? '1' }}). After printing, pick the smoothest top surface and update the filament’s flow ratio.</p>
+        <p class="cd__note">Uses the flow ratio of the first filament ({{ valueAt(currentPresets.value('filament', 'filament_flow_ratio', 0), SCALAR) ?? '1' }}). After printing, pick the smoothest top surface and update the filament’s flow ratio.</p>
       </template>
 
       <!-- Pressure advance -->
@@ -170,6 +202,7 @@ async function start(): Promise<void> {
           <UFormField label="Method">
             <URadioGroup v-model="pa.method" :items="methodItems" orientation="horizontal" size="sm" />
           </UFormField>
+          <p v-if="facts.belt" class="cd__note">PA line and PA pattern aren’t enabled on belt printers yet.</p>
         </div>
         <div class="cd__grid">
           <UFormField label="Start PA"><UInputNumber :step-snapping="false" :model-value="pa.start" :min="0" :step="0.001" :format-options="{ maximumFractionDigits: 4 }" size="sm" @update:model-value="(v: number | null) => (pa.start = n(v))" /></UFormField>
@@ -196,7 +229,15 @@ async function start(): Promise<void> {
         </div>
         <p v-if="id === 'volumetric'" class="cd__note">Prints a vase-mode wall whose speed rises with height. The filament’s max volumetric speed is raised to 200 mm³/s for the test.</p>
         <p v-else-if="id === 'retraction'" class="cd__note">The retraction length increases by one step per millimetre of tower height.</p>
-        <p v-else class="cd__note">Prints a vase-mode tower in 5 mm bands, one speed per band, to reveal vertical fine artifacts.</p>
+        <template v-else>
+          <div class="flex flex-col gap-2 dlg-span">
+            <UCheckbox v-model="range.resize" label="Auto-scale for nozzle"
+                       description="Resizes the 0.4 mm / 0.2 mm reference model to your nozzle, 25 layers per speed band." />
+            <UCheckbox v-model="range.autoAdjust" label="Auto-adjust to max volumetric speed" :disabled="!range.resize"
+                       description="If the end speed exceeds what the filament’s max volumetric speed allows, lower the layer height to one of this printer’s profiles (or, failing that, the end speed)." />
+          </div>
+          <p class="cd__note">Prints a vase-mode tower in bands of 25 layers, one speed per band, to reveal vertical fine artifacts.</p>
+        </template>
       </template>
 
       <!-- Input shaping: frequency -->
@@ -264,16 +305,10 @@ async function start(): Promise<void> {
       </template>
 
       <UAlert v-if="error" class="dlg-span" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
+    <template #footer-start>
+      <UButton :href="`https://www.orcaslicer.com/wiki/${WIKI[id]}`" target="_blank" rel="noopener" variant="link" color="info" icon="i-lucide-book-open" label="Wiki guide" />
     </template>
-    <template #footer>
-      <div class="flex w-full items-center gap-2">
-        <ULink :href="`https://www.orcaslicer.com/wiki/${WIKI[id]}`" target="_blank" rel="noopener" class="text-sm text-info">Wiki guide</ULink>
-        <span class="flex-1" />
-        <UButton variant="ghost" color="neutral" label="Cancel" :disabled="calibUi.busy" @click="calibUi.open = null" />
-        <UButton color="primary" label="OK" :loading="calibUi.busy" @click="start" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

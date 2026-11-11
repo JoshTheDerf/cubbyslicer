@@ -4,9 +4,9 @@ CubbySlicer works like OrcaSlicer, with the same menus, tools and shortcuts (pre
 
 ## Engines
 
-Pick OrcaSlicer, preFlight or Full Spectrum at the top of the Printer section. Each engine keeps its own presets. The accent colour shows which engine is active: green for Orca, orange for preFlight, fuchsia for Full Spectrum.
+Pick OrcaSlicer (2.5.0) or preFlight at the top of the Printer section. Each engine keeps its own presets. The accent colour shows which engine is active: green for Orca, orange for preFlight.
 
-Calibration prints and brim ears need an Orca-based engine (OrcaSlicer or Full Spectrum).
+Calibration prints, brim ears and mixed filaments need OrcaSlicer. The Full Spectrum engine has been removed: OrcaSlicer 2.5 mixes colours itself (see [Mixed filaments](#mixed-filaments)).
 
 ## First-run setup
 
@@ -36,13 +36,15 @@ When a setting has an invalid value, the slice controls show "N settings to fix"
 
 ## Preferences
 
-Ctrl+, (⌘, on a Mac) opens Preferences. Its sections are General, Slicing, Behaviour, Camera and "Clear my choice on…". A preference you've changed gets a ↶ button that puts back its default. "Reset all to defaults" resets everything, and the toast it shows has an Undo. "Clear my choice on…" lists what the app remembers between visits, such as the first-run setup and folded panels, each with its own Clear button. Everything is saved in this browser.
+Ctrl+, (⌘, on a Mac) opens Preferences. Its sections are General, Slicing, Behaviour, Camera and "Clear my choice on…". "Show options when adding a primitive" decides whether adding a box, cylinder, sphere or slab part asks for its size first (the size dialog's "Don't show again" turns it off). A preference you've changed gets a ↶ button that puts back its default. "Reset all to defaults" resets everything, and the toast it shows has an Undo. "Clear my choice on…" lists what the app remembers between visits, such as the first-run setup and folded panels, each with its own Clear button. Everything is saved in this browser.
 
-## Command palette
+## Command palette (Speed Dial)
 
-Ctrl+K (⌘K on a Mac) opens the command palette.
+Space (when no text field has focus), Ctrl+K or Ctrl+Shift+P (⌘K, ⌘⇧P on a Mac) opens the command palette, CubbySlicer's version of OrcaSlicer 2.5's Speed Dial.
 
-- **Empty search:** it lists your recent commands, then every command by menu.
+- **Empty search:** it lists your pinned commands, your recent commands, then every command by menu.
+- **Pins:** Ctrl+B (⌘B) pins or unpins the highlighted command, up to 10. While the palette is open, Alt+1 … Alt+9 and Alt+0 (Option on a Mac) run pinned commands 1 to 10. Right-click a pinned command to unpin it.
+- **Footer:** it describes the highlighted command or setting. F1 opens its OrcaSlicer wiki page when it has one.
 - **Typing:** it lists matching commands, then matching settings with where each one lives (for example "Process › Strength › Infill"). Pick a setting to go straight to it, highlighted. When more settings match than fit, "Search all settings" opens the full settings search with what you typed.
 - **Toggles:** they say what choosing them will do ("Hide travel moves", "Turn off dim layers below top"). The selected option of a set, such as the settings mode or the camera, is marked "current".
 
@@ -64,19 +66,36 @@ After slicing, Preview shows the G-code: the legend (top left), the layer slider
 - The Show and Total Estimation parts of the legend fold on their own, and the legend remembers how you left them. Folded, Show counts how many options are on and Total Estimation gives the time, weight and layer count.
 - L folds the whole legend down to its scheme menu and the same one-line total. Click that line to open the legend again.
 - The move slider steps through the moves in the top layer. The G-code line above it follows the slider and stays inside the bar on a phone.
+- With the Filament colour scheme, translucent filaments (an alpha value in the filament colour, `#RRGGBBAA`) are drawn see-through. The legend's Show list has a "Translucent filaments" switch for this when a filament is translucent.
 - G opens the G-code viewer and F fits the print. The keyboard button lists the other shortcuts.
 
 ## Settings sidebar
 
 The sidebar runs top to bottom: Printer (engine, printer preset, plate type), Filament, Objects and Process. Click a section's header to fold it; folded sections show what they hold, such as the printer name. Under Process, the Global / Per object switch picks between the plate-wide process preset and the selected object's own settings. Per object shows how many objects have their own settings. Long setting labels wrap onto a second line instead of being cut off, and in a narrow sidebar the page tabs tighten so every label still fits. Drag the sidebar's edge to resize it, and double-click the edge to reset its width.
 
+Filament swatches show what the filament colour holds: a checkerboard behind translucent colours, and bands or a gradient for multi-colour filaments. Clicking a filament's swatch opens OrcaSlicer 2.5's colour picker: a hue / lightness field with a saturation slider, hex, opacity, HSL and RGB fields, Solid or Gradient (up to seven colours: click a stop to edit it, − / + remove or add one), the original colour, the star button that saves the colour to the 16 favourites, and the palette panel (Basic Colors, Orca Palette, RAL Classic, Gradients, with a search). A segmented multi-colour filament opens as its first colour and stays as it is unless you pick another. Colour settings use the same picker without opacity and gradients.
+
+Settings follow OrcaSlicer's rules: a setting that doesn't apply with the current values is greyed out or hidden, and its tooltip says why ("Disabled: …"). A search jump to a hidden setting shows it dimmed with the reason.
+
+### Nozzles and variants
+
+Printers with more than one extruder or more than one nozzle flow type (Standard, High Flow, …) get a line per nozzle under the printer preset: its flow type, and on multi-extruder printers its diameter. The flow type picks the profile values for it. On an extruder with a nozzle rack, Hybrid lets each filament pick its own flow type in the Filament section's Grouping dialog, and the rack line under it sets how many nozzles of each type the rack holds (the pencil opens OrcaSlicer's "Set nozzle count"). In Grouping ▸ Custom the nozzle titles show those counts; a grouping that needs a flow type the rack has no nozzle of is refused with OrcaSlicer's message and a link to set the count, and "Set the physical nozzle count..." asks for each rack. A project saved with Nozzle Manual grouping opens on the Custom page, as in OrcaSlicer (OK there saves it as Custom).
+
+Some process, printer and filament settings hold one value per extruder and flow type (a split icon after the label). Their settings pages then have a switch at the top that picks which one you edit (a dot marks one with changes). On process and printer pages with two nozzles, the copy button next to it copies the edited nozzle's changes to the other one.
+
 ## Printer and filament settings
 
 The edit button next to the printer or a filament opens its settings dialog: the preset picker at the top, the pages on the left and the page's settings on the right. A dot marks pages with changes. Once you change something, a Changed page appears at the top of the list. It shows every setting that differs from the preset, grouped by page and section. Revert a setting there with its ↶ button, or keep the changes with the preset's save button. The page closes itself when nothing is left on it. On a phone the pages, including Changed, are in the page menu under the preset.
 
+Printer settings ▸ Basic information ▸ Printable space ▸ Toolhead collision volumes has an edit button that opens the collision volume editor: prisms the toolhead must not enter, each an outline on the bed (one `XxY` point per line) with an optional Z range, drawn over the bed outline. They add to the excluded bed area. Ctrl+Shift+K (Show all collision volumes, in the command palette) draws them on the plate.
+
 ## Objects list
 
 The Objects list in the sidebar shows every object, under its plate when there is more than one plate. Instances of the same model share a row you can fold, and an object's parts, modifiers and height ranges fold under it (← and → fold the selected object). Click, Ctrl-click and Shift-click select. ↑ and ↓ move the selection, and Home and End jump to the first and last object. Double-click (or F2) renames an object, part or plate. Right-click an object for the object menu, a part for its type and settings, or a plate row for the same plate menu as the plate bar. Plate rows warn when something on the plate won't print as placed. With two or more objects, the filter button narrows the list by name, and Escape clears it.
+
+### Precise seams
+
+Object ▸ Add part or modifier ▸ Add precise seam (also in an object's right-click menu) adds a seam modifier: a box, cylinder, sphere, slab or a loaded model, drawn in the seam type's colour. It starts as "Seam: center". Right-click it in the Objects list ▸ Precise Seam Type picks center, left, right, enforced, blocked or neutral, and Change type ▸ Precise Seam turns a modifier into a seam or back. Precise seams are saved in the project the way OrcaSlicer 2.5 saves them, so desktop Orca opens them as seams. This version of the slicer slices them as plain modifiers with no settings, so they don't move the seam yet.
 
 ## Moving objects
 
@@ -89,6 +108,15 @@ View ▸ Grid snap sets the step for drags and arrow-key nudges; K switches betw
 Arrange (A), Arrange plate (Shift+A) and Arrange selection run OrcaSlicer's own arrange in the Orca engine, whichever engine you slice with. Plate ▸ Arrange options… has Orca's arrange settings: spacing (0 means auto, so each object keeps its brim or support margin), auto rotate, multiple materials on one plate, align to the Y axis and, on Bambu Lab printers that scan the first layer, avoiding the extrusion calibration region. As in Orca, spacing and auto rotate are kept separately for printing by layer and by object. The options are saved in this browser.
 
 With preFlight, Orca's arrange gets your bed shape but uses Orca's defaults for skirt, support and clearance.
+
+## Calibration
+
+The Calibration menu has OrcaSlicer 2.5's tests. Each dialog links to its wiki guide. Starting a test starts a new project, and asks before discarding the current one.
+
+- **Temperature:** "Auto-scale for nozzle" (on by default) resizes the 0.4 mm / 0.2 mm reference tower to your nozzle and sets a matching layer height. Turn it off to print the reference model as it is. On a belt printer you also pick the test model: Standard (one block per temperature along the belt) or Overhang (Orca's pre-numbered overhang samples, for 230–190, 240–210, 250–230, 270–230, 280–240 and 320–280 °C).
+- **VFA:** "Auto-scale for nozzle" works the same way, with 25 layers per speed band. "Auto-adjust to max volumetric speed" checks the end speed against the filament's max volumetric speed. If it's too fast, the test lowers the layer height to one of the printer's profiles, or failing that offers a lower end speed. Without auto-adjust, it asks whether to continue anyway.
+- **Pressure advance:** belt printers have the PA tower only.
+- Calibration ▸ Handy models adds Orca's test models, including the Orca Badge.
 
 ## Modelling with CubbyCAD shapes
 
@@ -105,6 +133,31 @@ The slicer has CubbyCAD's basic modelling: built-in shapes, holes and groups. It
 Group and ungroup have no keys here: CubbyCAD's Ctrl+G and Ctrl+Shift+G are Orca's Export G-code and Print plate, and its H (hide) and L (lock) are fuzzy-skin and support painting. They are in the Object menu, the right-click menu and the command palette.
 
 Not supported: CubbyCAD's blended (SDF), loft and skin groups, sculpting, script parts, text, sketches and modifier stacks. A tree that has them still opens. Those nodes are listed with a badge and kept untouched in saved projects and `.cubby` exports. When CubbyCAD sends them (cad_to_slicer) it bakes each one into a mesh, which you can move, hide, recolour, group and cut with like any part; its shape stays editable only in CubbyCAD. Without a baked mesh, a node that can't be shown is left out of the object, and a top-level node that is nothing but such content is skipped with a warning.
+
+## Design tab (experimental)
+
+The Design tab is OrcaSlicer 2.5's parametric CAD, running Orca's own modelling kernel in the browser. A project saved by OrcaSlicer 2.5 with a design opens here editable, and saves back in Orca's format: desktop Orca opens it again. Turn the tab off with Preferences ▸ CAD feature (experimental).
+
+- The kernel loads the first time you open the tab (about 5 MB to download when the server compresses it, a few seconds to start). Every edit rebuilds the whole history, which takes from milliseconds to a minute on large designs (threads are the slowest). While it works, the busy pill says so; **Cancel** (or Esc) stops it and puts the design back to its last saved state.
+- **Feature tree**: every feature of the history, in order. Click to select (Ctrl+click or Shift+click for several), double-click or F2 to rename, the eye to suppress, Alt+↑ / Alt+↓ to reorder, Delete to delete (deleting a sketch also deletes the features made from it). The Origin and Bed rows show the reference planes and the printer bed.
+- **Parameters**: the selected feature's values. Change them and press Apply (or Enter): one rebuild, one undo step. The fx button drives a value with an expression of the Variables (`+ − × ÷`, `sqrt`, `sin`… in degrees). If the kernel refuses an edit (for example "fillet radius too large"), nothing changes and the message stays on the feature.
+- **A design that doesn't rebuild** shows no bodies and names the first feature that fails. Suppress it, or select every failing feature and suppress them together.
+- **Bodies**: the swatch sets a body's colour, the eye hides it from the view (hidden bodies aren't committed), the frame zooms to it, the bin deletes it (it removes the feature the body was made from; Ctrl+Z brings it back), double-click or F2 renames it. Right-click a body for everything that applies to it. A body without faces is listed as empty and isn't sent to the plate.
+- **3D view**: click a body to select it; click the same spot again for the face, again for the nearest edge. Middle-drag pans, right-drag orbits, Home fits the design. **Right-click** (without dragging) opens Orca's offer menu for what is under the cursor: for a flat face Hole, Shell, Push/pull, Thicken, Fillet / Chamfer of its edges, Draft, patterns, Mirror, a datum Plane, Volume and area, Delete Face…; for a cylinder Thread and a circular pattern about its axis; for an edge Fillet and Chamfer; for a body Shell, Cut, patterns, Move, Boolean, Rename, Color, Delete.
+- **Adding features**: the toolbar's **Feature** menu, the offer menu, the command palette or Orca's keys (all Shift+letter in the Design view): Fillet / Chamfer (Shift+F), Draft (Shift+D), Shell (Shift+K), Delete Face, Hole (Shift+H) with counterbore / countersink and the M3–M10 / UNC clearance standards, Thread (Shift+T) with the ISO / UNC / UNF table, Pattern linear / circular (Shift+N), Mirror (Shift+Z), Transform (Shift+Y), Boolean join / subtract / intersect (Shift+B), Cut by a plane or a face (Shift+X), Thicken, Push / pull a face, datum Plane (Shift+P), Axis (Shift+A) and Helix, and, on sketches, Extrude (Shift+E), Revolve (Shift+R), Sweep (Shift+W) and Loft (Shift+L) — with a Sketch row open, click inside a finished sketch's profile (or on its outline) to pick it. A card opens at the top of the panel with Orca's fields and defaults, prefilled from what you picked. Reference rows (edges, faces, bodies) have a **Pick** button: the view then only picks that kind (an orange banner says what), clicks add or remove edges and faces, Enter or Done finishes, Esc puts it back. With a card open, a click in the view feeds its first reference row directly (Fillet: click edges). On designs that rebuild quickly the result shows as an orange ghost while you change values; on slow ones press Preview. **OK** adds the feature (one rebuild, one undo step); if the kernel refuses, the card stays open with its message. Shell needs a face to leave open: the kernel refuses a closed hollow, and a shell that would change nothing (an open face whose edges are filleted).
+- **Editing references** of an existing feature (its edges, faces, bodies) works the same way from the parameters: the view shows the design as it was *before* that feature while you pick, because that is the geometry its references name.
+- **Shapes**: the toolbar's **Shape** button (the same CubbyCAD palette as Prepare's Add shape) adds a body. Boxes, cylinders, spheres, cones, tori, tubes, capsules, hemispheres, half cylinders, polygon / star prisms, wedges, roofs and the fillet shape become exact bodies (their faces and edges can be filleted, shelled and drilled; a box, cylinder, cone, sphere or torus is one history entry whose size is fixed — delete it and add it again to change it); the others (pyramid, paraboloid, icosahedron, star, heart, diamond) come in as mesh bodies. In Prepare, **Convert to Design body** (Object menu, or the pencil on the shape panel) does the same for a CubbyCAD object on the plate, groups and holes included, where it sits; **Import as a mesh body** brings any other object in as a mesh body.
+- **STEP and meshes**: ⋯ ▸ Import STEP… opens the solids of a STEP file as exact bodies; Import mesh… brings an STL / OBJ / 3MF in as a mesh body; Export STEP… saves the visible bodies. File ▸ Import of a STEP file also offers **Open in Design** in its options dialog. A project with only a design (nothing on the plate) opens straight to the Design tab.
+- **Commit to Plate** sends every visible body to the plate. By default (Orca's) they become **one assembly object** with a part per body, keeping their positions; the arrow next to the button switches to **separate bodies** (one object each). Ctrl+Alt+P commits. The objects stay linked: after a design edit their meshes are replaced (which resets painting, like every tool that changes a mesh). The object card in Prepare has **Edit in Design** and **Unlink**; cutting, splitting or simplifying an object unlinks it. Desktop Orca sees linked objects as plain meshes.
+- **Sketches**: the toolbar's **Sketch** button (Shift+S) sketches on the flat face you picked, or asks where: Top (XY), Front (XZ), Right (YZ), a datum plane, or click a flat face. The view turns to face the plane (N turns it back after orbiting). Double-click a sketch in the feature tree (or its **Edit sketch** button) to change it. A sketch is one undo step when you **Finish** it (Enter, or ✓); **Cancel** discards it. While it is open, Ctrl+Z / Ctrl+Y undo and redo inside the sketch, and other design edits wait.
+  - **Drawing** (Orca's keys): Line L (and Polyline: click the first point to close, Enter / right-click / double-click ends), rectangles R (corner; centre, 3-point and rounded in its menu), circles C (centre; 2- and 3-point), arcs A (3-point; tangent and centre-point), slot S, polygon G (3–64 sides, inscribed / circumscribed), ellipse E and elliptical arc, spline B, point P. Clicks snap to ends, centres, the origin, midpoints and curves (the orange hint says which), lines within 3° snap horizontal / vertical — and each snap becomes a constraint (coincident, midpoint, on curve, horizontal / vertical). Hold Shift to place freely. On a touch screen, press and drag to draw a two-click shape; two fingers pan and zoom. After a line, rectangle, circle or slot lands, its size field opens: type the value (or an expression with the design's variables, `w / 2`), Enter applies, Tab moves to the next, Esc keeps it as drawn. Q makes the selection (or new entities) construction geometry (dashed, left out of the profile).
+  - **Constraints and dimensions**: Dimension (D): click a line for its length, a circle / arc for the diameter / radius, two points for their distance, a point then a line for the distance to the line. **Constrain** (K) applies Orca's 20 constraints (horizontal, vertical, parallel, perpendicular, coincident, equal, collinear, concentric, tangent, midpoint, symmetric, angle, radius, diameter, fix, horizontal / vertical distance…) to the selection; click an end or a centre to select that point. Geometry is blue while it can still move, white when fully constrained, red where constraints conflict; the toolbar says how many degrees of freedom are left. Drag a point or a curve to move what the constraints allow. Click a dimension to change it; click a constraint's badge (or its row in the panel) to select it, Delete removes it. A constraint that would over-constrain the sketch is refused with what it conflicts with: **Replace** that one, **Keep both** (over-constrained, shown red), or dismiss.
+  - **Editing**: Trim T (click the part to cut away, up to the nearest crossing), Extend X, Fillet F and Chamfer H (click a corner of two lines), Offset O (a chain; negative goes to the other side), Mirror M (select, then click the mirror line), Move, Rotate, Scale, linear and polar arrays, Use edges (project body edges into the sketch, fixed). Text… and Import SVG… put rigid outlines in a sketch of their own (they extrude as they are).
+  - **Finish** offers Extrude and Revolve on the new sketch.
+- **Undo** is one list for the whole project: Ctrl+Z in either tab steps back through design edits and plate changes in the order you made them.
+- A design saved by a newer Orca opens read-only and is kept unchanged.
+
+Not here yet: surface features, coordinate systems and mates; moving text / SVG outlines by dragging (type the position); split and arc slot in the sketcher.
 
 ## Files
 
@@ -134,7 +187,13 @@ The top bar shows where the project is saved (cloud or disk icon, amber when the
 
 Printer ▸ ⋯ ▸ Physical printer… sets up OctoPrint, Moonraker, PrusaLink, Duet, Repetier, Creality, Elegoo, FlashForge or a plain upload URL. The printer has to allow CORS from `https://cubbycad.com` (the dialog shows the setting for each host type). On an HTTPS page, plain `http://` printers only work in Chrome with Local Network Access (allow the prompt the first time).
 
+UltiMaker printers (UltiMaker 3 / S5) are supported too: every upload starts printing, and the login is an ID / key the printer issues. Request it in the dialog, approve it on the printer's screen, then Test.
+
 Each physical printer has a name and the printer presets it prints. Several printers can share a preset: for two identical printers, set up the first, then use Print ▸ ⌄ ▸ Add another printer… and enter the second one's address. When the selected preset has more than one printer, the Print button names the one it sends to, and its menu and the send dialog switch between them. Each tab remembers its own choice, so two tabs can drive two printers. A new tab starts on the printer you used last.
+
+### Sync filaments from printer
+
+On a Moonraker printer with a filament changer that publishes its lanes (AFC, recent Happy Hare), "Sync filaments from printer" (command palette, or Sync filaments in the Physical printer dialog) sets the filament slots from the printer: one slot per lane, the lane's colour, and the preset with the lane's filament ID, else the generic preset for its material. The toast lists what each lane got; a lane with no matching preset keeps only its colour.
 
 ## Several tabs
 
@@ -142,18 +201,37 @@ Each tab has its own plate and its own printer, filament and process selection, 
 
 Your user presets, the installed printer list and the physical printers are shared: saving a preset in one tab shows it in the others straight away.
 
-## Mixed filaments (Full Spectrum)
+## Mixed filaments
 
-Needs two or more filaments. Filament ▸ Mixed filaments lists the blends the engine creates for every filament pair, plus your own. Each mixed filament gets a filament number after the physical ones, and you use it like any other filament (object filament, object table, colour painting).
+OrcaSlicer 2.5 mixes colours by printing two or three filaments in thin sub-layers (or alternating layers). With two or more filaments in the Filament section, "Add mixed filament" appears under them. Each mixed filament gets a filament number after the physical ones (up to 32 in all), and you use it like any other filament: object or part filament, the object table, height ranges and colour painting.
 
-Click a mixed filament (or + Mix) to edit it:
+The editor:
 
-- Blend: two or more filaments with a share for each.
-- Gradient: colours ordered bottom to top. With two colours, set the first filament's share at the bottom and at the top. With three or more, set each colour's position, the midpoints between them, and an optional solid width.
-- Pattern: filament numbers per layer, for example `1122` (`[10]` for two digits, commas for separate wall groups).
-- Advanced: whole-layer cycle cadence, Local-Z sublayer cap, and surface bias per filament (negative expands, positive recesses).
+- Select Mixed Materials: two or three filaments of the same type (+ Add Material / - Delete Material), each with a share of at least 10 %. Effect Preview shows the resulting colour.
+- Ratio: for two filaments, drag along the blend bar; for three, drag the dot inside the triangle (each corner is one filament). Click a percentage to type it.
+- Gradient Effect (two filaments): the direction (which filament is at the bottom) and the curve of each filament's share over the model height. Click the line to add a point and drag it, drag points to move them, right-click a point to delete it (long press on a touch screen), click the other filament's line to edit that one. With the curve focused, arrow keys move the selected point (Shift: 10 %), Delete removes it. Switching the direction mirrors the curve. "Enable per-part gradient effect" gives each part of an assembly the whole gradient. Curves from desktop OrcaSlicer projects are kept exactly until you change them.
+- Mixing recommendations: one-click blends of your filaments (pairs 50/50, triples 25/25/50).
 
-Colour mixing settings (under the list) hold the global options: Local-Z minimum sublayer height, subdividing every mix, full domain, first layer, gradient Local-Z height, middle filament window, and surface bias. Keep layer heights around 0.08 to 0.12 mm and use translucent filaments for the best blends.
+The list shows each mix's number and swatch (a ramp for a gradient) with its filaments; click one to edit it, × removes it. A warning marks a mix that lost a filament or mixes filament types. The process setting Quality ▸ Layer height ▸ Mixed color sublayer switches between sub-layers and alternating whole layers.
+
+## Plugins
+
+File ▸ Plugins… installs and runs OrcaSlicer 2.5 Python plugins, unmodified, in the browser (Python runs on Pyodide, which loads only once a plugin is enabled or the dialog needs it).
+
+- Install plugin takes a `.py` or `.whl` file (or drop it on the dialog), or a URL. The Orca Cloud tab links to the plugin hub: download a plugin's file there, then install it here.
+- Each plugin has a switch, and so has each of its capabilities. Script capabilities have a Run button and appear in the command palette. G-code post-processing capabilities run when you export or upload G-code; the preview keeps the original.
+- Plugins ask before using permissions such as network access; the dialog lists what each plugin was allowed, with a revoke button.
+- Slicing-pipeline capabilities run inside the slice, at the steps Orca hooks them. Page capabilities add their own tab next to Prepare and Preview (it opens on click or Enter).
+- A plugin's Python dependencies are installed when it loads, from Pyodide's packages or pure-Python wheels. Packages with native code that Pyodide doesn't ship can't be installed.
+- Enabled plugins load again on the next visit. Installed plugins are stored in this browser.
+
+**Only install plugins you trust.** A plugin runs Python code inside CubbySlicer: it can read and change your projects, settings and printer connections stored in this browser, and change the G-code that is sent or exported. The permission prompts limit network access, but not what a plugin does with your data.
+
+What doesn't work in a browser:
+- Starting programs (`subprocess`, `os.system`), raw sockets and threads. A plugin that tries gets an error that says so; a granted permission for them is kept but can't be used.
+- Network access only reaches sites that allow browser requests (CORS), even with permission.
+- Printer-connection capabilities (Orca's printer agents) load but are listed as not supported: CubbySlicer has print hosts, not a device manager.
+- The Orca plugin hub can't be browsed or subscribed to from here; download a plugin's file and install it.
 
 ## Model hand-off
 
@@ -192,7 +270,7 @@ The agent can do what you can do in the app:
 - paint supports, seams, colours and fuzzy skin (whole objects, height bands, around a point, fill regions, or faces pointing one way);
 - set variable layer heights, height range modifiers, and filament changes, pauses or custom G-code at a layer;
 - cut, combine (mesh boolean), simplify, add text or SVG, measure, add brim ears, and set up calibration prints and test models;
-- manage Full Spectrum mixed filaments;
+- add, edit and remove mixed filaments;
 - slice, read the results per plate and per line type, set the preview layers and colours, take screenshots of Prepare and Preview, and export G-code, 3MF or STL;
 - open and save projects in CubbyCAD, and set up and use a print host;
 - run any command from the menus (the same list as the command palette).

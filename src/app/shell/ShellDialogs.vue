@@ -1,19 +1,25 @@
 <script setup lang="ts">
-/** Shortcuts help, about/source, set-number-of-instances and confirm dialogs. */
-import { computed, ref, watch } from 'vue';
+/** Shortcuts help, about/source, set number of instances, primitive size and the app's confirm dialog. */
+import { computed, reactive, ref, watch } from 'vue';
 import { getObject, instancesOf, selectedIds, setInstanceCount } from '../../project/store';
 import { CATEGORY_ORDER } from '../actions/project/palette';
 import { formatBindingTokens } from '../actions/formatBinding';
 import { actionsRevision, getAllActions } from '../actions/registry';
 import { platform } from './useActions';
-import { confirmRequest, ui } from './uiState';
+import { confirmDialog } from './uiState';
+import { primitiveOptions, primitiveSizeDialog } from './commands/parts';
+import { dialogs } from '../../dialogs/state';
+import { preferences } from '../preferences';
+import AppDialog from '../../ui/AppDialog.vue';
+import { PRIMITIVE_LABELS } from '../../project/primitives';
+import { PART_TYPE_LABELS } from '../../project/types';
 
 interface Row { label: string; keys: string[]; note?: string }
 
 /** Every bound, non-hidden action from the registry, grouped by category, plus mouse gestures. */
 const groups = computed<Array<[string, Row[]]>>(() => {
   void actionsRevision.value;
-  if (!ui.shortcutsOpen) return [];
+  if (!dialogs.shortcuts) return [];
   const m = new Map<string, Row[]>();
   for (const a of getAllActions()) {
     if (a.hidden || !a.binding) continue;
@@ -42,7 +48,7 @@ const groups = computed<Array<[string, Row[]]>>(() => {
 });
 /** Filter by command name, group or key ("ctrl", "shift+d"). */
 const scFilter = ref('');
-watch(() => ui.shortcutsOpen, (o) => { if (o) scFilter.value = ''; });
+watch(() => dialogs.shortcuts, (o) => { if (o) scFilter.value = ''; });
 const shownGroups = computed(() => {
   const q = scFilter.value.trim().toLowerCase();
   if (!q) return groups.value;
@@ -62,20 +68,42 @@ const instTarget = computed(() => {
   return o ? { name: o.name, current: instancesOf(o.id).length } : null;
 });
 const count = ref<number | null>(1);
-watch(() => ui.instancesOpen, (v) => { if (v) count.value = Math.max(2, instTarget.value?.current ?? 1); });
+watch(() => dialogs.instances, (v) => { if (v) count.value = Math.max(2, instTarget.value?.current ?? 1); });
 function applyInstances() {
-  ui.instancesOpen = false;
+  dialogs.instances = false;
   setInstanceCount(selectedIds.value.slice(), Math.max(1, Math.min(500, Math.round(count.value ?? 1))));
 }
 
-const confirmOpen = computed({
-  get: () => !!confirmRequest.value,
-  set: (v: boolean) => { if (!v) answer(false); },
+// The confirm dialog (confirmAction / chooseAction / askConfirm, and the AI agent's print confirms).
+const confirmReq = confirmDialog.current;
+const checked = ref(false);
+watch(confirmReq, () => { checked.value = false; });
+const answer = (choice: 'confirm' | 'alt' | null) => confirmDialog.answer({ choice, checked: checked.value });
+
+// Orca 2.5 primitive size dialog: the bounding box of the shape to add.
+const primReq = primitiveSizeDialog.current;
+const prim = reactive({ size: [10, 10, 10] as [number, number, number], uniform: true, saveDefault: false, dontAsk: false });
+watch(primReq, (r) => { if (r) Object.assign(prim, { size: [...r.size], uniform: true, saveDefault: false, dontAsk: false }); });
+/** Fields per shape: round shapes take a diameter (X = Y), a sphere one value. */
+const primFields = computed<Array<{ label: string; axes: number[] }>>(() => {
+  switch (primReq.value?.kind) {
+    case 'cylinder': return [{ label: 'Diameter', axes: [0, 1] }, { label: 'Height', axes: [2] }];
+    case 'sphere': return [{ label: 'Diameter', axes: [0, 1, 2] }];
+    default: return [{ label: 'X', axes: [0] }, { label: 'Y', axes: [1] }, { label: 'Z', axes: [2] }];
+  }
 });
-function answer(ok: boolean | 'alt') {
-  const r = confirmRequest.value;
-  confirmRequest.value = null;
-  r?.resolve(ok);
+function setPrimSize(axes: number[], v: number | null): void {
+  if (v == null || !(v > 0)) return;
+  const old = prim.size[axes[0]];
+  const k = old > 0 ? v / old : 1;
+  prim.size = prim.size.map((x, i) => (axes.includes(i) ? v : prim.uniform ? Math.round(x * k * 100) / 100 : x)) as [number, number, number];
+}
+function addPrimitive(): void {
+  const r = primReq.value;
+  if (!r) return;
+  if (prim.saveDefault) primitiveOptions.sizes[r.kind] = [...prim.size];
+  if (prim.dontAsk) preferences.askPrimitiveSize = false;
+  primitiveSizeDialog.answer([...prim.size]);
 }
 
 const sourceUrl = (import.meta.env.VITE_SOURCE_URL as string | undefined) || '';
@@ -83,12 +111,11 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
 </script>
 
 <template>
-  <UModal v-model:open="ui.shortcutsOpen" title="Keyboard shortcuts" :ui="{ content: 'sm:max-w-3xl' }">
-    <template #body>
-      <UInput v-model="scFilter" icon="i-lucide-search" size="sm" placeholder="Find a command or key…" spellcheck="false" autofocus
-              aria-label="Find a shortcut" class="mb-3 w-full sm:w-72" />
-      <!-- A steady height, so the dialog doesn't jump while the list narrows. -->
-      <div class="sc__body">
+  <AppDialog v-model:open="dialogs.shortcuts" title="Keyboard shortcuts" size="3xl">
+    <UInput v-model="scFilter" icon="i-lucide-search" size="sm" placeholder="Find a command or key…" spellcheck="false" autofocus
+            aria-label="Find a shortcut" class="mb-3 w-full sm:w-72" />
+    <!-- A steady height, so the dialog doesn't jump while the list narrows. -->
+    <div class="sc__body">
       <p v-if="!shownGroups.length" class="text-sm text-dimmed">No shortcut matches “{{ scFilter }}”.</p>
       <div class="sc">
         <section v-for="[g, list] in shownGroups" :key="g">
@@ -101,58 +128,67 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
           </dl>
         </section>
       </div>
-      </div>
-    </template>
-  </UModal>
+    </div>
+  </AppDialog>
 
-  <UModal v-model:open="ui.aboutOpen" title="CubbySlicer source and licence" :ui="{ content: 'sm:max-w-lg' }">
-    <template #body>
-      <div class="about text-sm">
-        <p>
-          CubbySlicer is free software under the GNU Affero General Public License v3.0 or later.
-          Because it runs over a network, you are entitled to its complete corresponding source.
-        </p>
-        <p v-if="sourceUrl">Source for this build: <ULink :href="sourceUrl" target="_blank" rel="noopener" class="text-info">{{ sourceUrl }}</ULink></p>
-        <p v-else>Source for this build is available from the operator of this site on request.</p>
-        <h3>Bundled slicing engines (AGPL-3.0)</h3>
-        <ul>
-          <li><ULink href="https://github.com/SoftFever/OrcaSlicer" target="_blank" rel="noopener" class="text-info">OrcaSlicer</ULink></li>
-          <li><ULink href="https://github.com/oozebot/preFlight" target="_blank" rel="noopener" class="text-info">preFlight</ULink>, derived from
-            <ULink href="https://github.com/prusa3d/PrusaSlicer" target="_blank" rel="noopener" class="text-info">PrusaSlicer</ULink></li>
-        </ul>
-        <p v-if="version" class="about__meta">Version {{ version }}</p>
-      </div>
-    </template>
-  </UModal>
-
-  <UModal v-model:open="ui.instancesOpen" title="Set number of instances" :ui="{ content: 'sm:max-w-sm' }">
-    <template #body>
-      <p class="text-sm text-toned mb-3">
-        <template v-if="selectedIds.length > 1">Each of the {{ selectedIds.length }} selected objects will have this many instances on the plate.</template>
-        <template v-else-if="instTarget"><strong class="text-highlighted">{{ instTarget.name }}</strong> has {{ instTarget.current }} instance{{ instTarget.current === 1 ? '' : 's' }}.</template>
-        New instances are arranged next to the others (spilling onto the next plate when full) and share geometry, so they use almost no extra memory.
+  <AppDialog v-model:open="dialogs.about" title="CubbySlicer source and licence" size="lg">
+    <div class="about text-sm">
+      <p>
+        CubbySlicer is free software under the GNU Affero General Public License v3.0 or later.
+        Because it runs over a network, you are entitled to its complete corresponding source.
       </p>
-      <UFormField label="Instances">
-        <UInputNumber v-model="count" :min="1" :max="500" :step="1" aria-label="Number of instances" class="w-40" autofocus @keydown.enter="applyInstances" />
-      </UFormField>
-    </template>
-    <template #footer>
-      <div class="flex justify-end gap-2 w-full">
-        <UButton color="neutral" variant="ghost" label="Cancel" @click="ui.instancesOpen = false" />
-        <UButton color="primary" :disabled="!selectedIds.length" label="Apply" @click="applyInstances" />
-      </div>
-    </template>
-  </UModal>
+      <p v-if="sourceUrl">Source for this build: <ULink :href="sourceUrl" target="_blank" rel="noopener" class="text-info">{{ sourceUrl }}</ULink></p>
+      <p v-else>Source for this build is available from the operator of this site on request.</p>
+      <h3>Bundled slicing engines (AGPL-3.0)</h3>
+      <ul>
+        <li><ULink href="https://github.com/SoftFever/OrcaSlicer" target="_blank" rel="noopener" class="text-info">OrcaSlicer</ULink></li>
+        <li><ULink href="https://github.com/oozebot/preFlight" target="_blank" rel="noopener" class="text-info">preFlight</ULink>, derived from
+          <ULink href="https://github.com/prusa3d/PrusaSlicer" target="_blank" rel="noopener" class="text-info">PrusaSlicer</ULink></li>
+      </ul>
+      <p v-if="version" class="about__meta">Version {{ version }}</p>
+    </div>
+  </AppDialog>
 
-  <UModal v-model:open="confirmOpen" :title="confirmRequest?.title ?? ''" :description="confirmRequest?.message" :ui="{ content: 'sm:max-w-md' }">
-    <template #footer>
-      <div class="flex justify-end gap-2 w-full">
-        <UButton color="neutral" variant="ghost" label="Cancel" @click="answer(false)" />
-        <UButton v-if="confirmRequest?.altLabel" color="neutral" variant="outline" :label="confirmRequest.altLabel" @click="answer('alt')" />
-        <UButton :color="confirmRequest?.danger ? 'error' : 'primary'" :label="confirmRequest?.confirmLabel" autofocus @click="answer(true)" />
-      </div>
+  <AppDialog v-model:open="dialogs.instances" title="Set number of instances" size="sm"
+             confirm-label="Apply" :confirm-disabled="!selectedIds.length" @confirm="applyInstances">
+    <p class="text-sm text-toned mb-3">
+      <template v-if="selectedIds.length > 1">Each of the {{ selectedIds.length }} selected objects will have this many instances on the plate.</template>
+      <template v-else-if="instTarget"><strong class="text-highlighted">{{ instTarget.name }}</strong> has {{ instTarget.current }} instance{{ instTarget.current === 1 ? '' : 's' }}.</template>
+      New instances are arranged next to the others (spilling onto the next plate when full) and share geometry, so they use almost no extra memory.
+    </p>
+    <UFormField label="Instances">
+      <UInputNumber v-model="count" :min="1" :max="500" :step="1" aria-label="Number of instances" class="w-40" autofocus @keydown.enter="applyInstances" />
+    </UFormField>
+  </AppDialog>
+
+  <AppDialog v-model:open="primitiveSizeDialog.open.value" size="sm"
+             :title="primReq ? `${PART_TYPE_LABELS[primReq.type]}: ${PRIMITIVE_LABELS[primReq.kind].toLowerCase()}` : ''"
+             description="Size of the shape, in mm." confirm-label="Add" @confirm="addPrimitive">
+    <div class="prim">
+      <UFormField v-for="f in primFields" :key="f.label" :label="f.label">
+        <UInputNumber :model-value="prim.size[f.axes[0]]" :min="0.01" :max="10000" :step="1" :step-snapping="false"
+                      :format-options="{ maximumFractionDigits: 2 }" :aria-label="`${f.label} (mm)`" class="w-full"
+                      @update:model-value="(v: number | null) => setPrimSize(f.axes, v)" @keydown.enter="addPrimitive" />
+      </UFormField>
+    </div>
+    <div class="mt-3 flex flex-col gap-2">
+      <UCheckbox v-if="primFields.length > 1" v-model="prim.uniform" label="Uniform scale" />
+      <UCheckbox v-model="prim.saveDefault" label="Save these settings as default" />
+      <UCheckbox v-model="prim.dontAsk" label="Don’t show again" description="Bring it back with “Show options when adding a primitive” in the command palette." />
+    </div>
+  </AppDialog>
+
+  <AppDialog v-model:open="confirmDialog.open.value" :title="confirmReq?.title ?? ''" :description="confirmReq?.message" size="md" on-top
+             :dismissible="confirmReq?.dismissible !== false" :confirm-label="confirmReq?.confirmLabel" :confirm-color="confirmReq?.danger ? 'error' : 'primary'"
+             :cancel-label="confirmReq?.cancelLabel ?? 'Cancel'"
+             confirm-autofocus :test-id="confirmReq?.testId" @confirm="answer('confirm')" @cancel="answer(null)">
+    <template v-if="confirmReq?.checkLabel" #default>
+      <UCheckbox v-model="checked" :label="confirmReq.checkLabel" :data-testid="confirmReq.testId ? `${confirmReq.testId}-always` : undefined" />
     </template>
-  </UModal>
+    <template v-if="confirmReq?.altLabel" #footer-end>
+      <UButton color="neutral" variant="outline" :label="confirmReq.altLabel" @click="answer('alt')" />
+    </template>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -167,5 +203,6 @@ const version = (import.meta.env.VITE_APP_VERSION as string | undefined) || '';
 .about p { margin: 0 0 10px; }
 .about ul { margin: 0; padding-left: 18px; list-style: disc; }
 .about__meta { margin-top: 12px !important; font-size: var(--fs-xs); color: var(--fg-2); }
+.prim { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; }
 @media (max-width: 640px) { .sc { grid-template-columns: 1fr; } }
 </style>

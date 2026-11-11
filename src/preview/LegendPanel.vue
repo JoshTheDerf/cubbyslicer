@@ -47,7 +47,7 @@
           @click="emit('toggleFeature', f.id)"
           @keydown.enter.space.prevent.stop="emit('toggleFeature', f.id)"
         >
-          <i class="lg-swatch" :style="{ background: hexCss(f.color) }" />
+          <i class="lg-swatch" :style="{ background: intToCss(f.color) }" />
           <span class="lg-name" :title="f.label">{{ f.label }}</span>
           <span class="lg-num">{{ formatDuration(f.time) }}</span>
           <span class="lg-num lg-pct">{{ f.percent.toFixed(1) }}%</span>
@@ -68,14 +68,14 @@
           <span class="text-right">Weight</span>
         </div>
         <div v-for="t in toolRows" :key="t.index" class="lg-tools">
-          <i class="lg-swatch" :style="{ background: hexCss(toolColors[t.index] ?? 0x999999) }" />
+          <i class="lg-swatch" :style="{ background: toolSwatch(toolColors[t.index]) }" />
           <span class="lg-name">Filament {{ t.index + 1 }}</span>
           <span class="lg-num">{{ fmtM(t.mm) }}</span>
           <span class="lg-num">{{ t.g !== null ? `${t.g.toFixed(1)} g` : '–' }}</span>
         </div>
         <div v-if="!toolRows.length" class="text-muted py-1">No extrusion.</div>
         <div v-for="(c, i) in colorChanges ?? []" :key="`cc${i}`" class="lg-tools" data-testid="preview-color-change-row">
-          <i class="lg-swatch" :style="{ background: hexCss(c) }" />
+          <i class="lg-swatch" :style="{ background: toolSwatch(c) }" />
           <span class="lg-name col-span-3">Color change {{ i + 1 }}</span>
         </div>
       </template>
@@ -95,11 +95,11 @@
       <USeparator class="my-2" />
       <button type="button" class="lg-th lg-fold" :aria-expanded="!folds.options" @click="folds.options = !folds.options">
         <UIcon name="i-lucide-chevron-down" class="lg-chev" :class="{ closed: folds.options }" />Show
-        <span v-if="folds.options" class="lg-fold-note">{{ onCount }} of {{ OPTION_ROWS.length }} on</span>
+        <span v-if="folds.options" class="lg-fold-note">{{ onCount }} of {{ optionRows.length }} on</span>
       </button>
       <div v-show="!folds.options" class="lg-options">
         <UCheckbox
-          v-for="o in OPTION_ROWS"
+          v-for="o in optionRows"
           :key="o.key"
           size="sm"
           :model-value="options[o.key]"
@@ -109,7 +109,7 @@
         >
           <template #label>
             <span class="inline-flex items-center gap-1.5">
-              <i v-if="o.color !== null" class="lg-swatch lg-swatch-sm" :style="{ background: hexCss(o.color) }" />
+              <i v-if="o.color !== null" class="lg-swatch lg-swatch-sm" :style="{ background: intToCss(o.color) }" />
               <UIcon v-else :name="o.icon!" class="size-3 text-muted" />
               {{ o.label }}
             </span>
@@ -156,7 +156,11 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
-import { RAMP, SCHEMES, hexCss, rampColor, schemeMeta } from './render/colors';
+import { RAMP, SCHEMES, rampColor, schemeMeta } from './render/colors';
+import { intToCss, isTranslucent } from '../lib/colour';
+import { toolSwatch } from './render/colors';
+import type { ToolColour } from './render/colors';
+import { readJson, writeJson } from '../lib/storage';
 import type { ColorScheme, ValueRange } from './render/colors';
 import { FEATURES, Feature } from './parser/features';
 import { formatDuration } from './summary';
@@ -167,14 +171,18 @@ const props = defineProps<{
   features: FeatureRow[];
   featureVisible: boolean[];
   toolRows: ToolRow[];
-  toolColors: number[];
+  toolColors: ToolColour[];
   /** Colours after each colour change (Orca colour print). */
-  colorChanges?: number[];
+  colorChanges?: ToolColour[];
   range: ValueRange | null;
   summary: Summary;
   options: LegendOptions;
   currentLayer: number;
   layerTime: number | null;
+  /** The plate prints in an IDEX/IQEX parallel mode (offers the toolhead boxes option). */
+  imex?: boolean;
+  /** The G-code is a belt print (offers the raw G-code view). */
+  belt?: boolean;
 }>();
 const emit = defineEmits<{
   'update:scheme': [ColorScheme];
@@ -188,8 +196,8 @@ const collapsed = defineModel<boolean>('collapsed', { default: false });
 /** Options / estimate fold on their own; remembered in this browser. */
 const FOLDS_KEY = 'cubby-slicer:legend-folds';
 const folds = reactive<{ options: boolean; stats: boolean }>({ options: false, stats: false });
-try { Object.assign(folds, JSON.parse(localStorage.getItem(FOLDS_KEY) ?? '{}')); } catch { /* defaults */ }
-watch(folds, (v) => { try { localStorage.setItem(FOLDS_KEY, JSON.stringify(v)); } catch { /* ignore */ } });
+Object.assign(folds, readJson(FOLDS_KEY));
+watch(folds, (v) => { writeJson(FOLDS_KEY, v); });
 
 /** One line for the folded legend: total time · filament · layers. */
 const brief = computed(() => {
@@ -201,7 +209,7 @@ const brief = computed(() => {
   parts.push(`${s.layers} layers`);
   return parts.join(' · ');
 });
-const onCount = computed(() => OPTION_ROWS.filter((o) => props.options[o.key]).length);
+const onCount = computed(() => optionRows.value.filter((o) => props.options[o.key]).length);
 const meta = computed(() => schemeMeta(props.scheme));
 
 const schemeItems = SCHEMES.map((s) => ({ label: s.label, value: s.id }));
@@ -215,7 +223,15 @@ const OPTION_ROWS: OptionRow[] = [
   { key: 'seams', label: 'Seams', color: FEATURES[Feature.Seam].color },
   { key: 'toolMarker', label: 'Tool marker', color: null, icon: 'i-lucide-map-pin' },
   { key: 'dimBelow', label: 'Dim lower layers', color: null, icon: 'i-lucide-layers' },
+  { key: 'translucent', label: 'Translucent filaments', color: null, icon: 'i-lucide-blend' },
+  { key: 'imexToolheads', label: 'IDEX/IQEX toolheads', color: null, icon: 'i-lucide-box' },
+  { key: 'beltRaw', label: 'Raw G-code (belt)', color: null, icon: 'i-lucide-axis-3d' },
 ];
+/** "Translucent filaments" only matters when a filament is translucent (Orca 2.5 `#RRGGBBAA`). */
+const optionRows = computed(() => {
+  const any = props.toolColors.some((c) => c.colours.some((x) => isTranslucent(x)));
+  return OPTION_ROWS.filter((o) => (o.key !== 'translucent' || any) && (o.key !== 'imexToolheads' || props.imex) && (o.key !== 'beltRaw' || props.belt));
+});
 
 const hasUsage = computed(() => props.features.some((f) => f.filamentMm !== null));
 
@@ -229,7 +245,7 @@ const rangeSteps = computed(() => {
   const out: Array<{ color: string; label: string }> = [];
   for (let i = n - 1; i >= 0; i--) {
     const t = n === 1 ? 0 : i / (n - 1);
-    out.push({ color: hexCss(rampColor(t)), label: (r.min + (r.max - r.min) * t).toFixed(meta.value.digits) });
+    out.push({ color: intToCss(rampColor(t)), label: (r.min + (r.max - r.min) * t).toFixed(meta.value.digits) });
   }
   return out;
 });

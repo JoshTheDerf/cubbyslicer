@@ -2,7 +2,7 @@
 /**
  * Mount point for the tools (inside the Prepare viewport): the active tool
  * panel plus the import dialogs (STEP deflection, OBJ colours). Esc closes
- * the active tool (before the global Esc actions run).
+ * the active tool (the `tool.close` action, before the other Esc actions).
  */
 import { defineAsyncComponent, onBeforeUnmount, watch } from 'vue';
 import { activeView } from '../app/state';
@@ -21,17 +21,7 @@ const panels = {
 };
 const ObjColorDialog = defineAsyncComponent(() => import('./objcolor/ObjColorDialog.vue'));
 
-function onKey(e: KeyboardEvent): void {
-  if (e.key !== 'Escape' || !toolState.active) return;
-  const t = e.target as HTMLElement | null;
-  // Let open menus / dialogs / text fields handle their own Esc.
-  if (t?.closest?.('[role="dialog"], [role="menu"], [role="listbox"], input, textarea, select')) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-  closeTool();
-}
-window.addEventListener('keydown', onKey, true);
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKey, true); closeTool(); });
+onBeforeUnmount(closeTool);
 // Tools belong to the Prepare view.
 watch(activeView, (v) => { if (v !== 'prepare') closeTool(); });
 </script>

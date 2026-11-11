@@ -12,10 +12,16 @@
  * pool lives in nested Workers. Terminating the engine worker (cancel, fatal
  * error) tears all of those down too.
  */
+import { readString, removeKey, writeString } from '../lib/storage';
 import type {
   ArrangeArgs, ArrangeResult, ConfigSchema, EngineId, EngineVersion, FlatConfig, PaintMap, SliceJob, SliceObjectInput, SliceProgress, SliceReport,
   SliceResult, ToolMesh, WorkerRequest, WorkerResponse,
 } from './types';
+import type {
+  MixedPreviewResult, MixedRecommendResult, MixedValidateResult, ResolveVariantsResult, ToolArgs, ToolOp, ToolResult,
+} from './tools';
+
+export { ENGINE_LABELS } from './capabilities';
 
 export class SliceError extends Error {
   constructor(message: string, readonly report: SliceReport | null, readonly fatal: boolean) {
@@ -31,19 +37,14 @@ export class SliceCancelled extends Error {
 const THREADS_KEY = 'cubby-slicer:engine-threads';
 /** Engine thread preference (localStorage `cubby-slicer:engine-threads`): 0 = auto, 1 = single-threaded, N = N threads. */
 export function engineThreadsPref(): number {
-  try { const n = Number(localStorage.getItem(THREADS_KEY)); return Number.isFinite(n) && n >= 0 ? Math.min(64, Math.floor(n)) : 0; } catch { return 0; }
+  const n = Number(readString(THREADS_KEY));
+  return Number.isFinite(n) && n >= 0 ? Math.min(64, Math.floor(n)) : 0;
 }
 /** Set the thread preference (Preferences); idle engines restart so the next slice uses it. */
 export function setEngineThreadsPref(n: number): void {
-  try { if (n > 0) localStorage.setItem(THREADS_KEY, String(Math.min(64, Math.floor(n)))); else localStorage.removeItem(THREADS_KEY); } catch { /* private mode */ }
+  if (n > 0) writeString(THREADS_KEY, String(Math.min(64, Math.floor(n)))); else removeKey(THREADS_KEY);
   for (const w of workers.values()) if (w.idle) w.reset(null);
 }
-
-export const ENGINE_LABELS: Record<EngineId, string> = {
-  orca: 'OrcaSlicer',
-  preflight: 'preFlight',
-  fullspectrum: 'Full Spectrum',
-};
 
 export function artifactBase(engine: EngineId): string {
   return `${import.meta.env.BASE_URL}wasm/${engine}/`;
@@ -58,6 +59,34 @@ interface Pending {
   resolve: (v: WorkerResponse) => void;
   reject: (e: unknown) => void;
   onProgress?: (p: SliceProgress) => void;
+}
+
+/**
+ * Something that attaches to every engine worker while it lives (the plugin runtime's
+ * slicing-pipeline HookChannel, src/plugins). Called for workers that already exist too;
+ * the returned function runs when that worker is terminated (cancel, crash, restart).
+ */
+export type EngineWorkerAttach = (worker: Worker, engine: EngineId) => (() => void) | void;
+const attachers = new Set<EngineWorkerAttach>();
+const liveWorkers = new Map<Worker, { engine: EngineId; detach: Array<() => void> }>();
+
+export function onEngineWorker(fn: EngineWorkerAttach): () => void {
+  attachers.add(fn);
+  for (const [w, e] of liveWorkers) { const d = fn(w, e.engine); if (d) e.detach.push(d); }
+  return () => { attachers.delete(fn); };
+}
+
+function workerStarted(w: Worker, engine: EngineId): void {
+  const entry = { engine, detach: [] as Array<() => void> };
+  liveWorkers.set(w, entry);
+  for (const fn of attachers) { const d = fn(w, engine); if (d) entry.detach.push(d); }
+}
+
+function workerStopped(w: Worker | null): void {
+  const e = w ? liveWorkers.get(w) : undefined;
+  if (!w || !e) return;
+  liveWorkers.delete(w);
+  for (const d of e.detach) { try { d(); } catch { /* ignore */ } }
 }
 
 class EngineWorker {
@@ -91,6 +120,7 @@ class EngineWorker {
       this.reset(new SliceError(ev.message || 'Engine worker crashed', null, true));
     };
     this.worker = w;
+    workerStarted(w, this.engine);
     return w;
   }
 
@@ -98,6 +128,7 @@ class EngineWorker {
 
   reset(reason: unknown): void {
     this.worker?.terminate();
+    workerStopped(this.worker);
     this.worker = null;
     const pend = [...this.pending.values()];
     this.pending.clear();
@@ -158,6 +189,21 @@ export async function sliceJob(
 
 const schemaCache = new Map<EngineId, Promise<ConfigSchema>>();
 
+/**
+ * The engines also report `enums` (coEnums: z_hop_types, nozzle_volume_type,
+ * extruder_type, …) and `pointsGroups` (extruder_printable_area). The app has
+ * no editor for either: both are per-extruder / per-variant string vectors,
+ * the shape the generated fixture gives them, so treat them as `strings`
+ * (otherwise a per-extruder value collapses to its first element on load).
+ */
+export function normalizeSchema(s: ConfigSchema): ConfigSchema {
+  for (const def of Object.values(s.options ?? {})) {
+    const t = def.type as string;
+    if (t === 'enums' || t === 'pointsGroups') def.type = 'strings';
+  }
+  return s;
+}
+
 /** Engine config schema. Prefers the build-time schema.json; falls back to asking the engine. */
 export function getSchema(engine: EngineId): Promise<ConfigSchema> {
   let p = schemaCache.get(engine);
@@ -165,11 +211,11 @@ export function getSchema(engine: EngineId): Promise<ConfigSchema> {
     p = (async () => {
       try {
         const rsp = await fetch(`${artifactBase(engine)}schema.json`);
-        if (rsp.ok) return (await rsp.json()) as ConfigSchema;
+        if (rsp.ok) return normalizeSchema((await rsp.json()) as ConfigSchema);
       } catch { /* fall through */ }
       const w = workerFor(engine);
       const res = await w.request({ type: 'describe', id: w.nextId() });
-      if (res.type === 'schema') return res.schema;
+      if (res.type === 'schema') return normalizeSchema(res.schema);
       throw new SliceError(res.type === 'error' ? res.message : 'describe failed', null, false);
     })();
     p.catch(() => schemaCache.delete(engine));
@@ -225,36 +271,59 @@ export async function orcaArrange(config: FlatConfig, objects: SliceObjectInput[
 // ---- engine tools (cs_tool) --------------------------------------------------------
 
 /**
- * Run an engine tool (see docs/ENGINE-CONTRACT.md "Tools"). Tools run on a
- * long-lived instance in the worker (painting sessions keep state there);
- * mesh arrays are copied, callers keep theirs.
+ * Run an engine tool (see docs/ENGINE-CONTRACT.md "Tools", ops in tools.ts).
+ * Tools run on a long-lived Orca instance in the worker (painting sessions
+ * keep state there); mesh arrays are copied, callers keep theirs.
  */
-export async function engineTool<T>(op: string, args: unknown, meshes: ToolMesh[] = [], engine: EngineId = 'orca',
-                                    signal?: AbortSignal): Promise<{ result: T; meshes: ToolMesh[] }> {
-  const w = workerFor(engine);
+export async function engineTool<K extends ToolOp>(op: K, args: ToolArgs<K>, meshes: ToolMesh[] = [],
+                                                   signal?: AbortSignal): Promise<{ result: ToolResult<K>; meshes: ToolMesh[] }> {
+  const w = workerFor('orca');
   const res = await w.request({ type: 'tool', id: w.nextId(), op, args, meshes }, [], undefined, signal);
-  if (res.type === 'tool') return { result: res.result as T, meshes: res.meshes };
+  if (res.type === 'tool') return { result: res.result as ToolResult<K>, meshes: res.meshes };
   throw new SliceError(res.type === 'error' ? res.message : `${op} failed`, null, res.type === 'error' && res.fatal);
 }
 
 /** Orca "Adaptive" variable layer height: profile [z0,h0,…] for an object (mesh + mesh→bed transform). */
 export async function adaptiveLayerProfile(mesh: ToolMesh, transform: number[], config: FlatConfig, quality: number): Promise<number[]> {
-  return (await engineTool<{ profile: number[] }>('layer_profile_adaptive', { transform, config, quality }, [mesh])).result.profile;
+  return (await engineTool('layer_profile_adaptive', { transform, config, quality }, [mesh])).result.profile;
 }
 
 /** Orca "Smooth" variable layer height (HeightProfileSmoothingParams). */
 export async function smoothLayerProfile(mesh: ToolMesh, transform: number[], config: FlatConfig, profile: number[],
                                          radius: number, keepMin: boolean): Promise<number[]> {
-  return (await engineTool<{ profile: number[] }>('layer_profile_smooth', { transform, config, profile, radius, keepMin }, [mesh])).result.profile;
+  return (await engineTool('layer_profile_smooth', { transform, config, profile, radius, keepMin }, [mesh])).result.profile;
 }
 
 /**
  * Per-triangle states → Orca paint strings (e.g. OBJ face colours → color
- * painting): `states` are sparse [triangleIndex, state] pairs, state 1..16 =
- * extruder (color) or 1 enforcer / 2 blocker (support, seam).
+ * painting): `states` are sparse [triangleIndex, state] pairs, state 1..32 =
+ * filament (color) or 1 enforcer / 2 blocker (support, seam).
  */
 export async function paintFromStates(mesh: ToolMesh, states: Array<[number, number]>): Promise<PaintMap> {
-  return (await engineTool<{ paint: PaintMap }>('paint_from_states', { states }, [mesh])).result.paint;
+  if (!states.length) return [];
+  return (await engineTool('paint_from_states', { states }, [mesh])).result.paint;
+}
+
+// ---- mixed filaments / extruder variants (orca 2.5) ------------------------------------
+
+/** Orca's blend of `components` (1-based into `colors`) at `ratios` (weights), with the lab-measured colour when known. */
+export async function mixedPreview(colors: string[], components: number[], ratios: number[]): Promise<MixedPreviewResult> {
+  return (await engineTool('mixed_filament', { action: 'preview', colors, components, ratios })).result as MixedPreviewResult;
+}
+
+/** Desktop's colour-match recipe for `target` from the physical filaments (or a standard CMYW / RYBW set). */
+export async function mixedRecommend(args: Omit<Extract<ToolArgs<'mixed_filament'>, { action: 'recommend' }>, 'action'>): Promise<MixedRecommendResult> {
+  return (await engineTool('mixed_filament', { action: 'recommend', ...args })).result as MixedRecommendResult;
+}
+
+/** Orca's validate_mixed_filament_params on a config's mix keys: { key: message } (empty = valid). */
+export async function mixedValidate(config: FlatConfig): Promise<Record<string, string>> {
+  return ((await engineTool('mixed_filament', { action: 'validate', config })).result as MixedValidateResult).errors ?? {};
+}
+
+/** What each extruder / filament uses of the extruder-variant vectors in a job config (no slice). */
+export async function resolveVariants(config: FlatConfig): Promise<ResolveVariantsResult> {
+  return (await engineTool('resolve_variants', { config })).result;
 }
 
 /** Probe whether an engine's artifacts are deployed. */

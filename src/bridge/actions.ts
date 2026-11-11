@@ -3,7 +3,6 @@
  * prefix: recent actions and key bindings are stored by id.
  */
 import type { Action } from '../app/actions/types';
-import { registerActions } from '../app/actions/registry';
 import { bridge, bridgeState, openBridgeDialog } from './store';
 
 export const bridgeActions: Action[] = [
@@ -19,10 +18,3 @@ export const bridgeActions: Action[] = [
     run: () => bridge.disconnect(),
   },
 ];
-
-let dispose: (() => void) | null = null;
-/** Register with the app registry (idempotent). */
-export function registerBridgeActions(): () => void {
-  if (!dispose) dispose = registerActions(bridgeActions);
-  return () => { dispose?.(); dispose = null; };
-}

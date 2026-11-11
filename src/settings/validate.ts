@@ -4,9 +4,10 @@
  * `getConfigProblems()` validates the active engine's resolved config (what
  * the slice button would send) and is what the slice orchestrator reads.
  */
-import { computed } from 'vue';
+import { computed, reactive } from 'vue';
 import { resolvedConfig } from '../app/state';
 import type { ConfigOptionDef, ConfigSchema, ConfigValue, FlatConfig } from '../engine/types';
+import { SCALAR, valueAt } from '../lib/configValue';
 import { currentPresets } from '../presets/store';
 import { elementType, isVectorType, parseBool, parseFloatOrPercent, parseNumber, parsePoint } from '../presets/values';
 
@@ -94,7 +95,7 @@ export function validateValue(def: ConfigOptionDef, value: ConfigValue | undefin
     arr.forEach((el, i) => { const m = validateScalar(def, el); if (m) out.push({ index: i, message: m }); });
     return out;
   }
-  const m = validateScalar(def, Array.isArray(value) ? value[0] ?? '' : value);
+  const m = validateScalar(def, valueAt(value, SCALAR) ?? '');
   if (m) out.push({ message: m });
   return out;
 }
@@ -120,8 +121,19 @@ export const configProblems = computed<ConfigProblem[]>(() => {
   const p = currentPresets.value;
   const schema = p.schema.value;
   if (!schema) return [];
-  return validateConfig(schema, resolvedConfig.value).map((pr) => (p.userTouched(pr.key) ? pr : { ...pr, severity: 'warning' as const }));
+  const extra = [...problemSources].flatMap((fn) => { try { return fn(); } catch { return []; } });
+  return [...validateConfig(schema, resolvedConfig.value).map((pr) => (p.userTouched(pr.key) ? pr : { ...pr, severity: 'warning' as const })), ...extra];
 });
+
+/**
+ * Problems another area adds (reactive functions; 'error' blocks slicing), e.g. the plugin
+ * system's missing slicing-pipeline plugins (src/plugins/host/pipelineSelection.ts).
+ */
+const problemSources = reactive(new Set<() => ConfigProblem[]>());
+export function addConfigProblemSource(fn: () => ConfigProblem[]): () => void {
+  problemSources.add(fn);
+  return () => { problemSources.delete(fn); };
+}
 
 /** For the slice button: all problems (check `severity === 'error'` to block slicing). */
 export function getConfigProblems(): ConfigProblem[] {

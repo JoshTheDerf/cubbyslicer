@@ -9,67 +9,52 @@ import { computed, reactive, ref } from 'vue';
 import { activeEngine } from '../app/state';
 import { currentPresets } from '../presets/store';
 import { uuid } from '../presets/util';
-import { asArray } from '../presets/values';
 import { STORAGE_PREFIX, configFromPreset, normalizeConfig } from './config';
 import {
   DEVICES_KEY, LAST_USED_KEY, TAB_CHOICE_KEY, devicesFor, emptyStore, migrateLegacy, parseStore, pickDevice, uniqueDeviceName,
   type DeviceStore, type PhysicalDevice, type PresetRef,
 } from './devices';
 import { isSupported } from './registry';
+import { readJson, storageKeys, writeJson } from '../lib/storage';
+import { SCALAR, valueAt } from '../lib/configValue';
+import { dialogs } from '../dialogs/state';
 import type { HostContext, PhysicalPrinterConfig } from './types';
 
-function storage(kind: 'localStorage' | 'sessionStorage'): Storage | null {
-  try { return (globalThis as Record<string, unknown>)[kind] as Storage ?? null; } catch { return null; }
-}
-function readJson(st: Storage | null, key: string): unknown {
-  try { const raw = st?.getItem(key); return raw ? JSON.parse(raw) : null; } catch { return null; }
-}
-function writeJson(st: Storage | null, key: string, v: unknown): void {
-  try { st?.setItem(key, JSON.stringify(v)); } catch { /* storage blocked: this session only */ }
-}
-
 function loadStore(): DeviceStore {
-  const ls = storage('localStorage');
-  const saved = readJson(ls, DEVICES_KEY);
+  const saved = readJson(DEVICES_KEY);
   if (saved) return parseStore(saved);
   // First run with named devices: convert the old one-host-per-preset entries (kept for older builds).
-  const entries: Array<[string, unknown]> = [];
-  try {
-    for (let i = 0; ls && i < ls.length; i++) {
-      const k = ls.key(i);
-      if (k?.startsWith(STORAGE_PREFIX)) entries.push([k, readJson(ls, k)]);
-    }
-  } catch { /* storage blocked */ }
+  const entries: Array<[string, unknown]> = storageKeys(STORAGE_PREFIX).map((k) => [k, readJson(k)]);
   if (!entries.length) return emptyStore();
   // Preset names aren't loaded yet at startup; devices are named from the preset id (renamable).
   const migrated = migrateLegacy(entries, () => undefined, () => `dev:${uuid()}`);
-  writeJson(ls, DEVICES_KEY, migrated);
+  writeJson(DEVICES_KEY, migrated);
   return migrated;
 }
 
 /** All physical printers (every tab sees the same list). */
 export const deviceStore = ref<DeviceStore>(loadStore());
-const lastUsed = ref<Record<string, string>>((readJson(storage('localStorage'), LAST_USED_KEY) as Record<string, string>) ?? {});
+const lastUsed = ref<Record<string, string>>(readJson<Record<string, string>>(LAST_USED_KEY) ?? {});
 /** This tab's device per printer preset. */
-const tabChoice = reactive<Record<string, string>>((readJson(storage('sessionStorage'), TAB_CHOICE_KEY) as Record<string, string>) ?? {});
+const tabChoice = reactive<Record<string, string>>(readJson<Record<string, string>>(TAB_CHOICE_KEY, 'session') ?? {});
 
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
-    if (e.key === DEVICES_KEY) deviceStore.value = parseStore(readJson(storage('localStorage'), DEVICES_KEY));
-    else if (e.key === LAST_USED_KEY) lastUsed.value = (readJson(storage('localStorage'), LAST_USED_KEY) as Record<string, string>) ?? {};
+    if (e.key === DEVICES_KEY) deviceStore.value = parseStore(readJson(DEVICES_KEY));
+    else if (e.key === LAST_USED_KEY) lastUsed.value = readJson<Record<string, string>>(LAST_USED_KEY) ?? {};
   });
 }
 
 function commit(next: DeviceStore): void {
   deviceStore.value = next;
-  writeJson(storage('localStorage'), DEVICES_KEY, next);
+  writeJson(DEVICES_KEY, next);
 }
 
 /** The printer preset the physical printer is bound to. */
 export const boundPrinter = computed(() => {
   const p = currentPresets.value;
   const id = p.selectedId('printer');
-  const first = (k: string) => asArray(p.value('printer', k))[0];
+  const first = (k: string) => valueAt(p.value('printer', k), SCALAR);
   return { engine: activeEngine.value, id, name: p.selectedInfo('printer').name, model: first('printer_model') ?? '', get: first };
 });
 
@@ -99,7 +84,7 @@ export const hostReady = computed(() => !!physicalPrinter.value && isSupported(p
 export function selectDevice(id: string): void {
   const presetId = boundPrinter.value.id;
   tabChoice[presetId] = id;
-  writeJson(storage('sessionStorage'), TAB_CHOICE_KEY, tabChoice);
+  writeJson(TAB_CHOICE_KEY, tabChoice, 'session');
   rememberDevice(id);
 }
 
@@ -107,9 +92,9 @@ export function selectDevice(id: string): void {
 export function rememberDevice(id: string): void {
   const presetId = boundPrinter.value.id;
   if (lastUsed.value[presetId] === id) return;
-  const fresh = { ...((readJson(storage('localStorage'), LAST_USED_KEY) as Record<string, string>) ?? {}), [presetId]: id };
+  const fresh = { ...(readJson<Record<string, string>>(LAST_USED_KEY) ?? {}), [presetId]: id };
   lastUsed.value = fresh;
-  writeJson(storage('localStorage'), LAST_USED_KEY, fresh);
+  writeJson(LAST_USED_KEY, fresh);
 }
 
 export function deviceById(id: string | null | undefined): PhysicalDevice | undefined {
@@ -165,11 +150,10 @@ export function hostContext(config: PhysicalPrinterConfig): HostContext {
 
 // ---- dialogs + running upload --------------------------------------------------------
 
+/** The dialogs' open flags are `dialogs.physicalPrinter` / `dialogs.printhostSend`. */
 export const printhostUi = reactive({
-  setupOpen: false,
-  /** Device the setup dialog edits: an id, 'new', or null for the one this tab uses. */
+  /** Device the setup dialog (`dialogs.physicalPrinter`) edits: an id, 'new', or null for the one this tab uses. */
   setupTarget: null as string | null,
-  sendOpen: false,
   /** Which button the send dialog emphasises. */
   sendMode: 'print' as 'print' | 'upload',
   uploading: false,
@@ -180,10 +164,10 @@ export const printhostUi = reactive({
 /** Edit the device this tab uses (`target` null), another device, or add one ('new'). */
 export function openPhysicalPrinterDialog(target: string | null = null): void {
   printhostUi.setupTarget = target;
-  printhostUi.setupOpen = true;
+  dialogs.physicalPrinter = true;
 }
 export function openSendDialog(mode: 'print' | 'upload'): void {
   if (!hostReady.value) { openPhysicalPrinterDialog(); return; }
   printhostUi.sendMode = mode;
-  printhostUi.sendOpen = true;
+  dialogs.printhostSend = true;
 }

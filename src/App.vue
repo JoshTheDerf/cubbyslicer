@@ -8,9 +8,10 @@
  *  - rest: the 3D canvas with Orca's centred toolbar, the view cube, the
  *    object manipulation panel (bottom-left) and notifications (bottom-right).
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { activeEngine } from './app/state';
 import { startPresets } from './presets/store';
+import { watchPlateBedTypes } from './app/plateBedTypes';
 import { useToast } from '@nuxt/ui/composables';
 import TopBar from './app/shell/TopBar.vue';
 import ObjectList from './app/shell/ObjectList.vue';
@@ -48,8 +49,15 @@ import { compact, drawerOpen, layout, narrow, phone, sidebarOpen, ui } from './a
 import { useSliceController } from './app/slice';
 import { activeView } from './app/state';
 import PrepareViewport from './viewport/PrepareViewport.vue';
+import SectionViewControl from './viewport/SectionViewControl.vue';
+import { pluginPages } from './plugins/state';
+const PluginPageHost = defineAsyncComponent(() => import('./plugins/ui/PluginPageHost.vue'));
 import TransformPanel from './viewport/TransformPanel.vue';
 import CadPanel from './cad/CadPanel.vue';
+import LinkedObjectCard from './design/ui/LinkedObjectCard.vue';
+import { preferences } from './app/preferences';
+// The Design tab (src/design) and its kernel load the first time the tab opens.
+const DesignView = defineAsyncComponent(() => import('./design/ui/DesignView.vue'));
 import ShapePalettePopover from './cad/ShapePalettePopover.vue';
 import { objects, plates, projectName } from './project/store';
 import { enableAutosave, restoreAutosave } from './project/persistence/autosave';
@@ -79,11 +87,14 @@ mqPhone?.addEventListener('change', onMq);
 mqNarrow?.addEventListener('change', onMq);
 onBeforeUnmount(() => { mq?.removeEventListener('change', onMq); mqPhone?.removeEventListener('change', onMq); mqNarrow?.removeEventListener('change', onMq); });
 
-const showSidebar = computed(() => !compact.value && sidebarOpen());
+const showSidebar = computed(() => !compact.value && sidebarOpen() && activeView.value !== 'design');
 
-// ---- preview mounts lazily, then stays alive ----
+// ---- preview and design mount lazily, then stay alive ----
 const previewMounted = ref(activeView.value === 'preview');
-watch(activeView, (v) => { if (v === 'preview') previewMounted.value = true; });
+const designMounted = ref(activeView.value === 'design');
+watch(activeView, (v) => { if (v === 'preview') previewMounted.value = true; if (v === 'design') designMounted.value = true; });
+// The Design tab turned off in Preferences while it shows: back to Prepare.
+watch(() => preferences.designTab, (on) => { if (!on && activeView.value === 'design') activeView.value = 'prepare'; });
 
 // ---- reveal per-object settings: open the sidebar, go to Prepare ----
 watch(() => ui.revealObjectSettings, () => {
@@ -122,6 +133,8 @@ const toaster = computed(() => ({
 
 // Presets resolve from startup (the sidebar may be a closed drawer on phones).
 startPresets();
+// Orca's normalize_bed_types on printer change.
+onBeforeUnmount(watchPlateBedTypes());
 
 // Tabs are told apart by their project (each tab keeps its own plate).
 const baseTitle = document.title;
@@ -173,8 +186,9 @@ onBeforeUnmount(() => stopHandoff?.());
         <main class="center">
           <PrepareViewport v-show="activeView === 'prepare'" class="center__vp" @contextmenu="onViewportMenu">
             <div class="ov ov--top"><PlateToolbar :reserve="phone ? 16 : 220" /><ShapePalettePopover class="ov__palette" /></div>
-            <div v-if="!layersUi.editing" class="ov ov--cad"><CadPanel /></div>
+            <div v-if="!layersUi.editing" class="ov ov--cad"><CadPanel /><LinkedObjectCard /></div>
             <div class="ov ov--bl">
+              <SectionViewControl />
               <TransformPanel />
               <PlateStatus v-if="!phone" />
             </div>
@@ -184,10 +198,15 @@ onBeforeUnmount(() => stopHandoff?.());
             <ToolHost />
             <div v-if="layersUi.editing" class="ov ov--lh"><LayerHeightPanel /></div>
           </PrepareViewport>
+          <div v-if="designMounted" v-show="activeView === 'design'" class="center__design">
+            <component :is="DesignView" />
+          </div>
           <div v-if="previewMounted" v-show="activeView === 'preview'" class="center__preview">
             <component :is="PreviewView" />
             <div v-if="plates.length > 1" class="ov ov--pv"><PlateBar compact /></div>
           </div>
+          <!-- Orca 2.5 plugin page tabs (src/plugins): over Prepare / Preview while one is chosen; pages stay alive. -->
+          <PluginPageHost v-if="pluginPages.length" />
           <Transition name="fade">
             <div v-if="ui.busy" class="busy" role="status">
               <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary" />{{ ui.busy }}
@@ -227,7 +246,7 @@ onBeforeUnmount(() => stopHandoff?.());
 .side { flex: none; display: flex; flex-direction: column; min-height: 0; background: var(--bg-1); border-right: 1px solid var(--line); overflow: hidden; }
 
 .center { position: relative; flex: 1; min-width: 0; min-height: 0; }
-.center__vp, .center__preview { position: absolute; inset: 0; }
+.center__vp, .center__preview, .center__design { position: absolute; inset: 0; }
 .ov { position: absolute; z-index: var(--z-toolbar); pointer-events: none; }
 .ov > * { pointer-events: auto; }
 .ov--top { top: 10px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 140px); }

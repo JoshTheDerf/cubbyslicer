@@ -5,7 +5,7 @@
  * Driven by `cloudDialog` (store.ts); the plate work is in commands.ts.
  */
 import { computed, ref, watch } from 'vue';
-import { mobileDialog } from '../ui/mobileDialog';
+import AppDialog from '../ui/AppDialog.vue';
 import { confirmAction } from '../app/shell/uiState';
 import { toast } from '../ui';
 import {
@@ -221,8 +221,9 @@ function iconFor(r: Row): string {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-2xl', body: 'flex flex-col gap-3' }">
-    <template #body>
+  <AppDialog v-model:open="open" :title="title" size="2xl" fullscreen body-class="flex flex-col gap-3"
+             :confirm-label="cloud.user && mode !== 'open' && !loading ? (exists ? 'Replace' : mode === 'save' ? 'Save' : 'Export') : undefined"
+             :confirm-loading="busy" :confirm-disabled="!wsId || !targetValid || (workspace ? !workspace.writable : true)" @confirm="commit">
       <div v-if="loading" class="cd__center"><UIcon name="i-lucide-loader-circle" class="animate-spin size-5" /> Connecting to CubbyCAD…</div>
 
       <!-- Sign in (the session is shared with the CubbyCAD editor) -->
@@ -286,15 +287,7 @@ function iconFor(r: Row): string {
         </template>
         <p v-if="error" class="cd__err">{{ error }}</p>
       </template>
-    </template>
-    <template v-if="cloud.user && mode !== 'open' && !loading" #footer>
-      <div class="flex justify-end gap-2 w-full">
-        <UButton color="neutral" variant="ghost" label="Cancel" @click="open = false" />
-        <UButton color="primary" :label="exists ? 'Replace' : mode === 'save' ? 'Save' : 'Export'" :loading="busy"
-                 :disabled="!wsId || !targetValid || (workspace ? !workspace.writable : true)" @click="commit" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

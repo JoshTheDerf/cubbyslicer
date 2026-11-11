@@ -1,7 +1,8 @@
 /**
  * Mesh utilities: vertex welding, bounding boxes, recentring. All typed-array
  * based and allocation-conscious so they can run on multi-million-triangle
- * meshes inside the import worker.
+ * meshes inside the import worker. Buffer transforms, merging and compaction
+ * are in `tools/geom/meshUtil.ts`.
  */
 import type { BBox3 } from './types';
 
@@ -154,14 +155,4 @@ export function recenter(positions: Float32Array): [number, number, number] {
     positions[i] -= c[0]; positions[i + 1] -= c[1]; positions[i + 2] -= c[2];
   }
   return c;
-}
-
-/** Apply a column-major affine transform to positions in place. */
-export function transformPositions(positions: Float32Array, m: number[]): void {
-  for (let i = 0; i < positions.length; i += 3) {
-    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
-    positions[i] = m[0] * x + m[4] * y + m[8] * z + m[12];
-    positions[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
-    positions[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
-  }
 }

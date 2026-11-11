@@ -2,14 +2,18 @@
 // Stage OrcaSlicer's calibration models into public/calib/ (not committed).
 //
 //   node scripts/stage-calib.mjs [orcaResourcesDir]
+//   ORCA_REF=v2.5.0 node scripts/stage-calib.mjs      # read from a tag of the Orca git checkout
 //
-// Source: $ORCA_RESOURCES or ../slicers/orcaslicer-wasm/orca/resources.
+// Source: $ORCA_RESOURCES or ../slicers/orcaslicer-wasm/orca/resources. With
+// ORCA_REF the files come from `git show <ref>:resources/...` in the checkout
+// that holds that resources dir (its working tree may be on another version).
 // Orca ships most test models as Draco-compressed meshes (.drc); the browser
 // fetches them lazily, so they are decoded here (three.js's Draco decoder, pure
 // JS) and written as binary STL. The flow-rate 3MF projects are copied as-is
 // (their object names carry the flow offsets Orca reads back).
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,9 +50,22 @@ const COPY = [
   ['calib/filament_flow/Orca-LinearFlow.3mf', 'filament_flow/Orca-LinearFlow.3mf'],
   ['calib/filament_flow/Orca-LinearFlow_fine.3mf', 'filament_flow/Orca-LinearFlow_fine.3mf'],
   ['handy_models/OrcaSliced.3mf', 'handy/OrcaSliced.3mf'],
+  ['handy_models/OrcaBadge.3mf', 'handy/OrcaBadge.3mf'], // 2.5
+  // 2.5 belt printers: the temperature tower's "Overhang" model, one per range (Plater.cpp belt_temp_tower_asset).
+  ...['230_190', '240_210', '250_230', '270_230', '280_240', '320_280'].map((r) => [
+    `calib/temperature_tower/belt_temp_tower_${r}.stl`, `temperature_tower/belt_temp_tower_${r}.stl`]),
 ];
 
 if (!existsSync(src)) { console.error(`error: ${src} not found (set ORCA_RESOURCES)`); process.exit(1); }
+const ref = process.env.ORCA_REF;
+
+/** A resource file's bytes (working tree, or `git show ref:resources/<path>`); null when missing. */
+function read(path) {
+  if (!ref) { const f = join(src, path); return existsSync(f) ? readFileSync(f) : null; }
+  try {
+    return execFileSync('git', ['-C', src, 'show', `${ref}:./${path}`], { maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { return null; }
+}
 
 // The decoder is a classic (non-module) script; evaluate it in a function scope.
 const decoderSrc = readFileSync(join(repo, 'node_modules/three/examples/jsm/libs/draco/draco_decoder.js'), 'utf8');
@@ -102,9 +119,9 @@ function binaryStl({ positions, indices }, name) {
 
 let n = 0;
 for (const [from, to] of DRC) {
-  const file = join(src, from);
-  if (!existsSync(file)) { console.warn(`skip (missing): ${from}`); continue; }
-  const mesh = decodeDrc(readFileSync(file));
+  const buf = read(from);
+  if (!buf) { console.warn(`skip (missing): ${from}`); continue; }
+  const mesh = decodeDrc(buf);
   const target = join(dest, to);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, binaryStl(mesh, to));
@@ -112,11 +129,11 @@ for (const [from, to] of DRC) {
   n++;
 }
 for (const [from, to] of COPY) {
-  const file = join(src, from);
-  if (!existsSync(file)) { console.warn(`skip (missing): ${from}`); continue; }
+  const buf = read(from);
+  if (!buf) { console.warn(`skip (missing): ${from}`); continue; }
   const target = join(dest, to);
   mkdirSync(dirname(target), { recursive: true });
-  copyFileSync(file, target);
+  writeFileSync(target, buf);
   console.log(`${to}  ${statSync(target).size} bytes`);
   n++;
 }

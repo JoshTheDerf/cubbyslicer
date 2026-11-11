@@ -5,10 +5,11 @@
 import { lastSlice } from '../app/state';
 import { dismissToast, toast } from '../ui';
 import { hostMeta } from './registry';
-import { hostContext, physicalPrinter, printerChoices, printhostUi, rememberDevice } from './store';
+import { hostContext, openPhysicalPrinterDialog, physicalPrinter, printerChoices, printhostUi, rememberDevice } from './store';
 import { browserEnv } from './transport';
 import { HostError, type PhysicalPrinterConfig, type TestResult } from './types';
 import { webUiUrl } from './url';
+import { gcodeForOutput } from '../plugins/gcode';
 
 const PROGRESS_ID = 'printhost-upload';
 let abort: AbortController | null = null;
@@ -41,7 +42,15 @@ function fmtBytes(n: number): string {
   return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 }
 
-export async function sendToPrinter(opts: { filename: string; folder: string; print: boolean }): Promise<boolean> {
+export interface SendOptions {
+  filename: string;
+  folder: string;
+  print: boolean;
+  /** Qidi Box: Box slot per filament (see UploadJob.slotMapping). */
+  slotMapping?: number[];
+}
+
+export async function sendToPrinter(opts: SendOptions): Promise<boolean> {
   return (await sendToPrinterDetailed(opts)).ok;
 }
 
@@ -57,16 +66,19 @@ export interface SendOutcome {
 }
 
 /** `sendToPrinter` with the outcome spelled out (the MCP bridge reports it back). */
-export async function sendToPrinterDetailed(opts: { filename: string; folder: string; print: boolean }): Promise<SendOutcome> {
+export async function sendToPrinterDetailed(opts: SendOptions): Promise<SendOutcome> {
   const pp = physicalPrinter.value;
   const slice = lastSlice.value;
-  if (!pp) { toast.info('Set up a physical printer first.'); printhostUi.setupTarget = null; printhostUi.setupOpen = true; return { ok: false, message: 'No physical printer is set up for the selected printer preset.' }; }
+  if (!pp) { toast.info('Set up a physical printer first.'); openPhysicalPrinterDialog(); return { ok: false, message: 'No physical printer is set up for the selected printer preset.' }; }
   if (!slice) { toast.info('Slice the plate before sending it to the printer.'); return { ok: false, message: 'The plate is not sliced.' }; }
   if (printhostUi.uploading) { toast.info('An upload is already running.'); return { ok: false, message: 'An upload is already running.' }; }
   const meta = hostMeta(pp.config.type);
   if (!meta?.driver) { toast.error(`${meta?.label ?? pp.config.type} can’t be used from a browser.`, { detail: meta?.note }); return { ok: false, message: `${meta?.label ?? pp.config.type} can’t be used from a browser.`, detail: meta?.note }; }
 
-  const file = new Blob([slice.gcode as BlobPart], { type: 'text/x-gcode' });
+  // Post-processing plugins run on a copy for every upload (Orca: host = the print host type).
+  const gcode = await gcodeForOutput(slice.gcode, meta.label, opts.filename);
+  if (!gcode) return { ok: false, message: 'A G-code post-processing plugin failed.' };
+  const file = new Blob([gcode as BlobPart], { type: 'text/x-gcode' });
   const ctx = hostContext(pp.config);
   const print = opts.print && meta.canPrint(ctx);
   // With several printers of one model, every message says which one.
@@ -83,7 +95,7 @@ export async function sendToPrinterDetailed(opts: { filename: string; folder: st
   });
   show();
   try {
-    const res = await meta.driver.upload(ctx, { file, filename: opts.filename, folder: opts.folder, print }, browserEnv(), {
+    const res = await meta.driver.upload(ctx, { file, filename: opts.filename, folder: opts.folder, print, slotMapping: opts.slotMapping }, browserEnv(), {
       signal: abort.signal,
       onStatus: (s) => { printhostUi.status = s; show(); },
       onProgress: (loaded, total) => {

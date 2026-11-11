@@ -15,6 +15,7 @@ import { useSliceController } from '../slice';
 import { addPlateCmd, selectPlate } from './actions';
 import { plateMenu } from './plateMenu';
 import AnchoredMenu from './AnchoredMenu.vue';
+import { cyclePlateImexMode, plateImex } from '../../plates/ui';
 
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false });
 const slicer = useSliceController();
@@ -85,7 +86,9 @@ function chipTitle(i: number): string {
   if (problems.value[i]) parts.push(`${problems.value[i]} won't print as placed`);
   parts.push(s === 'done' ? 'sliced' : s === 'stale' ? 'changed since slicing' : 'not sliced');
   if (p.locked) parts.push('locked');
-  if (p.config) parts.push('has plate settings');
+  const imex = plateImex(i);
+  if (imex) parts.push(`IDEX/IQEX mode: ${imex.label}`);
+  if (p.config && Object.keys(p.config).some((k) => !k.startsWith('imex_'))) parts.push('has plate settings');
   return parts.join(' · ');
 }
 
@@ -128,8 +131,15 @@ function onKey(e: KeyboardEvent): void {
           <span v-if="counts[i]" class="chip__count">{{ counts[i] }}</span>
           <UIcon v-if="problems[i]" name="i-lucide-triangle-alert" class="size-3 text-warning" />
           <UIcon v-if="p.locked" name="i-lucide-lock" class="size-3 text-dimmed" />
-          <UIcon v-if="p.config" name="i-lucide-settings-2" class="size-3 text-dimmed" />
+          <UIcon v-if="p.config && Object.keys(p.config).some((k) => !k.startsWith('imex_'))" name="i-lucide-settings-2" class="size-3 text-dimmed" />
           <UIcon v-if="stateIcon(i)" :name="stateIcon(i)!" class="size-3" :class="slicer.plateStates.value[i] === 'done' ? 'text-primary' : 'text-warning'" />
+        </button>
+        <!-- Orca 2.5's plate mode icon (IDEX/IQEX printers): click steps through the modes; the plate menu lists them. -->
+        <button v-if="plateImex(i)" type="button" class="chip__more chip__imex" :class="{ 'chip__imex--on': plateImex(i)!.kind !== 'primary' }"
+                :aria-label="`${plateLabel(p, i)}: IDEX/IQEX mode ${plateImex(i)!.label}. Click for the next mode.`"
+                :title="`IDEX/IQEX mode: ${plateImex(i)!.label} (click for the next mode, right-click to pick)`" tabindex="-1"
+                @click="cyclePlateImexMode(i)">
+          <UIcon :name="plateImex(i)!.icon" class="size-3" />
         </button>
         <button type="button" class="chip__more" :aria-label="`${plateLabel(p, i)} options`" aria-haspopup="menu"
                 :aria-expanded="menuAt.open && menuAt.plate === i" tabindex="-1" @click="onChevron(i, $event)">
@@ -183,4 +193,7 @@ function onKey(e: KeyboardEvent): void {
 /* Only the active plate shows its menu chevron (others on hover; right-click works on any). */
 .chip:not(.chip--on):not(:hover) .chip__more { opacity: 0; }
 @media (hover: none) { .chip:not(.chip--on) .chip__more { display: none; } }
+/* The IDEX/IQEX mode shows on every plate, like Orca's plate icon. */
+.chip .chip__imex { opacity: 1; display: inline-flex; padding: 0 3px; }
+.chip__imex--on { color: var(--ui-primary); }
 </style>

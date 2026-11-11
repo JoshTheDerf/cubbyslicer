@@ -4,22 +4,16 @@
  * per-nozzle flush_volumes_matrix layout from PrintConfig.hpp). Pure.
  */
 import type { ConfigValue, FlatConfig } from '../../engine/types';
+import { parseColourOr, type RGBA } from '../../lib/colour';
+import { filamentVariantValue, toNumber, valueAt, variantColumn, variantSelector } from '../../lib/configValue';
 import { FLUSH_DATASETS } from './flushData';
 
 export const MIN_FLUSH_FROM_SUPPORT = 700;
 export const FLUSH_TO_SUPPORT = 230;
 export const MAX_FLUSH_VOLUME = 20000;
 
-interface RGBA { r: number; g: number; b: number; a: number }
-
-/** "#RRGGBB" / "#RRGGBBAA" / "#RGB" → 0-255 channels (alpha 255 when absent). */
-export function parseColour(s: string): RGBA {
-  let h = (s || '').trim().replace(/^#/, '');
-  if (h.length === 3 || h.length === 4) h = h.split('').map((c) => c + c).join('');
-  const v = (i: number) => { const x = parseInt(h.slice(i, i + 2), 16); return Number.isFinite(x) ? x : 0; };
-  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(h)) return { r: 255, g: 255, b: 255, a: 255 };
-  return { r: v(0), g: v(2), b: v(4), a: h.length === 8 ? v(6) : 255 };
-}
+/** A filament colour (unparseable → white, as Orca's flush calculator treats it). */
+const parseColour = (s: string): RGBA => ({ ...parseColourOr(s, '#FFFFFF') });
 
 // ---- colour spaces ------------------------------------------------------------------
 
@@ -158,25 +152,25 @@ export function calcFlushVolume(fromHex: string, toHex: string, minFlush: number
 // ---- config helpers -------------------------------------------------------------------------------
 
 const arr = (v: ConfigValue | undefined): string[] => (v === undefined ? [] : Array.isArray(v) ? v : v === '' ? [] : v.split(','));
-const numAt = (v: ConfigValue | undefined, i: number, d = 0): number => {
-  const a = arr(v);
-  const s = a[i] ?? a[0];
-  const n = s === undefined || s === 'nil' ? NaN : parseFloat(s);
-  return Number.isFinite(n) ? n : d;
-};
+const numAt = (v: ConfigValue | undefined, i: number, d = 0): number => toNumber(valueAt(arr(v), i), d);
 
-/** Plater get_min_flush_volumes: nozzle volume minus long-retraction savings, per filament. */
+/**
+ * Plater get_min_flush_volumes: nozzle volume minus long-retraction savings, per filament.
+ * Printer values come from extruder `nozzleId`'s variant column, filament values from each
+ * filament's own variant column (Orca 2.5 per-variant vectors).
+ */
 export function minFlushVolumes(cfg: FlatConfig, nozzleId: number, filamentCount: number, variantIndex = extruderVariantIndex(cfg, nozzleId)): number[] {
   const nozzleVolume = Math.trunc(numAt(cfg.nozzle_volume, variantIndex, 0));
   const machineLevel = Math.trunc(numAt(cfg.enable_long_retraction_when_cut, 0, 0));
-  const machineActivated = arr(cfg.long_retractions_when_cut)[nozzleId] === '1';
+  const machineActivated = valueAt(arr(cfg.long_retractions_when_cut), variantIndex) === '1';
+  const machineDistance = numAt(cfg.retraction_distances_when_cut, variantIndex, 18);
   const out: number[] = [];
   for (let i = 0; i < filamentCount; i++) {
-    let retract = machineLevel && machineActivated ? numAt(cfg.retraction_distances_when_cut, nozzleId, 18) : 0;
-    const act = arr(cfg.filament_long_retractions_when_cut)[i];
-    const filLen = numAt(cfg.filament_retraction_distances_when_cut, i, NaN);
+    let retract = machineLevel && machineActivated ? machineDistance : 0;
+    const act = cfg.filament_long_retractions_when_cut === undefined ? undefined : filamentVariantValue(cfg, 'filament_long_retractions_when_cut', i);
+    const filLen = toNumber(filamentVariantValue(cfg, 'filament_retraction_distances_when_cut', i), NaN);
     if (act === undefined || act === '0' || act === 'nil') retract = 0;
-    else if (act === '1' && machineLevel === 2) retract = Number.isFinite(filLen) ? Math.trunc(filLen) : numAt(cfg.retraction_distances_when_cut, nozzleId, 18);
+    else if (act === '1' && machineLevel === 2) retract = Number.isFinite(filLen) ? Math.trunc(filLen) : machineDistance;
     out.push(Math.trunc(nozzleVolume - (Math.PI * 1.75 * 1.75) / 4 * retract));
   }
   return out;
@@ -184,18 +178,13 @@ export function minFlushVolumes(cfg: FlatConfig, nozzleId: number, filamentCount
 
 /**
  * Index into per-variant printer vectors (Bambu H2D: nozzle_volume,
- * nozzle_flush_dataset have one entry per extruder × nozzle variant, mapped by
- * printer_extruder_id / printer_extruder_variant) for extruder `ext`, using the
- * project's nozzle_volume_type (Standard / High Flow).
+ * nozzle_flush_dataset have one entry per extruder × nozzle variant) for
+ * extruder `ext` with its current nozzle_volume_type; the extruder index
+ * when the printer has no variant table.
  */
 export function extruderVariantIndex(cfg: FlatConfig, ext: number): number {
-  const ids = arr(cfg.printer_extruder_id);
-  if (!ids.length) return ext;
-  const variants = arr(cfg.printer_extruder_variant);
-  const type = arr(cfg.nozzle_volume_type)[ext] ?? 'Standard';
-  const matches = ids.map((id, j) => (Number(id) === ext + 1 ? j : -1)).filter((j) => j >= 0);
-  if (!matches.length) return ext;
-  return matches.find((j) => (variants[j] ?? '').toLowerCase().endsWith(type.toLowerCase())) ?? matches[0];
+  const col = variantColumn(cfg, 'printer', variantSelector(cfg, ext));
+  return col >= 0 ? col : ext;
 }
 
 /** Flush dataset of extruder `ext` (nozzle_flush_dataset, nullable per variant). */
@@ -257,9 +246,53 @@ export function resizeFlat(flat: number[], oldN: number, newN: number, nozzles: 
   return out;
 }
 
+/**
+ * A flat matrix sized for `n` filaments on `nozzles` nozzles (desktop keeps
+ * flush_volumes_matrix at n² × nozzles; the engine refuses any other size):
+ * the vector itself when it already fits; an n × n block repeated per nozzle;
+ * otherwise resized (surviving pairs kept, new pairs seeded with `seed`). A
+ * vector that is square for one nozzle only counts as that nozzle's matrix.
+ */
+export function fitFlushMatrix(flat: number[], n: number, nozzles: number, seed = 280): number[] {
+  const z = Math.max(1, nozzles);
+  if (flat.length === n * n * z) return flat;
+  if (z > 1 && n > 0 && flat.length === n * n) return Array.from({ length: z }, () => flat).flat();
+  const old = matrixSize(flat.length, z);
+  if (old) return resizeFlat(flat, old, n, z, seed);
+  const one = resizeFlat(flat, matrixSize(flat.length, 1), n, 1, seed);
+  return Array.from({ length: z }, () => one).flat();
+}
+
 /** Filament count implied by a flat matrix for `nozzles` nozzles (0 when inconsistent). */
 export function matrixSize(flatLength: number, nozzles: number): number {
   const per = flatLength / Math.max(1, nozzles);
   const n = Math.round(Math.sqrt(per));
   return n * n === per ? n : 0;
+}
+
+/**
+ * The leading `n`×`n` block of every nozzle's matrix in a flat vector over
+ * more slots (mixed filament slots follow the physical ones); the vector
+ * unchanged when it is already `n`×`n` or doesn't fit.
+ */
+export function physicalBlock(flat: number[], n: number, nozzles: number): number[] {
+  const total = matrixSize(flat.length, nozzles);
+  if (total <= n) return flat;
+  const out: number[] = [];
+  for (let z = 0; z < nozzles; z++) for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) out.push(flat[z * total * total + r * total + c]);
+  return out;
+}
+
+/**
+ * The rows / columns of `slots` (0-based config indices) from every nozzle's
+ * matrix of a flat vector over all slots (a project's flush_volumes_matrix
+ * with mixed filaments, which desktop may have moved between physical ones).
+ * Null when the vector isn't square per nozzle.
+ */
+export function slotBlock(flat: number[], slots: readonly number[], nozzles: number): number[] | null {
+  const total = matrixSize(flat.length, nozzles);
+  if (!total || slots.some((i) => i < 0 || i >= total)) return null;
+  const out: number[] = [];
+  for (let z = 0; z < nozzles; z++) for (const r of slots) for (const c of slots) out.push(flat[z * total * total + r * total + c]);
+  return out;
 }

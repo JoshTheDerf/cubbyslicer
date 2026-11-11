@@ -29,6 +29,77 @@ export const PART_TYPE_LABELS: Record<PartType, string> = {
 };
 
 /**
+ * Orca 2.5 precise seam modifiers (ModelVolumeType PRECISE_SEAM_*). In a 3MF a
+ * seam volume is a `modifier_part` plus `precise_seam_type` metadata, with its
+ * settings stored dormant as `precise_seam_config:<key>`, so readers without
+ * the feature see an inert modifier.
+ */
+export const PRECISE_SEAM_TYPES = [
+  'precise_seam_center', 'precise_seam_left', 'precise_seam_right',
+  'precise_seam_enforced', 'precise_seam_blocked', 'precise_seam_neutral',
+] as const;
+export type PreciseSeamType = (typeof PRECISE_SEAM_TYPES)[number];
+
+export const PRECISE_SEAM_LABELS: Record<PreciseSeamType, string> = {
+  precise_seam_center: 'Seam: center',
+  precise_seam_left: 'Seam: left',
+  precise_seam_right: 'Seam: right',
+  precise_seam_enforced: 'Seam: enforced',
+  precise_seam_blocked: 'Seam: blocked',
+  precise_seam_neutral: 'Seam: neutral',
+};
+
+/**
+ * A precise seam volume. The part keeps `type: 'modifier'` (Orca's base type)
+ * and its `overrides` stay empty, so an engine without seam volumes slices it
+ * as an inert modifier. Immutable: replace it, never mutate it.
+ */
+export interface PreciseSeam {
+  type: PreciseSeamType;
+  /** The seam's own settings (Orca writes them as `precise_seam_config:<key>`). */
+  config: Record<string, ConfigValue>;
+}
+
+/**
+ * Data from an opened OrcaSlicer / Bambu project that CubbySlicer doesn't
+ * model, written back verbatim on save (src/project/persistence/passthrough.ts
+ * has the project-level half). Immutable and shared by undo snapshots and
+ * copies: replace it, never mutate it.
+ */
+export interface ElementPassthrough {
+  /** `<metadata key value>` entries, in file order (e.g. settings this engine doesn't know). */
+  metadata?: Array<[string, string]>;
+  /** Attributes of the element itself (e.g. `<object auto_drop="0">`). */
+  attrs?: Array<[string, string]>;
+  /** Child elements other than `<metadata>`, as XML (attribute values kept escaped). */
+  elements?: string[];
+}
+
+/** Passthrough of one volume (an object's own mesh or a part). */
+export interface VolumePassthrough extends ElementPassthrough {
+  /**
+   * The mesh this was read with. `meshMetadata`, `elements` and `subtype`
+   * describe that geometry (source file, texture layers, text / SVG shape) and
+   * are dropped once the volume's mesh is replaced (cut, simplify, …).
+   */
+  meshId: string;
+  meshMetadata?: Array<[string, string]>;
+  /**
+   * A volume subtype this version doesn't know: the part opens as an inert
+   * modifier (no settings) and saves with this subtype while it still is one.
+   */
+  subtype?: string;
+}
+
+export interface ObjectPassthrough {
+  object?: ElementPassthrough;
+  /** The object's own volume (its `meshId`). */
+  volume?: VolumePassthrough;
+  /** The object's entry in Metadata/cut_information.xml (inner XML), kept for Orca's cut connectors. */
+  cutInfo?: string;
+}
+
+/**
  * An extra volume of an object (Orca parts / modifiers / …). Its transform is
  * in the object's local frame: world = object TRS · part TRS · mesh-local.
  * The object's own `meshId` is its first (implicit) model part.
@@ -45,6 +116,12 @@ export interface ObjectPart {
   overrides: Record<string, ConfigValue>;
   /** Text / SVG emboss source (re-editable with the text / SVG tool). */
   emboss?: EmbossMeta;
+  /** Set on a precise seam volume (then `type` is 'modifier'); see PreciseSeam. */
+  preciseSeam?: PreciseSeam;
+  /** Unmodelled 3MF data of this volume (see ElementPassthrough). */
+  passthrough?: VolumePassthrough;
+  /** Design tab: this part is a committed body of an assembly commit (its mesh follows the body; see ProjectObject.design). */
+  design?: DesignLink;
 }
 
 // ---- tools: emboss (text / SVG) + brim ears ----------------------------------
@@ -118,16 +195,43 @@ export interface ProjectObject {
    */
   assembly?: { position: Vec3; rotation: Quat; scale: Vec3 };
   /**
+   * Orca's assemble state of this instance as an opened 3MF had it
+   * (model_settings.config `<assemble_item>`; desktop sets it from the
+   * instance's placement when the file had none): the 3MF matrix (12 numbers,
+   * column by column) and offset_to_assembly. Written back exactly while
+   * `assembly` is unset or still this pose. Immutable: replace it.
+   */
+  assemble?: { matrix: readonly number[]; offset: Vec3 };
+  /**
    * CubbyCAD modelling: the object IS this node tree (a primitive or a
    * manifold group, verbatim CubbyCAD JSON). `meshId` is derived from it
    * (evaluated Z-up without the root's own transform; this object's TRS places
    * it). The tree is immutable and `markRaw` — edits replace it (src/cad).
    */
   cad?: CadObjectData;
+  /**
+   * Design tab: the object is a committed body of the project's design (Metadata/orca_cad.bin)
+   * and follows it — every design edit replaces `meshId` (src/design/link.ts). Never set
+   * together with `cad`. Desktop Orca doesn't know the link (it sees a plain mesh).
+   */
+  design?: DesignLink;
+  /** Unmodelled 3MF data of this object and its own volume (see ElementPassthrough). */
+  passthrough?: ObjectPassthrough;
 }
 
 export interface CadObjectData {
   node: CadNode;
+}
+
+/** A plate object ↔ design body link (src/design/link.ts). Immutable: replace it, never mutate it. */
+export interface DesignLink {
+  /** The body's identity across rebuilds: the feature that made it and its rank among that feature's bodies. */
+  sourceFeature: number;
+  ordinal: number;
+  /** The body's index when it was last resolved (fallback when the source feature no longer makes bodies). */
+  body: number;
+  /** Design (bed) coordinates of the mesh-local origin: mesh = body − origin. */
+  origin: Vec3;
 }
 
 /** One height range modifier: Z range + the settings it applies (Orca "Height range Modifier"). */
@@ -136,6 +240,8 @@ export interface LayerRange {
   min: number;
   max: number;
   overrides: Record<string, ConfigValue>;
+  /** Settings of an opened 3MF this engine doesn't know: never sliced, written back as read. Immutable. */
+  passthrough?: ReadonlyArray<readonly [string, string]>;
 }
 
 /** Result of parsing one model file: one or more meshes with optional placement. */
@@ -158,4 +264,5 @@ export interface ParseResult {
   warnings: string[];
 }
 
-export type ObjectIssue = 'outside' | 'height' | 'exclude' | 'overlap';
+/** 'zone': in another IDEX/IQEX carriage's zone or a carriage collision strip (Orca 2.5 parallel modes). */
+export type ObjectIssue = 'outside' | 'height' | 'exclude' | 'zone' | 'overlap';

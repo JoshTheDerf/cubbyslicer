@@ -1,11 +1,11 @@
 /**
  * Preview commands for the app action registry (menus, command palette and
- * the single keyboard dispatcher). All are gated to the Preview view and
+ * the single keyboard dispatcher), registered at boot with the built-ins
+ * (src/app/actions/buildActions.ts `builtinActions`). All are gated to the Preview view and
  * their key bindings use the registry's `preview` scope. Preview state is
  * module-level (./store), so `ctx` is not needed.
  */
 import { activeView } from '../app/state';
-import { registerActions } from '../app/actions/registry';
 import type { Action, ActionState } from '../app/actions/types';
 import { SCHEMES } from './render/colors';
 import type { ViewPreset } from './render/PreviewRenderer';
@@ -55,6 +55,9 @@ export const previewActions: PreviewAction[] = [
   { id: 'preview.toggle.seams', title: 'Show seams', category: CATEGORY, aliases: ['seam'], when: inPreview, state: () => onOff(previewOptions.value.seams), run: () => toggleOption('seams') },
   { id: 'preview.toggle.toolMarker', title: 'Show tool marker', category: CATEGORY, aliases: ['toolhead', 'nozzle marker'], when: inPreview, state: () => onOff(previewOptions.value.toolMarker), run: () => toggleOption('toolMarker') },
   { id: 'preview.toggle.singleLayer', title: 'Show only the current layer', category: CATEGORY, aliases: ['one layer', 'single layer', 'all layers'], when: hasData, state: () => onOff(singleLayer.value), run: () => setSingleLayer(!singleLayer.value) },
+  { id: 'preview.toggle.translucent', title: 'Translucent filaments', category: CATEGORY, aliases: ['transparent', 'see-through', 'alpha'],
+    description: 'Draws filaments with a translucent colour see-through in the Filament view (Orca 2.5).',
+    when: inPreview, state: () => onOff(previewOptions.value.translucent), run: () => toggleOption('translucent') },
   { id: 'preview.toggle.dimBelow', title: 'Dim layers below top', category: CATEGORY, when: inPreview, state: () => onOff(previewOptions.value.dimBelow), run: () => toggleOption('dimBelow') },
   { id: 'preview.toggle.legend', title: 'Show legend', category: CATEGORY, binding: { key: 'l', scope: 'preview' }, when: inPreview, state: () => onOff(!legendCollapsed.value), run: () => { legendCollapsed.value = !legendCollapsed.value; } },
   { id: 'preview.toggle.gcode', title: 'Show G-code viewer', category: CATEGORY, aliases: ['gcode text', 'source'], binding: { key: 'g', scope: 'preview' }, when: inPreview, state: () => onOff(showGcodeViewer.value), run: () => { showGcodeViewer.value = !showGcodeViewer.value; } },
@@ -80,10 +83,3 @@ export const previewActions: PreviewAction[] = [
   })),
   { id: 'preview.view.fit', title: 'Fit to print', category: CATEGORY, aliases: ['zoom to fit', 'frame'], binding: { key: 'f', scope: 'preview' }, when: inPreview, run: () => cameraCommand({ kind: 'fit' }) },
 ];
-
-let dispose: (() => void) | null = null;
-/** Register the preview actions with the app registry (idempotent). Returns a disposer. */
-export function registerPreviewActions(): () => void {
-  if (!dispose) dispose = registerActions(previewActions);
-  return () => { dispose?.(); dispose = null; };
-}

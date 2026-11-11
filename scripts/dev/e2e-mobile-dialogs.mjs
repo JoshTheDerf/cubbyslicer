@@ -235,12 +235,14 @@ function measureKeyboard({ selector }) {
 const closeUi = (fn) => async (page) => { await uiMod(page, fn); };
 const DIALOGS = [
   { id: 'drawer', name: 'Settings', phoneOnly: true, open: (p) => uiMod(p, (m) => { m.drawerOpen.value = true; }), close: closeUi((m) => { m.drawerOpen.value = false; }) },
-  { id: 'palette', name: 'Command palette', open: (p) => uiMod(p, (m) => { m.ui.paletteOpen = true; }) },
-  { id: 'shortcuts', name: 'Keyboard shortcuts', open: (p) => uiMod(p, (m) => { m.ui.shortcutsOpen = true; }) },
-  { id: 'about', name: 'CubbySlicer source and licence', open: (p) => uiMod(p, (m) => { m.ui.aboutOpen = true; }) },
-  { id: 'instances', name: 'Set number of instances', needs: 'object', open: (p) => uiMod(p, (m) => { m.ui.instancesOpen = true; }) },
+  { id: 'palette', name: 'Speed Dial', open: (p) => uiMod(p, (m) => m.openDialog('palette')) },
+  { id: 'shortcuts', name: 'Keyboard shortcuts', open: (p) => uiMod(p, (m) => m.openDialog('shortcuts')) },
+  { id: 'about', name: 'CubbySlicer source and licence', open: (p) => uiMod(p, (m) => m.openDialog('about')) },
+  { id: 'instances', name: 'Set number of instances', needs: 'object', open: (p) => uiMod(p, (m) => m.openDialog('instances')) },
+  { id: 'primitiveSize', open: (p) => uiMod(p, (m) => { void m.primitiveSizeDialog.ask({ kind: 'cylinder', type: 'modifier', size: [20, 20, 20] }); }),
+    close: closeUi((m) => m.primitiveSizeDialog.answer(null)) },
   { id: 'confirm', open: (p) => uiMod(p, (m) => { void m.confirmAction({ title: 'Delete all objects?', message: 'This removes every object from every plate, including “An extremely long object name that goes on and on.stl”. You can undo it.', confirmLabel: 'Delete all', danger: true }); }),
-    close: closeUi((m) => { m.confirmRequest.value?.resolve(false); m.confirmRequest.value = null; }) },
+    close: closeUi((m) => m.confirmDialog.answer({ choice: null, checked: false })) },
   { id: 'prefs', name: 'Preferences', open: (p) => act(p, 'app.preferences') },
   { id: 'flushing', name: 'Flushing volumes for filament change', needs: 'multi', open: (p) => uiMod(p, (m) => m.openDialog('flushing')) },
   { id: 'filamentMap', name: 'Filament grouping', needs: 'multi', open: (p) => uiMod(p, (m) => m.openDialog('filamentMap')) },
@@ -254,12 +256,12 @@ const DIALOGS = [
     id: `calib-${c}`, open: (p) => uiMod(p, (m, c) => { m.calibUi.open = c; }, c), close: closeUi((m) => { m.calibUi.open = null; }),
   })),
   { id: 'plateSettings', open: (p) => uiMod(p, (m) => { m.plateUi.settingsFor = 0; }), close: closeUi((m) => { m.plateUi.settingsFor = null; }) },
-  { id: 'hostSetup', name: 'Physical printer', open: (p) => uiMod(p, (m) => { m.printhostUi.setupOpen = true; }) },
-  { id: 'hostSend', needs: 'sliced', open: async (p) => { await uiMod(p, (m) => { m.savePhysicalPrinter({ type: 'moonraker', host: 'http://printer-with-a-rather-long-hostname.local:7125', apiKey: '', user: '', password: '', authType: 'key', printer: '', webUi: '', serial: '', variant: '', wsUrl: '' }); m.printhostUi.sendMode = 'print'; m.printhostUi.sendOpen = true; }); },
-    close: closeUi((m) => { m.printhostUi.sendOpen = false; m.removePhysicalPrinter(); }) },
-  { id: 'bridge', name: 'Connect an AI agent', open: (p) => uiMod(p, (m) => { m.bridgeUi.open = true; }) },
-  { id: 'bridgeConfirm', open: (p) => uiMod(p, (m) => { m.bridgeUi.confirm = { title: 'Start a print?', message: 'Your agent wants to run “slicer_send_to_printer” on plate 1 with host printer-with-a-rather-long-hostname.local.', resolve: () => {} }; }),
-    close: closeUi((m) => { m.bridgeUi.confirm = null; }) },
+  { id: 'hostSetup', name: 'Physical printer', open: (p) => uiMod(p, (m) => m.openDialog('physicalPrinter')) },
+  { id: 'hostSend', needs: 'sliced', open: async (p) => { await uiMod(p, (m) => { m.savePhysicalPrinter({ type: 'moonraker', host: 'http://printer-with-a-rather-long-hostname.local:7125', apiKey: '', user: '', password: '', authType: 'key', printer: '', webUi: '', serial: '', variant: '', wsUrl: '' }); m.printhostUi.sendMode = 'print'; m.openDialog('printhostSend'); }); },
+    close: closeUi((m) => { m.closeDialog('printhostSend'); m.removePhysicalPrinter(); }) },
+  { id: 'bridge', name: 'Connect an AI agent', open: (p) => uiMod(p, (m) => m.openDialog('bridge')) },
+  { id: 'bridgeConfirm', open: (p) => uiMod(p, (m) => { void m.askConfirm({ title: 'Start a print?', message: 'Your agent wants to run “slicer_send_to_printer” on plate 1 with host printer-with-a-rather-long-hostname.local.', confirmLabel: 'Allow', checkLabel: 'Allow without asking until I disconnect', dismissible: false, testId: 'bridge-confirm' }); }),
+    close: closeUi((m) => m.confirmDialog.answer({ choice: null, checked: false })) },
   { id: 'cloudSignIn', open: async (p) => { cloudMock = false; await uiMod(p, (m) => { m.cloudDialog.value = { mode: 'open' }; }); }, close: closeUi((m) => { m.cloudDialog.value = null; }) },
   { id: 'cloudOpen', open: async (p) => { cloudMock = true; await uiMod(p, (m) => { m.cloudDialog.value = { mode: 'open' }; }); await p.getByText('Projects', { exact: true }).first().waitFor(); },
     close: closeUi((m) => { m.cloudDialog.value = null; }) },
@@ -292,7 +294,7 @@ const DIALOGS = [
     close: async (p) => { await p.getByRole('button', { name: 'Cancel' }).last().click(); await p.waitForTimeout(300); await uiMod(p, (m) => { m.settingsUi.editor = null; }); } },
   { id: 'excludeArea', drawer: true, open: async (p) => { await uiMod(p, (m) => m.jumpToSetting('bed_exclude_area')); await waitDialog(p, 'Printer settings'); await setComp(p, 'SettingRow', 'bedDialog', true, ['optKey', 'bed_exclude_area']); },
     close: async (p) => { await p.keyboard.press('Escape'); await p.waitForTimeout(300); await uiMod(p, (m) => { m.settingsUi.editor = null; }); } },
-  { id: 'mixedEditor', drawer: true, needs: 'fullspectrum', open: (p) => setComp(p, 'MixedFilamentsPanel', 'editing', 'new'),
+  { id: 'mixedEditor', drawer: true, needs: 'multi', open: (p) => setComp(p, 'MixedFilamentsPanel', 'editing', 'new'),
     close: async (p) => { await p.keyboard.press('Escape'); await p.waitForTimeout(300); } },
   // Preview (needs a sliced plate).
   { id: 'cgText', needs: 'sliced', preview: true, open: (p) => setComp(p, 'CustomGcodeMenu', 'text', { open: true, kind: 'custom', z: 0.2, value: 'M117 A long custom G-code line that keeps going; G1 X10 Y10 F3000 ; comment', isNew: true }),
@@ -301,7 +303,6 @@ const DIALOGS = [
   { id: 'cgJump', needs: 'sliced', preview: true, open: (p) => setComp(p, 'CustomGcodeMenu', 'jump', { open: true, layer: 5 }), close: (p) => setComp(p, 'CustomGcodeMenu', 'jump', { open: false, layer: 1 }) },
 ];
 
-DIALOGS.sort((a, b) => (a.needs === 'fullspectrum') - (b.needs === 'fullspectrum'));
 
 // ---- preconditions ----------------------------------------------------------------------------
 async function addBox(page) {
@@ -363,10 +364,6 @@ for (const size of SIZES) {
     if (!need || have.has(need)) return;
     if (need === 'object' || need === 'sliced') { if (!have.has('object')) { await addBox(page); have.add('object'); } }
     if (need === 'multi') await multi(page);
-    if (need === 'fullspectrum') {
-      await page.evaluate(async () => { window.__cubbyPresets.setActiveEngine('fullspectrum'); await window.__cubbyPresets.currentPresets.value.ready; });
-      await page.waitForTimeout(1500); await multi(page);
-    }
     if (need === 'sliced') await slice(page);
     have.add(need);
   };

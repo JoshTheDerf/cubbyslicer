@@ -10,7 +10,7 @@
 
 /** Orca's `host_type` enum values (public/wasm/orca/schema.json). */
 export type HostType =
-  | 'octoprint' | 'prusalink' | 'prusaconnect' | 'moonraker' | 'duet' | 'flashair' | 'astrobox' | 'repetier'
+  | 'octoprint' | 'prusalink' | 'prusaconnect' | 'moonraker' | 'duet' | 'ultimaker' | 'flashair' | 'astrobox' | 'repetier'
   | 'mks' | 'esp3d' | 'crealityprint' | 'obico' | 'flashforge' | 'simplyprint' | 'elegoolink' | '3dprinteros';
 
 export type AuthType = 'key' | 'user';
@@ -63,6 +63,11 @@ export interface UploadJob {
   folder: string;
   /** Start printing after the upload. */
   print: boolean;
+  /**
+   * Qidi Box (Orca 2.5 QidiPrinterAgent): the Box slot (0-15) each filament
+   * loads from, by 0-based filament index; negative = the printer's own choice.
+   */
+  slotMapping?: number[];
 }
 
 export interface UploadCallbacks {

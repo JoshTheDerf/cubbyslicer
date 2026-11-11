@@ -1,0 +1,861 @@
+{
+ "source": "OrcaSlicer src/slic3r/plugin bindings",
+ "version": "2.5.0",
+ "modules": {
+  "orca": {
+   "functions": [
+    "plugin",
+    "register_capability",
+    "request_permissions"
+   ],
+   "attributes": [],
+   "classes": {
+    "ExecutionResult": [
+     "__init__",
+     "data",
+     "failure",
+     "message",
+     "skipped",
+     "status",
+     "success"
+    ],
+    "LifecycleEventContext": [
+     "__init__",
+     "code",
+     "device_id",
+     "dirty",
+     "id",
+     "index",
+     "job_id",
+     "msg",
+     "name",
+     "previous_name",
+     "source"
+    ],
+    "PluginContext": [
+     "__init__",
+     "orca_version"
+    ],
+    "PythonPluginBase": [
+     "__init__",
+     "get_config",
+     "get_config_ui",
+     "get_config_version",
+     "get_default_config",
+     "get_name",
+     "get_type",
+     "has_config_ui",
+     "on_lifecycle_event",
+     "on_load",
+     "on_unload",
+     "save_config"
+    ],
+    "base": [
+     "__init__",
+     "register_capabilities"
+    ]
+   },
+   "enums": {
+    "LifecycleEvent": {
+     "values": [
+      "NewProject",
+      "ProjectOpened",
+      "ProjectBeforeSave",
+      "ProjectAfterSave",
+      "ProjectClosed",
+      "ProjectDirtyChanged",
+      "SliceStarted",
+      "SliceGeometryFinished",
+      "GCodeExportStarted",
+      "GCodeExportFinished",
+      "SlicingJobComplete",
+      "ObjectAdded",
+      "ObjectDeleted",
+      "ObjectTransformed",
+      "ObjectChanged",
+      "ObjectRenamed",
+      "PlateCreated",
+      "PlateDeleted",
+      "PlateSelected",
+      "PlateRenamed",
+      "PresetSelected",
+      "PresetSaved",
+      "PrintStateChanged",
+      "DeviceOnline",
+      "DeviceOffline",
+      "DeviceDiscovered",
+      "DeviceSelected",
+      "UploadStarted",
+      "UploadFinished",
+      "PrintJobStarted",
+      "PrintJobFinished",
+      "SendJobStarted",
+      "SendJobFinished"
+     ],
+     "exported": true
+    },
+    "LifecycleEvtCode": {
+     "values": [
+      "Ok",
+      "Error",
+      "Warn"
+     ],
+     "exported": true
+    },
+    "PluginResult": {
+     "values": [
+      "Success",
+      "Skipped",
+      "RecoverableError",
+      "FatalError"
+     ],
+     "exported": true
+    },
+    "PluginType": {
+     "values": [
+      "PrinterConnection",
+      "Pages",
+      "Analysis",
+      "Importer",
+      "Exporter",
+      "Visualization",
+      "Script",
+      "SlicingPipeline",
+      "ResourceTexture",
+      "Unknown"
+     ],
+     "exported": true
+    }
+   },
+   "submodules": [
+    "host",
+    "pages",
+    "printer_agent",
+    "resource_texture",
+    "script",
+    "slicing"
+   ]
+  },
+  "orca.host": {
+   "functions": [
+    "app_info",
+    "gl_info",
+    "model",
+    "plater",
+    "preset_bundle",
+    "selected_printer"
+   ],
+   "attributes": [],
+   "classes": {
+    "BoundingBox": [
+     "center",
+     "defined",
+     "max",
+     "min",
+     "radius",
+     "size"
+    ],
+    "ExPolygon": [
+     "__init__",
+     "area",
+     "contains",
+     "contour",
+     "diff_ex",
+     "douglas_peucker",
+     "holes",
+     "intersection_ex",
+     "is_valid",
+     "num_contours",
+     "offset",
+     "rotate",
+     "scale",
+     "set_holes",
+     "simplify",
+     "translate",
+     "union_ex"
+    ],
+    "ExtrusionEntity": [
+     "role"
+    ],
+    "ExtrusionEntityCollection": [
+     "entities",
+     "flatten_paths",
+     "size"
+    ],
+    "ExtrusionLoop": [
+     "paths"
+    ],
+    "ExtrusionMultiPath": [
+     "paths"
+    ],
+    "ExtrusionPath": [
+     "height",
+     "mm3_per_mm",
+     "points",
+     "width"
+    ],
+    "Layer": [
+     "height",
+     "lower_layer",
+     "lslices",
+     "make_slices",
+     "print_z",
+     "regions",
+     "slice_z",
+     "upper_layer"
+    ],
+    "LayerRegion": [
+     "config_value",
+     "fill_surfaces",
+     "fills",
+     "layer",
+     "perimeters",
+     "region",
+     "slices"
+    ],
+    "Model": [
+     "bounding_box",
+     "bounding_box_approx",
+     "current_plate_index",
+     "design_id",
+     "designer",
+     "id",
+     "is_fdm_support_painted",
+     "is_fuzzy_skin_painted",
+     "is_mm_painted",
+     "is_seam_painted",
+     "material_count",
+     "max_z",
+     "object",
+     "object_count",
+     "objects"
+    ],
+    "ModelInstance": [
+     "assemble_matrix",
+     "assemble_offset",
+     "assemble_rotation",
+     "bounding_box",
+     "id",
+     "is_assemble_initialized",
+     "is_left_handed",
+     "is_printable",
+     "matrix",
+     "mirror",
+     "offset",
+     "offset_to_assembly",
+     "printable",
+     "rotation",
+     "scaling_factor"
+    ],
+    "ModelObject": [
+     "bounding_box",
+     "config_keys",
+     "config_value",
+     "facets_count",
+     "has_custom_layering",
+     "id",
+     "input_file",
+     "instance",
+     "instance_count",
+     "instances",
+     "is_cut",
+     "is_fdm_support_painted",
+     "is_fuzzy_skin_painted",
+     "is_mm_painted",
+     "is_multiparts",
+     "is_seam_painted",
+     "materials_count",
+     "max_z",
+     "mesh_errors_count",
+     "min_z",
+     "module_name",
+     "name",
+     "parts_count",
+     "printable",
+     "raw_mesh_bounding_box",
+     "volume",
+     "volume_count",
+     "volumes"
+    ],
+    "ModelVolume": [
+     "bounding_box",
+     "config_keys",
+     "config_value",
+     "extruder_id",
+     "facets_count",
+     "id",
+     "is_fdm_support_painted",
+     "is_fuzzy_skin_painted",
+     "is_manifold",
+     "is_mm_painted",
+     "is_model_part",
+     "is_modifier",
+     "is_negative_volume",
+     "is_precise_seam",
+     "is_precise_seam_strong",
+     "is_precise_seam_weak",
+     "is_seam_painted",
+     "is_support_blocker",
+     "is_support_enforcer",
+     "is_support_modifier",
+     "matrix",
+     "mesh",
+     "mesh_errors_count",
+     "mirror",
+     "name",
+     "offset",
+     "rotation",
+     "scaling_factor",
+     "type",
+     "volume"
+    ],
+    "Plater": [
+     "export_3mf_copy",
+     "inside_snapshot_capture",
+     "is_presets_dirty",
+     "is_project_dirty",
+     "model",
+     "project_path"
+    ],
+    "Point": [
+     "__add__",
+     "__init__",
+     "__mul__",
+     "__repr__",
+     "__sub__",
+     "x",
+     "y"
+    ],
+    "Polygon": [
+     "__init__",
+     "append",
+     "area",
+     "as_array",
+     "centroid",
+     "contains",
+     "douglas_peucker",
+     "is_clockwise",
+     "is_counter_clockwise",
+     "is_valid",
+     "make_clockwise",
+     "make_counter_clockwise",
+     "offset",
+     "points",
+     "rotate",
+     "set_points",
+     "simplify",
+     "size",
+     "translate"
+    ],
+    "Preset": [
+     "alias",
+     "bundle_id",
+     "config_keys",
+     "config_value",
+     "file",
+     "is_compatible",
+     "is_default",
+     "is_dirty",
+     "is_external",
+     "is_from_bundle",
+     "is_project_embedded",
+     "is_system",
+     "is_user",
+     "is_visible",
+     "label",
+     "name",
+     "type"
+    ],
+    "PresetBundle": [
+     "current_filament_preset_names",
+     "current_filament_presets",
+     "current_print_preset",
+     "current_printer_preset",
+     "current_process_preset",
+     "filaments",
+     "full_config_keys",
+     "full_config_value",
+     "printers",
+     "prints",
+     "sla_materials",
+     "sla_prints"
+    ],
+    "PresetCollection": [
+     "edited_preset",
+     "find_preset",
+     "get_edited_preset",
+     "get_selected_preset",
+     "get_selected_preset_name",
+     "preset",
+     "preset_names",
+     "selected_preset",
+     "selected_preset_name",
+     "size"
+    ],
+    "Print": [
+     "canceled",
+     "config_keys",
+     "config_value",
+     "model",
+     "objects"
+    ],
+    "PrintObject": [
+     "bounding_box",
+     "config_keys",
+     "config_value",
+     "id",
+     "layers",
+     "model_object",
+     "support_layers",
+     "trafo"
+    ],
+    "PrintRegion": [
+     "config_keys",
+     "config_value"
+    ],
+    "Surface": [
+     "__init__",
+     "area",
+     "bridge_angle",
+     "expolygon",
+     "extra_perimeters",
+     "is_bottom",
+     "is_bridge",
+     "is_external",
+     "is_internal",
+     "is_solid",
+     "is_top",
+     "surface_type",
+     "thickness"
+    ],
+    "SurfaceCollection": [
+     "append",
+     "clear",
+     "empty",
+     "filter_by_type",
+     "has",
+     "set",
+     "set_type",
+     "size",
+     "surfaces"
+    ],
+    "TriangleMesh": [
+     "bounding_box",
+     "face_normals",
+     "facets_count",
+     "is_empty",
+     "is_manifold",
+     "triangle",
+     "triangle_count",
+     "triangles",
+     "vertex",
+     "vertex_count",
+     "vertices",
+     "volume"
+    ]
+   },
+   "enums": {
+    "ModelVolumeType": {
+     "values": [
+      "Invalid",
+      "ModelPart",
+      "NegativeVolume",
+      "ParameterModifier",
+      "SupportBlocker",
+      "SupportEnforcer",
+      "PreciseSeamCenter",
+      "PreciseSeamLeft",
+      "PreciseSeamRight",
+      "PreciseSeamEnforced",
+      "PreciseSeamBlocked",
+      "PreciseSeamNeutral"
+     ],
+     "exported": false
+    },
+    "PresetType": {
+     "values": [
+      "Invalid",
+      "Print",
+      "SlaPrint",
+      "Filament",
+      "SlaMaterial",
+      "Printer",
+      "PhysicalPrinter",
+      "Plate",
+      "Model"
+     ],
+     "exported": false
+    },
+    "SurfaceType": {
+     "values": [
+      "stTop",
+      "stBottom",
+      "stBottomBridge",
+      "stInternalAfterExternalBridge",
+      "stInternal",
+      "stInternalSolid",
+      "stInternalBridge",
+      "stSecondInternalBridge",
+      "stInternalVoid",
+      "stPerimeter",
+      "stCount"
+     ],
+     "exported": true
+    }
+   },
+   "submodules": [
+    "plugin",
+    "preset",
+    "ui"
+   ]
+  },
+  "orca.host.plugin": {
+   "functions": [
+    "storage"
+   ],
+   "attributes": [],
+   "classes": {},
+   "enums": {},
+   "submodules": []
+  },
+  "orca.host.preset": {
+   "functions": [],
+   "attributes": [
+    "filament",
+    "printer",
+    "process"
+   ],
+   "classes": {
+    "PresetEditor": [
+     "begin_update",
+     "type",
+     "update"
+    ],
+    "PresetTransaction": [
+     "category",
+     "commit",
+     "selection_changed",
+     "set",
+     "slot_number",
+     "staged_keys",
+     "target_name",
+     "type"
+    ],
+    "PresetUpdateResult": [
+     "__repr__",
+     "category",
+     "dirty",
+     "keys",
+     "selection_changed",
+     "shared_slots",
+     "slot_assignment_changed",
+     "slot_number",
+     "target_name",
+     "type"
+    ]
+   },
+   "enums": {},
+   "submodules": [
+    "bundles"
+   ]
+  },
+  "orca.host.preset.bundles": {
+   "functions": [
+    "list_ids",
+    "reload_local"
+   ],
+   "attributes": [],
+   "classes": {},
+   "enums": {},
+   "submodules": []
+  },
+  "orca.host.ui": {
+   "functions": [
+    "create_dock_panel",
+    "create_progress_dialog",
+    "create_window",
+    "message",
+    "push_notification"
+   ],
+   "attributes": [
+    "PD_APP_MODAL",
+    "PD_AUTO_HIDE",
+    "PD_CAN_ABORT",
+    "PD_CAN_SKIP",
+    "PD_ELAPSED_TIME",
+    "PD_ESTIMATED_TIME",
+    "PD_REMAINING_TIME",
+    "WINDOW_MODAL",
+    "WINDOW_MODELESS"
+   ],
+   "classes": {
+    "ProgressDialog": [
+     "__enter__",
+     "__exit__",
+     "__init__",
+     "close",
+     "id",
+     "is_open",
+     "pulse",
+     "start_pulse",
+     "stop_pulse",
+     "update"
+    ],
+    "UiDockPanel": [
+     "close",
+     "hide",
+     "id",
+     "is_open",
+     "post",
+     "show"
+    ],
+    "UiWindow": [
+     "close",
+     "id",
+     "is_open",
+     "post"
+    ]
+   },
+   "enums": {
+    "NotificationLevel": {
+     "values": [
+      "ProgressBarNotificationLevel",
+      "HintNotificationLevel",
+      "RegularNotificationLevel",
+      "PrintInfoNotificationLevel",
+      "PrintInfoShortNotificationLevel",
+      "ImportantNotificationLevel",
+      "WarningNotificationLevel",
+      "SeriousWarningNotificationLevel",
+      "ErrorNotificationLevel"
+     ],
+     "exported": true
+    }
+   },
+   "submodules": []
+  },
+  "orca.pages": {
+   "functions": [],
+   "attributes": [],
+   "classes": {
+    "PagesPluginCapabilityBase": [
+     "__init__",
+     "get_icon",
+     "get_type",
+     "get_ui",
+     "on_message",
+     "post_message"
+    ]
+   },
+   "enums": {},
+   "submodules": []
+  },
+  "orca.printer_agent": {
+   "functions": [],
+   "attributes": [],
+   "classes": {
+    "AgentInfo": [
+     "__init__",
+     "description",
+     "id",
+     "name",
+     "version"
+    ],
+    "DetectResult": [
+     "__init__",
+     "bind_state",
+     "command",
+     "connect_type",
+     "dev_id",
+     "dev_name",
+     "model_id",
+     "result_msg",
+     "version"
+    ],
+    "PrintParams": [
+     "__init__",
+     "ams_mapping",
+     "ams_mapping2",
+     "ams_mapping_info",
+     "auto_bed_leveling",
+     "auto_flow_cali",
+     "auto_offset_cali",
+     "comments",
+     "config_filename",
+     "connection_type",
+     "dev_id",
+     "dev_ip",
+     "dev_name",
+     "dst_file",
+     "extra_options",
+     "filename",
+     "ftp_file",
+     "ftp_file_md5",
+     "ftp_folder",
+     "nozzle_mapping",
+     "nozzles_info",
+     "origin_model_id",
+     "origin_profile_id",
+     "password",
+     "plate_index",
+     "preset_name",
+     "print_type",
+     "project_name",
+     "stl_design_id",
+     "task_bed_leveling",
+     "task_bed_type",
+     "task_ext_change_assist",
+     "task_flow_cali",
+     "task_layer_inspect",
+     "task_name",
+     "task_record_timelapse",
+     "task_use_ams",
+     "task_vibration_cali",
+     "try_emmc_print",
+     "use_ssl_for_ftp",
+     "use_ssl_for_mqtt",
+     "username"
+    ],
+    "PrinterAgentBase": [
+     "__init__",
+     "bind",
+     "bind_detect",
+     "check_cert",
+     "command_ams_calibrate",
+     "command_ams_refresh_rfid",
+     "command_ams_select_tray",
+     "command_auto_leveling",
+     "command_axis_control",
+     "command_go_home",
+     "command_set_bed",
+     "command_set_nozzle",
+     "command_start_camera",
+     "command_xyz_abs",
+     "connect_printer",
+     "disconnect_printer",
+     "fetch_filament_info",
+     "get_agent_info",
+     "get_camera_stream_mode",
+     "get_camera_url",
+     "get_filament_sync_mode",
+     "get_type",
+     "get_user_selected_machine",
+     "install_device_cert",
+     "ping_bind",
+     "send_message",
+     "send_message_to_printer",
+     "set_user_selected_machine",
+     "start_discovery",
+     "start_local_print",
+     "start_local_print_with_record",
+     "start_print",
+     "start_sdcard_print",
+     "start_send_gcode_to_sdcard",
+     "unbind"
+    ],
+    "PrinterConnectionParams": [
+     "__init__",
+     "ca_file",
+     "dev_id",
+     "host",
+     "password",
+     "port",
+     "use_ssl",
+     "username"
+    ]
+   },
+   "enums": {
+    "CameraStreamMode": {
+     "values": [
+      "None_",
+      "HTTP",
+      "HTTPS",
+      "HTTP_SNAPSHOT",
+      "RTSP"
+     ],
+     "exported": true
+    },
+    "FilamentSyncMode": {
+     "values": [
+      "None_",
+      "Subscription",
+      "Pull"
+     ],
+     "exported": true
+    }
+   },
+   "submodules": []
+  },
+  "orca.resource_texture": {
+   "functions": [],
+   "attributes": [],
+   "classes": {
+    "ResourceTexturePluginCapabilityBase": [
+     "__init__",
+     "get_texture_dir",
+     "get_type"
+    ]
+   },
+   "enums": {},
+   "submodules": []
+  },
+  "orca.script": {
+   "functions": [],
+   "attributes": [],
+   "classes": {
+    "ScriptPluginCapabilityBase": [
+     "__init__",
+     "execute",
+     "get_type"
+    ]
+   },
+   "enums": {},
+   "submodules": []
+  },
+  "orca.slicing": {
+   "functions": [
+    "unscale"
+   ],
+   "attributes": [],
+   "classes": {
+    "SlicingPipelineCapabilityBase": [
+     "__init__",
+     "execute",
+     "get_type"
+    ],
+    "SlicingPipelineContext": [
+     "cancelled",
+     "config_value",
+     "gcode_path",
+     "host",
+     "object",
+     "orca_version",
+     "output_name",
+     "print",
+     "step"
+    ]
+   },
+   "enums": {
+    "Step": {
+     "values": [
+      "posSlice",
+      "posPerimeters",
+      "posEstimateCurledExtrusions",
+      "posPrepareInfill",
+      "posInfill",
+      "posIroning",
+      "posContouring",
+      "posSupportMaterial",
+      "posDetectOverhangsForLift",
+      "posSimplifyPath",
+      "psWipeTower",
+      "psSkirtBrim",
+      "psGCodePostProcess"
+     ],
+     "exported": true
+    }
+   },
+   "submodules": []
+  }
+ }
+}

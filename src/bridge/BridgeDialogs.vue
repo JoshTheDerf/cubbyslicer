@@ -1,21 +1,19 @@
 <script setup lang="ts">
 /**
- * "Connect an AI agent" dialog and the confirm the agent's printer tools
- * wait on. Mounted once by App.vue; registers the bridge actions.
+ * "Connect an AI agent" dialog. Mounted once by App.vue. (The confirm the
+ * agent's printer tools wait on is the app's confirm dialog, ./store.ts.)
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { answerConfirm, bridge, bridgeState, bridgeUi, startBridge } from './store';
-import { registerBridgeActions } from './actions';
+import { computed, onMounted, ref, watch } from 'vue';
+import { dialogs } from '../dialogs/state';
+import AppDialog from '../ui/AppDialog.vue';
+import { bridge, bridgeState, bridgeUi, startBridge } from './store';
 import McpSetup from './McpSetup.vue';
 
-onBeforeUnmount(registerBridgeActions());
 onMounted(startBridge);
 
 const code = ref('');
 const auto = ref(false);
-const always = ref(false);
-watch(() => bridgeUi.open, (o) => { if (o) { code.value = bridgeUi.prefill; auto.value = bridgeState.value.autoReconnect; } });
-watch(() => bridgeUi.confirm, () => { always.value = false; });
+watch(() => dialogs.bridge, (o) => { if (o) { code.value = bridgeUi.prefill; auto.value = bridgeState.value.autoReconnect; } });
 
 const s = bridgeState;
 const connected = computed(() => s.value.status === 'connected');
@@ -33,72 +31,48 @@ const statusText = computed(() => {
 async function connect() {
   await bridge.connect({ input: code.value.trim() || undefined, autoReconnect: auto.value });
 }
-
-const confirmOpen = computed({
-  get: () => !!bridgeUi.confirm,
-  set: (v: boolean) => { if (!v) answerConfirm(false); },
-});
 </script>
 
 <template>
-  <UModal v-model:open="bridgeUi.open" title="Connect an AI agent" :ui="{ content: 'sm:max-w-md' }">
-    <template #body>
-      <div class="bd dlg-flow text-sm" data-testid="bridge-dialog">
-        <p class="bd__status dlg-span" :class="{ 'bd__status--on': connected }" data-testid="bridge-status">
-          <span class="bd__dot" />{{ statusText }}
+  <AppDialog v-model:open="dialogs.bridge" title="Connect an AI agent" size="md" cancel-label="">
+    <div class="bd dlg-flow text-sm" data-testid="bridge-dialog">
+      <p class="bd__status dlg-span" :class="{ 'bd__status--on': connected }" data-testid="bridge-status">
+        <span class="bd__dot" />{{ statusText }}
+      </p>
+      <p v-if="s.error" class="bd__error dlg-span" role="alert">{{ s.error }}</p>
+      <template v-if="!connected">
+        <p class="text-toned dlg-span">
+          Your AI agent drives this tab through the cubby MCP server on your computer (127.0.0.1). Add it to your agent once
+          (any MCP client works), ask the agent for the pairing code, and paste it here.
         </p>
-        <p v-if="s.error" class="bd__error dlg-span" role="alert">{{ s.error }}</p>
-        <template v-if="!connected">
-          <p class="text-toned dlg-span">
-            Your AI agent drives this tab through the cubby MCP server on your computer (127.0.0.1). Add it to your agent once
-            (any MCP client works), ask the agent for the pairing code, and paste it here.
-          </p>
-          <McpSetup class="dlg-span" />
-          <UFormField :label="s.paired ? 'Pairing code (only to pair again)' : 'Pairing code'">
-            <UInput v-model="code" placeholder="K7QD-93XM" spellcheck="false" autocomplete="off" class="w-full font-mono" data-testid="bridge-code"
-                    @keydown.enter="connect" />
-          </UFormField>
-          <UCheckbox v-model="auto" label="Reconnect when this page loads" class="mt-3 self-end" data-testid="bridge-auto" />
-          <p class="text-dimmed mt-3 dlg-span">
-            On https, the browser asks to let this site reach devices on your local network. Allow it; it only reaches cubby-mcp on this computer.
-          </p>
-        </template>
-        <template v-else>
-          <p class="text-toned dlg-span">
-            Your agent can use everything in the slicer, like you can. Uploads, prints, print host changes and deleting presets ask you here first
-            <template v-if="bridge.isSessionAllowed('print') || bridge.isSessionAllowed('upload')">
-              (you allowed them without asking for this session. <ULink as="button" class="text-info" @click="bridge.revokeSessionAllow('print'); bridge.revokeSessionAllow('upload')">Ask again</ULink>)
-            </template>.
-          </p>
-        </template>
-      </div>
+        <McpSetup class="dlg-span" />
+        <UFormField :label="s.paired ? 'Pairing code (only to pair again)' : 'Pairing code'">
+          <UInput v-model="code" placeholder="K7QD-93XM" spellcheck="false" autocomplete="off" class="w-full font-mono" data-testid="bridge-code"
+                  @keydown.enter="connect" />
+        </UFormField>
+        <UCheckbox v-model="auto" label="Reconnect when this page loads" class="mt-3 self-end" data-testid="bridge-auto" />
+        <p class="text-dimmed mt-3 dlg-span">
+          On https, the browser asks to let this site reach devices on your local network. Allow it; it only reaches cubby-mcp on this computer.
+        </p>
+      </template>
+      <template v-else>
+        <p class="text-toned dlg-span">
+          Your agent can use everything in the slicer, like you can. Uploads, prints, print host changes and deleting presets ask you here first
+          <template v-if="bridge.isSessionAllowed('print') || bridge.isSessionAllowed('upload')">
+            (you allowed them without asking for this session. <ULink as="button" class="text-info" @click="bridge.revokeSessionAllow('print'); bridge.revokeSessionAllow('upload')">Ask again</ULink>)
+          </template>.
+        </p>
+      </template>
+    </div>
+    <template #footer-start>
+      <UButton v-if="s.paired" color="neutral" variant="ghost" label="Forget pairing" @click="bridge.forget()" />
     </template>
-    <template #footer>
-      <div class="flex justify-between gap-2 w-full">
-        <UButton v-if="s.paired" color="neutral" variant="ghost" label="Forget pairing" @click="bridge.forget()" />
-        <span v-else />
-        <div class="flex gap-2">
-          <UButton v-if="connected || busy" color="neutral" variant="outline" label="Disconnect" data-testid="bridge-disconnect" @click="bridge.disconnect()" />
-          <UButton v-if="!connected" color="primary" :loading="busy" :disabled="!code.trim() && !s.paired" label="Connect" data-testid="bridge-connect" @click="connect" />
-          <UButton v-else color="primary" label="Done" @click="bridgeUi.open = false" />
-        </div>
-      </div>
+    <template #footer-end>
+      <UButton v-if="connected || busy" color="neutral" variant="outline" label="Disconnect" data-testid="bridge-disconnect" @click="bridge.disconnect()" />
+      <UButton v-if="!connected" color="primary" :loading="busy" :disabled="!code.trim() && !s.paired" label="Connect" data-testid="bridge-connect" @click="connect" />
+      <UButton v-else color="primary" label="Done" @click="dialogs.bridge = false" />
     </template>
-  </UModal>
-
-  <UModal v-model:open="confirmOpen" :title="bridgeUi.confirm?.title ?? ''" :description="bridgeUi.confirm?.message" :dismissible="false" :ui="{ content: 'sm:max-w-md' }">
-    <template #body>
-      <div data-testid="bridge-confirm">
-        <UCheckbox v-model="always" label="Allow without asking until I disconnect" data-testid="bridge-confirm-always" />
-      </div>
-    </template>
-    <template #footer>
-      <div class="flex justify-end gap-2 w-full">
-        <UButton color="neutral" variant="ghost" label="Cancel" data-testid="bridge-confirm-cancel" @click="answerConfirm(false)" />
-        <UButton color="primary" :label="bridgeUi.confirm?.confirmLabel ?? 'Allow'" data-testid="bridge-confirm-ok" @click="answerConfirm(true, always)" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

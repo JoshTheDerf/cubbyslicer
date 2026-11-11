@@ -4,6 +4,7 @@
  * .layerHeightProfile / .layerRanges); every change goes through the project
  * store's `mutate()` so it is undoable, persisted and marks the plate stale.
  */
+import { SCALAR, valueAt } from '../lib/configValue';
 import { computed, reactive, ref, shallowRef, toRaw, watch } from 'vue';
 import { adaptiveLayerProfile, smoothLayerProfile } from '../engine/client';
 import type { ConfigValue, FlatConfig } from '../engine/types';
@@ -66,7 +67,7 @@ export function objectHeight(id: string): number {
 export function heightRanges(o: ProjectObject): HeightRange[] {
   return (o.layerRanges ?? []).map((r) => {
     const v = r.overrides.layer_height;
-    const h = parseFloat(Array.isArray(v) ? v[0] : (v ?? ''));
+    const h = parseFloat(valueAt(v, SCALAR) ?? '');
     return { min: r.min, max: r.max, layerHeight: Number.isFinite(h) && h > 0 ? h : undefined };
   });
 }
@@ -164,8 +165,7 @@ export async function runSmooth(id: string, radius = layersUi.radius, keepMin = 
 /** Orca get_default_layer_config: layer_height (object's or process) + extruder 0 when present. */
 function defaultRangeConfig(o: ProjectObject): Record<string, ConfigValue> {
   const ov = o.overrides.layer_height;
-  const lh = ov !== undefined ? (Array.isArray(ov) ? ov[0] : ov) : resolvedConfig.value.layer_height;
-  const h = Array.isArray(lh) ? lh[0] : lh;
+  const h = valueAt(ov ?? resolvedConfig.value.layer_height, SCALAR);
   return { layer_height: h && parseFloat(h) > 0 ? h : '0.2' };
 }
 

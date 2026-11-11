@@ -22,6 +22,7 @@ import { sliceTools } from './groups/slice';
 import { fileTools } from './groups/files';
 import { printHostTools } from './groups/printhost';
 import { cadTools } from './groups/cad';
+import { designTools } from './groups/design';
 
 export function slicerTools(): BridgeTool[] {
   return [
@@ -30,6 +31,7 @@ export function slicerTools(): BridgeTool[] {
     ...settingsTools(),
     ...objectTools(),
     ...cadTools(),
+    ...designTools(),
     ...plateTools(),
     ...paintTools(),
     ...layerTools(),

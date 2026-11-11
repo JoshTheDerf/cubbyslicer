@@ -1,28 +1,43 @@
 <script setup lang="ts">
 /**
- * Orca BedShapeDialog: printable area (rectangular: size + origin; circular:
- * diameter; custom: points / loaded from an STL outline), max print height,
- * and a custom bed texture (SVG / PNG) and bed model (STL). Applies to the
- * selected printer preset as unsaved edits (printable_area / printable_height
- * / bed_custom_texture / bed_custom_model; bed_shape / max_print_height on
- * preFlight). Textures and models are stored in this browser (IndexedDB).
+ * Orca BedShapeDialog, two uses:
+ * - the printer's bed (`dialogs.bedShape`): printable area (rectangular: size
+ *   + origin; circular: diameter; custom: points / loaded from an STL
+ *   outline), max print height, and a custom bed texture (SVG / PNG) and bed
+ *   model (STL). Applies to the selected printer preset as unsaved edits
+ *   (printable_area / printable_height / bed_custom_texture / bed_custom_model;
+ *   bed_shape / max_print_height on preFlight). Textures and models are stored
+ *   in this browser (IndexedDB).
+ * - any other polygon option from a settings row (`shapeRequest`: excluded bed
+ *   area, wrapping exclusion area): shape only, answered to the caller, with
+ *   Clear for options that may be empty.
  */
 import { computed, reactive, ref, watch } from 'vue';
 import { mobileDialog, shortScreen } from '../../ui/mobileDialog';
+import AppDialog from '../../ui/AppDialog.vue';
 import { pickFiles } from '../../app/shell/download';
 import { parseModelFile } from '../../project/import';
 import { currentPresets } from '../../presets/store';
-import { asArray, formatNumber } from '../../presets/values';
+import { asList, SCALAR, toNumber, valueAt } from '../../lib/configValue';
+import { formatNumber } from '../../presets/values';
 import { toast } from '../../ui';
 import { dialogs } from '../state';
 import { bedPoints, convexHullXY, parseBed, parseCustomText, serializeBed, type BedModel, type BedType } from './bedShape';
 import { assetLabel, bedAssetUrl, storeBedAsset } from './customBed';
+import { shapeRequest } from './request';
 
 const p = computed(() => currentPresets.value);
 const areaKey = computed(() => (p.value.schema.value && !p.value.schema.value.options.printable_area && p.value.schema.value.options.bed_shape ? 'bed_shape' : 'printable_area'));
 const heightKey = computed(() => (p.value.schema.value && !p.value.schema.value.options.printable_height && p.value.schema.value.options.max_print_height ? 'max_print_height' : 'printable_height'));
-const hasTexture = computed(() => !p.value.schema.value || !!p.value.schema.value.options.bed_custom_texture);
-const hasModel = computed(() => !p.value.schema.value || !!p.value.schema.value.options.bed_custom_model);
+
+/** Area mode: editing another polygon option for a settings row. */
+const area = computed(() => shapeRequest.current.value);
+const open = computed({
+  get: () => dialogs.bedShape || !!area.value,
+  set: (v: boolean) => { if (!v) { dialogs.bedShape = false; shapeRequest.open.value = false; } },
+});
+const hasTexture = computed(() => !area.value && (!p.value.schema.value || !!p.value.schema.value.options.bed_custom_texture));
+const hasModel = computed(() => !area.value && (!p.value.schema.value || !!p.value.schema.value.options.bed_custom_model));
 
 const model = reactive<BedModel>(parseBed([]));
 const customText = ref('');
@@ -32,15 +47,24 @@ const bedModel = ref('');
 const textureUrl = ref<string | null>(null);
 const busy = ref(false);
 
-const single = (v: unknown) => String(Array.isArray(v) ? v[0] ?? '' : v ?? '');
-watch(() => dialogs.bedShape, (o) => {
-  if (!o) return;
-  const m = parseBed(asArray(p.value.value('printer', areaKey.value)));
+const single = (key: string) => valueAt(p.value.value('printer', key), SCALAR) ?? '';
+function load(points: string[]): void {
+  const m = parseBed(points);
   Object.assign(model, m);
   customText.value = serializeBed(m.custom.length ? m.custom : bedPoints(m)).join('\n');
-  height.value = Number(single(p.value.value('printer', heightKey.value))) || 0;
-  texture.value = single(p.value.value('printer', 'bed_custom_texture'));
-  bedModel.value = single(p.value.value('printer', 'bed_custom_model'));
+}
+watch(() => dialogs.bedShape, (o) => {
+  if (!o) return;
+  load(asList(p.value.value('printer', areaKey.value)));
+  height.value = toNumber(single(heightKey.value), 0);
+  texture.value = single('bed_custom_texture');
+  bedModel.value = single('bed_custom_model');
+});
+watch(area, (r) => {
+  if (!r) return;
+  load(r.points);
+  // Fewer than 3 points ("0x0") is Orca's "no area": start from an empty custom outline.
+  if (parseCustomText(r.points.join('\n')).pts.length < 3) { model.type = 'custom'; customText.value = ''; }
 });
 watch(texture, async (t) => { textureUrl.value = t ? await bedAssetUrl(t) : null; }, { immediate: true });
 
@@ -53,8 +77,12 @@ const type = computed({ get: () => model.type, set: (t: BedType) => { if (t === 
 const custom = computed(() => parseCustomText(customText.value));
 watch(custom, (c) => { if (model.type === 'custom') model.custom = c.pts; });
 const pts = computed(() => bedPoints(model));
-const invalid = computed(() => (model.type === 'custom' && custom.value.bad) || pts.value.length < 3
-  || (model.type === 'rect' && !(model.rect.width > 0 && model.rect.depth > 0)) || (model.type === 'circle' && !(model.circle.diameter > 0)));
+const empty = computed(() => !!area.value?.allowEmpty && model.type === 'custom' && !customText.value.trim());
+const invalid = computed(() => !empty.value && ((model.type === 'custom' && custom.value.bad) || pts.value.length < 3
+  || (model.type === 'rect' && !(model.rect.width > 0 && model.rect.depth > 0)) || (model.type === 'circle' && !(model.circle.diameter > 0))));
+/** Area mode places a rectangle by its front-left corner (the bed's own uses Orca's origin offset). */
+const cornerX = computed({ get: () => -model.rect.originX || 0, set: (v: number) => { model.rect.originX = -v; } });
+const cornerY = computed({ get: () => -model.rect.originY || 0, set: (v: number) => { model.rect.originY = -v; } });
 
 const view = computed(() => {
   const all = pts.value.length ? pts.value : [[0, 0], [100, 100]] as Array<[number, number]>;
@@ -97,6 +125,7 @@ async function pick(kind: 'texture' | 'model'): Promise<void> {
 
 function apply(): void {
   if (invalid.value) return;
+  if (area.value) { shapeRequest.answer(empty.value ? [] : serializeBed(pts.value)); return; }
   const pr = p.value;
   pr.setValue('printer', areaKey.value, serializeBed(pts.value));
   if (height.value > 0) pr.setValue('printer', heightKey.value, String(height.value));
@@ -109,9 +138,12 @@ const fmt = formatNumber;
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.bedShape" title="Bed shape" :description="shortScreen ? undefined : `Printer: ${p.infos.value.printer.name}`" :fullscreen="mobileDialog"
-          :ui="{ content: 'sm:max-w-3xl', body: 'flex flex-col gap-4' }">
-    <template #body>
+  <AppDialog v-model:open="open" :title="area ? area.title : 'Bed shape'" size="3xl" fullscreen body-class="flex flex-col gap-4"
+             :description="shortScreen ? undefined : area ? 'Polygon in bed coordinates, in millimetres.' : `Printer: ${p.infos.value.printer.name}`"
+             confirm-label="Apply" :confirm-disabled="invalid" @confirm="apply">
+    <template v-if="area?.allowEmpty" #footer-start>
+      <UButton variant="ghost" color="error" label="Clear" @click="shapeRequest.answer([])" />
+    </template>
       <div class="bs">
         <div class="bs__form dlg-flow">
           <h4>Shape</h4>
@@ -120,13 +152,19 @@ const fmt = formatNumber;
             <div class="bs__grid dlg-span">
               <UFormField label="Size X" hint="mm"><UInputNumber :model-value="model.rect.width" :min="1" size="sm" @update:model-value="(v: number | null) => (model.rect.width = num(v, 220))" /></UFormField>
               <UFormField label="Size Y" hint="mm"><UInputNumber :model-value="model.rect.depth" :min="1" size="sm" @update:model-value="(v: number | null) => (model.rect.depth = num(v, 220))" /></UFormField>
-              <UFormField label="Origin X" hint="mm"><UInputNumber :model-value="model.rect.originX" size="sm" @update:model-value="(v: number | null) => (model.rect.originX = num(v))" /></UFormField>
-              <UFormField label="Origin Y" hint="mm"><UInputNumber :model-value="model.rect.originY" size="sm" @update:model-value="(v: number | null) => (model.rect.originY = num(v))" /></UFormField>
+              <template v-if="area">
+                <UFormField label="Corner X" hint="mm"><UInputNumber :model-value="cornerX" size="sm" @update:model-value="(v: number | null) => (cornerX = num(v))" /></UFormField>
+                <UFormField label="Corner Y" hint="mm"><UInputNumber :model-value="cornerY" size="sm" @update:model-value="(v: number | null) => (cornerY = num(v))" /></UFormField>
+              </template>
+              <template v-else>
+                <UFormField label="Origin X" hint="mm"><UInputNumber :model-value="model.rect.originX" size="sm" @update:model-value="(v: number | null) => (model.rect.originX = num(v))" /></UFormField>
+                <UFormField label="Origin Y" hint="mm"><UInputNumber :model-value="model.rect.originY" size="sm" @update:model-value="(v: number | null) => (model.rect.originY = num(v))" /></UFormField>
+              </template>
             </div>
-            <p class="bs__note dlg-span">Distance of the coordinates origin (X0 Y0) from the front-left corner of the bed.</p>
+            <p class="bs__note dlg-span">{{ area ? 'Position of the rectangle’s front-left corner on the bed.' : 'Distance of the coordinates origin (X0 Y0) from the front-left corner of the bed.' }}</p>
           </template>
           <template v-else-if="model.type === 'circle'">
-            <UFormField label="Diameter" hint="mm" description="The origin (X0 Y0) is the centre of the bed.">
+            <UFormField label="Diameter" hint="mm" description="The origin (X0 Y0) is the centre.">
               <UInputNumber :model-value="model.circle.diameter" :min="1" size="sm" class="w-32" @update:model-value="(v: number | null) => (model.circle.diameter = num(v, 200))" />
             </UFormField>
           </template>
@@ -137,24 +175,26 @@ const fmt = formatNumber;
             <UButton size="xs" variant="outline" icon="i-lucide-file-box" label="Load shape from STL…" class="self-start" @click="loadShapeStl" />
           </template>
 
-          <h4>Height</h4>
-          <div class="bs__hrow">
-            <UFormField label="Max print height" hint="mm">
-              <UInputNumber :model-value="height" :min="0" size="sm" class="w-32" @update:model-value="(v: number | null) => (height = num(v))" />
-            </UFormField>
-          </div>
+          <template v-if="!area">
+            <h4>Height</h4>
+            <div class="bs__hrow">
+              <UFormField label="Max print height" hint="mm">
+                <UInputNumber :model-value="height" :min="0" size="sm" class="w-32" @update:model-value="(v: number | null) => (height = num(v))" />
+              </UFormField>
+            </div>
+          </template>
           <!-- Phones: a thumbnail preview beside the height and appearance rows instead of a column. -->
           <figure v-if="mobileDialog && !shortScreen" class="bs__preview bs__preview--sm">
-            <svg :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Bed preview">
+            <svg :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Shape preview">
               <defs><clipPath id="bs-clip-sm"><polygon :points="poly" /></clipPath></defs>
-              <image v-if="textureUrl && bounds" :href="textureUrl" :x="bounds.minX" :y="-bounds.maxY" :width="bounds.maxX - bounds.minX" :height="bounds.maxY - bounds.minY"
+              <image v-if="textureUrl && bounds && !area" :href="textureUrl" :x="bounds.minX" :y="-bounds.maxY" :width="bounds.maxX - bounds.minX" :height="bounds.maxY - bounds.minY"
                      preserveAspectRatio="none" clip-path="url(#bs-clip-sm)" opacity="0.9" />
-              <polygon v-if="pts.length >= 3" :points="poly" class="bs__poly" :class="{ 'bs__poly--tex': !!textureUrl }" />
+              <polygon v-if="pts.length >= 3" :points="poly" class="bs__poly" :class="{ 'bs__poly--tex': !!textureUrl && !area }" />
               <line :x1="0" :y1="0" :x2="view.w * 0.12" :y2="0" class="bs__ax bs__ax--x" />
               <line :x1="0" :y1="0" :x2="0" :y2="-view.h * 0.12" class="bs__ax bs__ax--y" />
               <circle cx="0" cy="0" :r="view.w * 0.008" class="bs__origin" />
             </svg>
-            <figcaption v-if="bounds">{{ fmt(bounds.maxX - bounds.minX) }} × {{ fmt(bounds.maxY - bounds.minY) }} mm · origin ({{ fmt(-bounds.minX) }}, {{ fmt(-bounds.minY) }})</figcaption>
+            <figcaption v-if="bounds">{{ fmt(bounds.maxX - bounds.minX) }} × {{ fmt(bounds.maxY - bounds.minY) }} mm · {{ area ? `from (${fmt(bounds.minX)}, ${fmt(bounds.minY)})` : `origin (${fmt(-bounds.minX)}, ${fmt(-bounds.minY)})` }}</figcaption>
           </figure>
 
           <template v-if="hasTexture || hasModel">
@@ -175,26 +215,19 @@ const fmt = formatNumber;
           </template>
         </div>
         <figure v-if="!mobileDialog || shortScreen" class="bs__preview">
-          <svg :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Bed preview">
+          <svg :viewBox="`${view.x} ${view.y} ${view.w} ${view.h}`" preserveAspectRatio="xMidYMid meet" aria-label="Shape preview">
             <defs><clipPath id="bs-clip"><polygon :points="poly" /></clipPath></defs>
-            <image v-if="textureUrl && bounds" :href="textureUrl" :x="bounds.minX" :y="-bounds.maxY" :width="bounds.maxX - bounds.minX" :height="bounds.maxY - bounds.minY"
+            <image v-if="textureUrl && bounds && !area" :href="textureUrl" :x="bounds.minX" :y="-bounds.maxY" :width="bounds.maxX - bounds.minX" :height="bounds.maxY - bounds.minY"
                    preserveAspectRatio="none" clip-path="url(#bs-clip)" opacity="0.9" />
-            <polygon v-if="pts.length >= 3" :points="poly" class="bs__poly" :class="{ 'bs__poly--tex': !!textureUrl }" />
+            <polygon v-if="pts.length >= 3" :points="poly" class="bs__poly" :class="{ 'bs__poly--tex': !!textureUrl && !area }" />
             <line :x1="0" :y1="0" :x2="view.w * 0.12" :y2="0" class="bs__ax bs__ax--x" />
             <line :x1="0" :y1="0" :x2="0" :y2="-view.h * 0.12" class="bs__ax bs__ax--y" />
             <circle cx="0" cy="0" :r="view.w * 0.008" class="bs__origin" />
           </svg>
-          <figcaption v-if="bounds">{{ fmt(bounds.maxX - bounds.minX) }} × {{ fmt(bounds.maxY - bounds.minY) }} mm · origin ({{ fmt(-bounds.minX) }}, {{ fmt(-bounds.minY) }})</figcaption>
+          <figcaption v-if="bounds">{{ fmt(bounds.maxX - bounds.minX) }} × {{ fmt(bounds.maxY - bounds.minY) }} mm · {{ area ? `from (${fmt(bounds.minX)}, ${fmt(bounds.minY)})` : `origin (${fmt(-bounds.minX)}, ${fmt(-bounds.minY)})` }}</figcaption>
         </figure>
       </div>
-    </template>
-    <template #footer>
-      <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="dialogs.bedShape = false" />
-        <UButton color="primary" label="Apply" :disabled="invalid" @click="apply" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

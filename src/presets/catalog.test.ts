@@ -185,3 +185,38 @@ describe('PreflightCatalog', () => {
     expect(v).toEqual({ temperature: ['200'], bed_temperature: ['60'], max_fan_speed: ['100'], extrusion_multiplier: ['0.98'], filament_type: ['PLA'] });
   });
 });
+
+describe('OrcaCatalog 2.5 preset resolution (A10)', () => {
+  const t: Record<string, unknown> = JSON.parse(JSON.stringify(tree));
+  const acme = t['Acme.json'] as { process_list: unknown[]; filament_list: unknown[] };
+  acme.process_list.push({ name: '0.20mm Quality @Acme', sub_path: 'process/0.20mm Quality @Acme.json' });
+  t['Acme/process/0.20mm Quality @Acme.json'] = {
+    type: 'process', name: '0.20mm Quality @Acme', inherits: 'fdm_process_common', instantiation: 'true', renamed_from: '"0.20mm Old Quality @Acme";0.20mm Older',
+    compatible_printers: ['Acme One 0.4 nozzle'],
+  };
+  const lib = t['OrcaFilamentLibrary.json'] as { filament_list: unknown[] };
+  // A printer-specific library profile supersedes the generic one of the same alias (Preset.cpp update_library_profile_excluded_from).
+  lib.filament_list.push({ name: 'Generic PLA @Acme One', sub_path: 'filament/Generic PLA @Acme One.json' });
+  t['OrcaFilamentLibrary/filament/Generic PLA @Acme One.json'] = {
+    type: 'filament', name: 'Generic PLA @Acme One', inherits: 'fdm_filament_pla', instantiation: 'true', compatible_printers: ['Acme One 0.6 nozzle'],
+  };
+  const make = () => new OrcaCatalog({ base: '/p', fetcher: fetcherFor(t), bundles: false });
+
+  it('follows renamed_from for ids, names and parents', async () => {
+    const c = make();
+    expect((await c.info(sysId('Acme', '0.20mm Old Quality @Acme'), 'process'))?.id).toBe(sysId('Acme', '0.20mm Quality @Acme'));
+    expect((await c.findByName('process', '0.20mm Older', 'Acme'))?.name).toBe('0.20mm Quality @Acme');
+    expect(await c.resolve(sysId('Acme', '0.20mm Old Quality @Acme'), 'process')).toMatchObject({ layer_height: '0.2' });
+    // Implicit rename: the name without its '@'.
+    expect((await c.findByName('filament', 'Acme PLA Acme One', 'Acme'))?.name).toBe('Acme PLA @Acme One');
+  });
+  it('a missing "… Generic X @…" falls back to the library\'s "Generic X @System"', async () => {
+    expect((await make().findByName('filament', 'Foo_Generic PLA @Nowhere'))?.name).toBe('Generic PLA @System');
+  });
+  it('library printer-specific profiles hide the generic one for their printers', async () => {
+    const c = make();
+    const one06 = (await c.info(sysId('Acme', 'Acme One 0.6 nozzle'), 'printer'))!;
+    const generic = (await c.candidates('filament', one06)).find((p) => p.name === 'Generic PLA @System')!;
+    expect(generic.excludedPrinters).toContain('Acme One 0.6 nozzle');
+  });
+});

@@ -54,7 +54,7 @@
     >
       <template #description>
         <ul class="pv-warn-list">
-          <li v-for="(w, i) in shownWarnings" :key="i">{{ w.message }}</li>
+          <li v-for="(w, i) in shownWarnings" :key="i">{{ w.code === 'plugin' ? `Plugin: ${w.message}` : w.message }}</li>
         </ul>
       </template>
     </UAlert>
@@ -63,6 +63,8 @@
       <!-- left: legend (Orca: top-left) -->
       <div class="pv-left">
         <LegendPanel
+          :imex="!!previewImex?.carriages"
+          :belt="!!beltBack"
           :scheme="scheme"
           :features="featureRows"
           :feature-visible="featureVisible"
@@ -81,6 +83,9 @@
           @update:options="options = $event"
         />
       </div>
+
+      <!-- Orca 2.5 section view (bottom-left, as desktop's canvas toolbar) -->
+      <div class="pv-section"><SectionViewControl /></div>
 
       <!-- top-right: view cube + camera/tool buttons -->
       <div class="pv-topright">
@@ -160,7 +165,9 @@
 
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
-import { bedFromConfig, lastSlice, resolvedConfig } from '../app/state';
+import { activeView, bedFromConfig, lastSlice, resolvedConfig } from '../app/state';
+import { setSectionRatio, viewportState } from '../viewport/controller';
+import SectionViewControl from '../viewport/SectionViewControl.vue';
 import type { SliceResult } from '../engine/types';
 import { parseGcodeAsync } from './parser/client';
 import { parseOptionsFrom } from './parseOptions';
@@ -169,7 +176,8 @@ import type { ParsedGcode } from './parser/types';
 import { FEATURES, Feature, isExtrusionFeature } from './parser/features';
 import { PreviewRenderer } from './render/PreviewRenderer';
 import type { ViewPreset } from './render/PreviewRenderer';
-import { hexCss, toolColorsFromConfig } from './render/colors';
+import { toolColorsFromConfig } from './render/colors';
+import { intToCss } from '../lib/colour';
 import type { ValueRange } from './render/colors';
 import { buildFeatureRows, buildSummary } from './summary';
 import {
@@ -180,7 +188,6 @@ import {
 import type { LegendOptions } from './summary';
 import { attachViewCube } from './viewCube';
 import type { ViewCubeHandle } from './viewCube';
-import { registerPreviewActions } from './actions';
 import { lineText, tokenize } from './gcodeText';
 import LayerSlider from './controls/LayerSlider.vue';
 import MoveSlider from './controls/MoveSlider.vue';
@@ -189,7 +196,13 @@ import GcodeViewer from './GcodeViewer.vue';
 import CustomGcodeMenu from './CustomGcodeMenu.vue';
 import { colorPrintSlots, sliderTicks } from './customGcode';
 import { plateCustomGcodes } from '../plates/store';
-import { activePlate } from '../project/store';
+import { activePlate, bed, objectInfo, objectsOnPlate, plates } from '../project/store';
+import { plateOffset } from '../project/plates';
+import { beltBackTransform, beltDesignedMatrix } from '../viewport/belt';
+import { SCALAR, cfgNumber } from '../lib/configValue';
+import type { Matrix4 } from 'three';
+import { CARRIAGE_COLOURS, computeImexZoneLayout, effectiveImexMode, imexCarriages, imexHeadTransforms, imexTheme } from '../plates/imex';
+import { buildImexZones } from '../viewport/imexLayer';
 import { bindCameraPrefs } from '../viewport/cameraPrefs';
 
 const VIEWS: Array<{ id: ViewPreset; label: string; key: string }> = [
@@ -279,7 +292,7 @@ const curMeta = computed(() => {
   const f = FEATURES[p.feature[s]];
   return {
     feature: f?.label ?? '',
-    color: hexCss(f?.color ?? 0x999999),
+    color: intToCss(f?.color ?? 0x999999),
     pos: `X${p.points[i].toFixed(2)} Y${p.points[i + 1].toFixed(2)} Z${p.points[i + 2].toFixed(2)}`,
     speed: `${p.speed[s].toFixed(0)} mm/s`,
     size: isExtrusionFeature(p.feature[s]) ? `${(p.wh[s * 2] / 1000).toFixed(2)} × ${(p.wh[s * 2 + 1] / 1000).toFixed(2)} mm` : '',
@@ -341,6 +354,7 @@ async function load(s: SliceResult | null) {
   const cp = colorPrintSlots(data, toolColors.value);
   renderer.setToolColors(cp?.colors ?? toolColors.value);
   const first = renderer.setData(cp ? markRaw({ ...data, tool: cp.tool }) : data);
+  renderer.setModelMatrix(beltMatrix());
   // Frame the first result; keep the user's camera on re-slices.
   if (!framed) { renderer.view('iso'); framed = true; }
   await first;
@@ -386,11 +400,62 @@ function applyOptions(o: LegendOptions) {
   renderer.setMarkers(o.retracts, o.seams, o.unretracts);
   renderer.setDimBelow(o.dimBelow ? 0.55 : 0);
   renderer.setToolheadEnabled(o.toolMarker);
+  renderer.setTranslucentFilaments(o.translucent);
 }
 watch(featureVisible, () => renderer?.setFeatureVisibility(effectiveVisibility()), { deep: true });
 watch(options, applyOptions, { deep: true });
 watch(legendToolColors, (c) => renderer?.setToolColors(c));
 watch(resolvedConfig, (cfg) => renderer?.setBed(bedFromConfig(cfg)));
+// Orca 2.5 belt printers: the print is shown upright ("designed": the toolpaths back-transformed onto
+// the model), or as written with the raw G-code option (layers along the belt). The file's own config wins.
+const beltBack = computed(() => {
+  const p = parsed.value;
+  if (!p || !((p.header.beltTiltAngle ?? 0) > 0)) return null;
+  const cfg = { ...resolvedConfig.value, ...p.header.config };
+  return beltBackTransform(cfg, bedFromConfig(cfg), cfgNumber(cfg, 'printable_height', SCALAR, 0));
+});
+/** Plate-local box of the shown plate's printable objects (anchors the designed view), or null. */
+function plateModelBox(): { min: [number, number, number]; max: [number, number, number] } | null {
+  const [ox, oy] = plateOffset(activePlate.value, plates.value.length, bed.value);
+  let box: { min: [number, number, number]; max: [number, number, number] } | null = null;
+  for (const o of objectsOnPlate(activePlate.value)) {
+    const i = objectInfo.value.get(o.id);
+    if (!o.printable || !i) continue;
+    const mn: [number, number, number] = [i.min[0] - ox, i.min[1] - oy, i.min[2]], mx: [number, number, number] = [i.max[0] - ox, i.max[1] - oy, i.max[2]];
+    box = box ? { min: [Math.min(box.min[0], mn[0]), Math.min(box.min[1], mn[1]), Math.min(box.min[2], mn[2])], max: [Math.max(box.max[0], mx[0]), Math.max(box.max[1], mx[1]), Math.max(box.max[2], mx[2])] } : { min: mn, max: mx };
+  }
+  return box;
+}
+function beltMatrix(): Matrix4 | null {
+  const back = beltBack.value, p = parsed.value;
+  if (!back || !p || options.value.beltRaw) return null;
+  return beltDesignedMatrix(p, back, plateModelBox());
+}
+// The layer slider keeps its layer: only the drawing changes.
+watch([beltBack, () => options.value.beltRaw], () => renderer?.setModelMatrix(beltMatrix()));
+// Orca 2.5 IDEX/IQEX: the shown plate's parallel mode — the other carriages' copies of T0's toolpaths, their toolheads and the zones.
+const previewImex = computed(() => {
+  const cfg = resolvedConfig.value;
+  const mode = effectiveImexMode(cfg, plates.value[activePlate.value]?.config);
+  if (!mode) return null;
+  const bed = bedFromConfig(cfg);
+  const layout = computeImexZoneLayout(cfg, mode, bed);
+  if (!layout.primaryZone) return null;
+  const c = imexCarriages(cfg, mode, layout, bed);
+  const theme = imexTheme(cfg);
+  return {
+    layout, theme,
+    copies: imexHeadTransforms(cfg, mode, layout, bed),
+    carriages: c && { size: c.size, list: c.carriages, colours: c.carriages.map((_, k) => CARRIAGE_COLOURS[k % CARRIAGE_COLOURS.length]) },
+    key: JSON.stringify([mode, layout.copyZones, layout.mirrorZones, layout.collisionZones, layout.marginBands, c, theme]),
+  };
+});
+function applyImex(): void {
+  const v = previewImex.value;
+  renderer?.setImex(v && { copies: v.copies, carriages: v.carriages, zones: buildImexZones(v.layout, v.theme) });
+}
+watch(() => previewImex.value?.key, applyImex);
+watch(() => options.value.imexToolheads, (on) => renderer?.setCarriageBoxesVisible(on));
 watch(lastSlice, (s) => { void load(s); });
 
 function toggleFeature(id: number) {
@@ -422,7 +487,6 @@ function pickLine(offset: number) {
 
 let offCamera: (() => void) | null = null;
 let offCameraPrefs: (() => void) | null = null;
-const unregisterActions = registerPreviewActions();
 
 onMounted(() => {
   if (!host.value) return;
@@ -430,6 +494,7 @@ onMounted(() => {
     renderer = new PreviewRenderer(host.value, {
       onBuildProgress: (f) => { if (phase.value === 'uploading') progress.value = f; },
       onContextLost: (lost) => { contextLost.value = lost; },
+      onSectionWheel: (dir) => setSectionRatio(viewportState.section.ratio + dir * 0.01),
     });
   } catch (e) {
     phase.value = 'error';
@@ -440,6 +505,8 @@ onMounted(() => {
   if (import.meta.env.DEV) (window as unknown as { __previewRenderer?: PreviewRenderer }).__previewRenderer = renderer;
   renderer.setBed(bedFromConfig(resolvedConfig.value));
   renderer.setToolColors(toolColors.value);
+  applyImex();
+  renderer.setCarriageBoxesVisible(options.value.imexToolheads);
   applyOptions(options.value);
   offCamera = onCameraCommand((c) => {
     if (c.kind === 'fit') renderer?.fit(); else renderer?.view(c.preset);
@@ -473,12 +540,17 @@ onBeforeUnmount(() => {
   offCameraPrefs?.();
   offCameraPrefs = null;
   parsed.value = null;
-  unregisterActions();
   cube?.dispose();
   cube = null;
   renderer?.dispose();
   renderer = null;
   rendererRef.value = null;
+});
+
+// Orca 2.5 section view, shared with Prepare: the plane is aimed from whichever view shows.
+watch([() => viewportState.section.ratio, () => viewportState.section.normal, rendererRef], ([r, n, rr]) => rr?.setSection(r, n), { immediate: true });
+watch(() => viewportState.section.aim, () => {
+  if (activeView.value === 'preview' && renderer) viewportState.section.normal = renderer.cameraFacing();
 });
 
 function setView(v: ViewPreset) { cameraCommand({ kind: 'view', preset: v }); }
@@ -552,6 +624,7 @@ function fit() { cameraCommand({ kind: 'fit' }); }
   z-index: 2;
 }
 .pv-left > * { pointer-events: auto; }
+.pv-section { position: absolute; left: 10px; bottom: 56px; z-index: 3; }
 .pv-topright {
   pointer-events: none;
   position: absolute;

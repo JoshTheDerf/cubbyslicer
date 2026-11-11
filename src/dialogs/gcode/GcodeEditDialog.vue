@@ -7,6 +7,7 @@
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import { mobileDialog } from '../../ui/mobileDialog';
+import AppDialog from '../../ui/AppDialog.vue';
 import { currentPresets } from '../../presets/store';
 import { settingsLayout } from '../../settings/useLayout';
 import { filterTree, insertionText, insideBraces, placeholderTree, type PlaceholderGroup, type PlaceholderItem } from './placeholders';
@@ -72,9 +73,9 @@ function apply(): void { emit('apply', draft.value); close(); }
 </script>
 
 <template>
-  <UModal :open="open" :title="`Edit custom G-code (${optKey})`" :description="title" :dismissible="false" :fullscreen="mobileDialog"
-          :ui="{ content: 'sm:max-w-6xl', body: 'p-0 sm:p-0 phone:p-0 phone:flex phone:flex-col phone:overflow-hidden' }" @update:open="(o: boolean) => { if (!o) close(); }">
-    <template #body>
+  <AppDialog :open="open" :title="`Edit custom G-code (${optKey})`" :description="title" :dismissible="false" size="6xl" fullscreen
+             body-class="p-0 sm:p-0 phone:p-0 phone:flex phone:flex-col phone:overflow-hidden" @update:open="(o: boolean) => { if (!o) close(); }"
+             confirm-label="Apply" :confirm-disabled="disabled" @confirm="apply">
       <!-- Phones: the editor and the placeholder list take turns (one scroll region at a time). -->
       <UTabs v-if="mobileDialog" :model-value="showTree ? 'tree' : 'code'" :items="[{ value: 'code', label: `G-code (${lines} line${lines === 1 ? '' : 's'})` }, { value: 'tree', label: 'Placeholders' }]"
              :content="false" size="sm" class="ge__tabs" @update:model-value="(v: string | number) => { showTree = v === 'tree'; }" />
@@ -136,14 +137,7 @@ function apply(): void { emit('apply', draft.value); close(); }
           <textarea ref="ta" v-model="draft" class="ge__ta" spellcheck="false" :wrap="mobileDialog ? 'soft' : 'off'" :disabled="disabled" :aria-label="title" @keydown="onKey" />
         </div>
       </div>
-    </template>
-    <template #footer>
-      <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="close" />
-        <UButton color="primary" label="Apply" :disabled="disabled" @click="apply" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

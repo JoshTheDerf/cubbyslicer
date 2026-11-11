@@ -18,7 +18,9 @@ import { mobileDialog } from '../ui/mobileDialog';
 import {
   addCustomGcode, clearCustomGcodes, nextChangeColor, plateCustomGcodes, removeCustomGcode, updateCustomGcode,
 } from '../plates/store';
-import { hexCss, toolColorsFromConfig } from './render/colors';
+import { toolColorsFromConfig, toolPrimary } from './render/colors';
+import { toHex } from '../lib/colour';
+import { SCALAR, cfgString, valueCount } from '../lib/configValue';
 import { layerOfZ, zOfLayer } from './customGcode';
 import { previewData, setTopLayer } from './store';
 
@@ -26,10 +28,9 @@ const items = computed(() => plateCustomGcodes(activePlate.value));
 const colors = computed(() => toolColorsFromConfig(resolvedConfig.value));
 const filamentCount = computed(() => {
   const v = resolvedConfig.value.filament_colour ?? resolvedConfig.value.extruder_colour;
-  return Math.max(1, Array.isArray(v) ? v.length : String(v ?? '').split(/[;,]/).filter(Boolean).length || 1);
+  return Math.max(1, valueCount(v, { serialized: true }));
 });
-const cfgStr = (k: string) => { const v = resolvedConfig.value[k]; return (Array.isArray(v) ? v[0] : v) ?? ''; };
-const hasTemplate = computed(() => !!cfgStr('template_custom_gcode').trim());
+const hasTemplate = computed(() => !!cfgString(resolvedConfig.value, 'template_custom_gcode', SCALAR).trim());
 /**
  * Engines with a `color_change_gcode` (preFlight / PrusaSlicer) emit M600 for colour changes.
  * OrcaSlicer (BBS lineage) has none: its slider changes colour by changing to another
@@ -77,7 +78,8 @@ function openMenu(e: { x: number; y: number; layer: number }): void {
 
 /** A filament colour dot as an avatar image (DropdownMenu has no swatch slot). */
 const swatch = (i: number) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="${hexCss(colors.value[i] ?? 0x999999)}" stroke="rgba(0,0,0,.4)"/></svg>`;
+  const c = toolPrimary(colors.value[i]);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="${toHex(c, 'never')}" fill-opacity="${(c.a / 255).toFixed(2)}" stroke="rgba(0,0,0,.4)"/></svg>`;
   return { src: `data:image/svg+xml,${encodeURIComponent(svg)}`, alt: '' };
 };
 function filamentItems(onPick: (i: number) => void, current?: number): DropdownMenuItem[] {

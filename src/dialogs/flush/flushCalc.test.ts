@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   autoFlushMatrix, autoFlushUpdate, calcFlushVolume, deltaE2000, flattenMatrices, FLUSH_TO_SUPPORT, matrixSize, MIN_FLUSH_FROM_SUPPORT,
-  minFlushVolumes, nozzleMatrix, parseColour, resizeFlat,
+  minFlushVolumes, nozzleMatrix, resizeFlat,
 } from './flushCalc';
 
 describe('flush volume calculator (FlushVolCalc.cpp)', () => {
-  it('parses colours', () => {
-    expect(parseColour('#FF8000')).toEqual({ r: 255, g: 128, b: 0, a: 255 });
-    expect(parseColour('#00000000').a).toBe(0);
-    expect(parseColour('#abc')).toEqual({ r: 0xaa, g: 0xbb, b: 0xcc, a: 255 });
+  it('treats transparent and unparseable colours as white', () => {
+    expect(calcFlushVolume('#FFFFFF00', '#000000', 0, 0)).toBe(calcFlushVolume('#FFFFFF', '#000000', 0, 0));
+    expect(calcFlushVolume('nope', '#000000', 0, 0)).toBe(calcFlushVolume('#FFFFFF', '#000000', 0, 0));
   });
 
   it('uses the measured table for known colours (dataset 0)', () => {
@@ -83,5 +82,58 @@ describe('multi-nozzle variants', () => {
     expect(extruderVariantIndex(cfg, 1)).toBe(3);
     expect(flushDataset(cfg, 1)).toBe(2);
     expect(extruderVariantIndex({}, 1)).toBe(1);
+  });
+  it('min flush reads the nozzle volume of the extruder\'s variant and each filament\'s own column', () => {
+    const cfg = {
+      printer_extruder_id: ['1', '1', '2', '2'],
+      printer_extruder_variant: ['Direct Drive Standard', 'Direct Drive High Flow', 'Direct Drive Standard', 'Direct Drive High Flow'],
+      nozzle_diameter: ['0.4', '0.4'], nozzle_volume_type: ['Standard', 'High Flow'], nozzle_volume: ['130', '133', '145', '148'],
+      enable_long_retraction_when_cut: '2', long_retractions_when_cut: ['0', '0', '0', '1'], retraction_distances_when_cut: ['10', '10', '10', '18'],
+      // Filament 1: one column; filament 2: two columns (Standard / High Flow), printing on extruder 2.
+      filament_extruder_variant: ['Direct Drive Standard', 'Direct Drive Standard', 'Direct Drive High Flow'],
+      filament_self_index: ['1', '2', '2'], filament_map: ['1', '2'],
+      filament_long_retractions_when_cut: ['0', '0', '1'], filament_retraction_distances_when_cut: ['5', '5', '12'],
+    };
+    const [a, b] = minFlushVolumes(cfg, 1, 2);
+    expect(a).toBe(148);
+    expect(b).toBe(Math.trunc(148 - (Math.PI * 1.75 * 1.75) / 4 * 12));
+  });
+});
+
+describe('mixed filament slots', () => {
+  it('reads the physical block of a matrix over every slot (mixed slots never flush)', async () => {
+    const { physicalBlock } = await import('./flushCalc');
+    // 3 slots (2 physical + 1 mixed), 2 nozzles.
+    const flat = [0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 3, 0, 4, 0, 0, 0, 0, 0];
+    expect(physicalBlock(flat, 2, 2)).toEqual([0, 1, 2, 0, 0, 3, 4, 0]);
+    expect(physicalBlock([0, 5, 6, 0], 2, 1)).toEqual([0, 5, 6, 0]);
+    expect(physicalBlock([1, 2, 3], 2, 1)).toEqual([1, 2, 3]);
+  });
+  it('picks a project\'s physical slots wherever the mixed ones sit (project open)', async () => {
+    const { slotBlock } = await import('./flushCalc');
+    // 3 slots, the mix in the middle: physical slots 0 and 2.
+    const flat = [0, 11, 12, 21, 0, 23, 31, 32, 0];
+    expect(slotBlock(flat, [0, 2], 1)).toEqual([0, 12, 31, 0]);
+    expect(slotBlock(flat, [0, 1, 2], 1)).toEqual(flat);
+    expect(slotBlock(flat, [0, 3], 1)).toBeNull();
+    expect(slotBlock([1, 2, 3], [0], 1)).toBeNull();
+  });
+});
+
+describe('matrix sized for the slice (the engine refuses any other size)', () => {
+  it('fits a missing, single-nozzle or stale matrix to filaments² × nozzles', async () => {
+    const { fitFlushMatrix } = await import('./flushCalc');
+    const ok = [0, 1, 2, 0, 0, 3, 4, 0];
+    expect(fitFlushMatrix(ok, 2, 2)).toBe(ok);
+    // No project matrix (IDEX copy / mirror regression: the job carried none).
+    expect(fitFlushMatrix([], 2, 2)).toEqual([0, 280, 280, 0, 0, 280, 280, 0]);
+    // A 2×2 block for one nozzle is repeated per nozzle.
+    expect(fitFlushMatrix([0, 5, 6, 0], 2, 2)).toEqual([0, 5, 6, 0, 0, 5, 6, 0]);
+    // A 4×4 single-nozzle default on 2 filaments × 2 nozzles: its leading block, per nozzle.
+    const four = Array.from({ length: 16 }, (_, i) => (i % 5 === 0 ? 0 : 280 + i));
+    expect(fitFlushMatrix(four, 2, 2)).toEqual([0, 281, 284, 0, 0, 281, 284, 0]);
+    // Filament count changed on a 2-nozzle matrix: surviving pairs kept per nozzle.
+    expect(fitFlushMatrix(ok, 3, 2)).toEqual([0, 1, 280, 2, 0, 280, 280, 280, 0, 0, 3, 280, 4, 0, 280, 280, 280, 0]);
+    expect(fitFlushMatrix([], 1, 1)).toEqual([0]);
   });
 });

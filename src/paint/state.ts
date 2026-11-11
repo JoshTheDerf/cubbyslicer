@@ -5,7 +5,6 @@
  */
 import { reactive } from 'vue';
 import type { PaintLayer } from '../engine/types';
-import { activeEngine } from '../app/state';
 
 export type PaintTool = 'circle' | 'sphere' | 'fill' | 'bucket' | 'height' | 'pointer';
 
@@ -58,8 +57,10 @@ export function stateFor(layer: PaintLayer, button: number, shift: boolean): num
   return button === 2 ? 2 : 1; // support / seam: enforcer / blocker
 }
 
+/** Colour states are filament numbers: Orca 2.5's TriangleSelector stops at EnforcerBlockerType::ExtruderMax = 32. */
+export const MAX_COLOR_STATE = 32;
+
 /** Highest engine state a layer uses (TriangleSelector serialisation range). */
 export function maxStateFor(layer: PaintLayer): number {
-  // Colour states are filament numbers: Orca's TriangleSelector stops at 16, Full Spectrum's (mixed filaments) at 255.
-  return layer === 'color' ? (activeEngine.value === 'fullspectrum' ? 64 : 16) : layer === 'fuzzy' ? 1 : 2;
+  return layer === 'color' ? MAX_COLOR_STATE : layer === 'fuzzy' ? 1 : 2;
 }

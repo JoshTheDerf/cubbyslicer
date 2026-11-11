@@ -4,7 +4,7 @@
  * boolean / brim ears) and the live PrepareScene the tools draw into.
  */
 import { Vector3 } from 'three';
-import { reactive, shallowRef } from 'vue';
+import { onBeforeUnmount, reactive, shallowRef } from 'vue';
 import type { PrepareScene, ToolHandler } from '../viewport/scene';
 
 export type ToolId = 'measure' | 'text' | 'svg' | 'simplify' | 'boolean' | 'brim' | 'cut' | 'assembly';
@@ -29,6 +29,26 @@ export const toolState = reactive({
 });
 
 export const toolScene = shallowRef<PrepareScene | null>(null);
+
+/**
+ * Keys the open tool panel answers, dispatched by the action registry (the
+ * `tool.*` actions in src/app/actions/families/toolKeys.ts) instead of a
+ * window listener of the panel's own, so they show in the shortcuts help and
+ * go through the lint. Esc always closes the tool.
+ */
+export interface ToolKeys {
+  /** Delete / Backspace: delete the tool's own selection (connectors, ears) when there is one. */
+  deleteSelected?: { title: string; available: () => boolean; run: () => void };
+  /** Enter: the tool's main action (Perform cut). */
+  confirm?: { title: string; available: () => boolean; run: () => void | Promise<void> };
+}
+export const toolKeys = shallowRef<ToolKeys | null>(null);
+
+/** Called from a tool panel's setup: its keys work while it is mounted. */
+export function useToolKeys(keys: ToolKeys): void {
+  toolKeys.value = keys;
+  onBeforeUnmount(() => { if (toolKeys.value === keys) toolKeys.value = null; });
+}
 
 /** PrepareViewport registers its scene here. */
 export function bindToolScene(s: PrepareScene | null): void {

@@ -14,7 +14,7 @@ import type { ToolPointerEvent } from '../../viewport/scene';
 import { touch } from '../../app/shell/uiState';
 import { toast } from '../../ui';
 import ToolPanel from '../ToolPanel.vue';
-import { closeTool, installHandler, toolScene } from '../state';
+import { closeTool, installHandler, toolScene, useToolKeys } from '../state';
 import { COLORS, ToolOverlay, circleLine, polyline, render } from '../overlay';
 import type { Loop } from '../brim/brimEars';
 import {
@@ -165,12 +165,10 @@ async function cut(): Promise<void> {
   } finally { busy.value = false; }
 }
 
-function onKey(e: KeyboardEvent): void {
-  const t = e.target as HTMLElement | null;
-  if (t?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedConnector.value >= 0) { e.preventDefault(); e.stopImmediatePropagation(); removeSelected(); }
-  if (e.key === 'Enter' && !e.repeat) { e.preventDefault(); void cut(); }
-}
+useToolKeys({
+  deleteSelected: { title: 'Remove selected connector', available: () => selectedConnector.value >= 0, run: removeSelected },
+  confirm: { title: 'Perform cut', available: () => !!objId.value && check.value.ok && !busy.value, run: cut },
+});
 
 // Changing the selection to another single object retargets the tool.
 watch(selectedIds, (ids) => {
@@ -185,10 +183,9 @@ watch([() => JSON.stringify(s), loops, tab, selectedConnector], draw);
 watch(toolScene, () => { installHandler({ onPointer, hideGizmo: true, cursor: 'crosshair' }); draw(); });
 onMounted(() => {
   installHandler({ onPointer, hideGizmo: true, cursor: 'crosshair' });
-  window.addEventListener('keydown', onKey, true);
   draw();
 });
-onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydown', onKey, true); overlay.dispose(); });
+onBeforeUnmount(() => { installHandler(null); overlay.dispose(); });
 </script>
 
 <template>

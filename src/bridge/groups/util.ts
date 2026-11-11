@@ -9,7 +9,7 @@
  */
 import { argString, type JsonSchema } from '@cubby/shared/bridge';
 import type { ConfigValue } from '../../engine/types';
-import { resolvedConfig } from '../../app/state';
+import { SCALAR, valueAt } from '../../lib/configValue';
 import { currentPresets, presetsSettled } from '../../presets/store';
 import type { PresetInfo } from '../../presets/types';
 import {
@@ -113,8 +113,7 @@ export function filamentRows() {
 }
 
 function extruderOf(ov: Record<string, ConfigValue>): number | undefined {
-  const v = ov.extruder;
-  const n = parseInt(String(Array.isArray(v) ? v[0] : v ?? ''), 10);
+  const n = parseInt(valueAt(ov.extruder, SCALAR) ?? '', 10);
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
@@ -172,14 +171,9 @@ export function objectDetail(id: string) {
     emboss: o.emboss ? (o.emboss.kind === 'text' ? { kind: 'text', text: o.emboss.text } : { kind: 'svg', name: o.emboss.name }) : undefined,
     // CubbyCAD shape: get_cad_tree / get_node / set_node edit it.
     cad: o.cad ? { rootNodeId: o.cad.node.id, kind: o.cad.node.type === 'group' ? 'group' : String((o.cad.node as { geometry?: { type?: string } }).geometry?.type ?? o.cad.node.type), hole: o.cad.node.contribution === 'subtract' || undefined } : undefined,
+    // Design tab body (design_* tools): the feature that made it; edits there replace this mesh.
+    design: o.design ? { sourceFeature: o.design.sourceFeature, ordinal: o.design.ordinal, body: o.design.body } : undefined,
   };
-}
-
-/** A resolved config value as a plain number (first element of a vector). */
-export function cfgNumber(key: string, fallback: number): number {
-  const v = resolvedConfig.value[key];
-  const n = parseFloat(String(Array.isArray(v) ? v[0] : v ?? ''));
-  return Number.isFinite(n) ? n : fallback;
 }
 
 export type { Vec3 };

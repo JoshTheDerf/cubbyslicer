@@ -6,19 +6,18 @@
  * states for colour painting.
  */
 
+import { parseColour, toHex } from '../../lib/colour';
+
 export type RGB = [number, number, number];
 
+/** Colour string → RGB tuple (alpha ignored), or null. */
 export function hexToRgb(hex: string): RGB | null {
-  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(hex.trim());
-  if (!m) return null;
-  let h = m[1];
-  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  const c = parseColour(hex);
+  return c ? [c.r, c.g, c.b] : null;
 }
 
 export function rgbToHex([r, g, b]: RGB): string {
-  const c = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
-  return `#${c(r)}${c(g)}${c(b)}`.toUpperCase();
+  return toHex({ r, g, b }, 'never');
 }
 
 /** sRGB (0–255) → CIE Lab (D65). */

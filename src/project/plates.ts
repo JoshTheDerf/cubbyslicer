@@ -7,6 +7,8 @@
  */
 import type { BedShape } from '../app/state';
 import type { ConfigValue, CustomGcodeItem } from '../engine/types';
+import type { ElementPassthrough } from './types';
+import { SCALAR, toBool, valueAt } from '../lib/configValue';
 
 export interface PlateMeta {
   /** '' = "Plate N". */
@@ -16,11 +18,15 @@ export interface PlateMeta {
   /**
    * Per-plate config overrides (Orca PartPlate::m_config via PlateSettingsDialog:
    * curr_bed_type, print_sequence, spiral_mode, first/other layer filament
-   * sequence). Applied over the resolved config when this plate is sliced.
+   * sequence; 2.5: imex_parallel_mode, imex_head_filament_map, filament_map_mode,
+   * filament_map, filament_volume_map). Applied over the resolved config when
+   * this plate is sliced.
    */
   config?: Record<string, ConfigValue>;
   /** Colour changes / pauses / custom G-code on the preview's layer slider (Orca CustomGCode::Info per plate). */
   customGcodes?: CustomGcodeItem[];
+  /** Plate metadata from an opened 3MF this engine doesn't know, written back verbatim. Immutable. */
+  passthrough?: ElementPassthrough;
 }
 
 /** Orca LOGICAL_PART_PLATE_GAP. */
@@ -36,7 +42,35 @@ export function clonePlate(p: PlateMeta): PlateMeta {
     out.config = Object.fromEntries(Object.entries(p.config).map(([k, v]) => [k, Array.isArray(v) ? [...v] : v]));
   }
   if (p.customGcodes?.length) out.customGcodes = p.customGcodes.map((g) => ({ ...g }));
+  if (p.passthrough) out.passthrough = p.passthrough; // immutable, shared
   return out;
+}
+
+/**
+ * Whether plates may override the bed type: Bambu printers, or printers with
+ * `support_multi_bed_types` (Orca 2.5 Plater::normalize_bed_types).
+ */
+export function platesMayOverrideBedType(printer: { vendor?: string; config: Record<string, ConfigValue | undefined> }): boolean {
+  if (printer.vendor === 'BBL') return true;
+  return toBool(valueAt(printer.config.support_multi_bed_types, SCALAR));
+}
+
+/**
+ * Drop per-plate bed types on a printer that has a single bed type (Orca
+ * resets them to the global one and says so). Returns the new list, and
+ * whether anything was reset.
+ */
+export function resetPlateBedTypes(list: PlateMeta[]): { plates: PlateMeta[]; reset: boolean } {
+  let reset = false;
+  const plates = list.map((p) => {
+    if (!p.config || !('curr_bed_type' in p.config)) return p;
+    reset = true;
+    const { curr_bed_type: _, ...rest } = p.config;
+    const out = { ...p };
+    if (Object.keys(rest).length) out.config = rest; else delete out.config;
+    return out;
+  });
+  return { plates, reset };
 }
 
 export function plateLabel(p: PlateMeta | undefined, i: number): string {

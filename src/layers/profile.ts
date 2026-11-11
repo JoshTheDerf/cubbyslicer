@@ -10,6 +10,7 @@
  * and drive the manual editor + preview, which Orca also runs in the GUI.
  */
 import type { ConfigValue, FlatConfig } from '../engine/types';
+import { SCALAR, toNumber, valueAt } from '../lib/configValue';
 
 export const EPSILON = 1e-4;
 const MIN_LAYER_HEIGHT = 0.01;
@@ -44,37 +45,30 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const approx = (a: number, b: number, eps = EPSILON) => Math.abs(a - b) < eps;
 
-function scalar(v: ConfigValue | undefined, idx = 0): number {
-  if (v === undefined) return NaN;
-  const s = Array.isArray(v) ? (v[idx] ?? v[0]) : String(v).split(/[,;]/)[idx] ?? String(v).split(/[,;]/)[0];
-  const n = parseFloat(String(s ?? ''));
-  return Number.isFinite(n) ? n : NaN;
-}
-
 /**
  * SlicingParameters::create_from_config for one object (supports / extra
  * extruders ignored, as Orca's editor bar does for plain objects).
  * `config` = resolved global config, `overrides` = the object's own.
  */
 export function slicingParams(config: FlatConfig, overrides: Record<string, ConfigValue> | undefined, objectHeight: number): SlicingParams {
-  const get = (k: string, idx = 0) => {
-    const o = overrides?.[k];
-    const v = scalar(o, idx);
-    return Number.isFinite(v) ? v : scalar(config[k], idx);
+  const num = (v: ConfigValue | undefined, idx: number) => toNumber(valueAt(v, idx, { serialized: true }));
+  const get = (k: string, idx: number) => {
+    const v = num(overrides?.[k], idx);
+    return Number.isFinite(v) ? v : num(config[k], idx);
   };
-  let layerHeight = get('layer_height');
+  let layerHeight = get('layer_height', SCALAR);
   if (!(layerHeight > 0)) layerHeight = 0.2;
-  let first = get('initial_layer_print_height');
-  if (!Number.isFinite(first)) first = get('first_layer_height');
+  let first = get('initial_layer_print_height', SCALAR);
+  if (!Number.isFinite(first)) first = get('first_layer_height', SCALAR);
   if (!(first > 0)) first = layerHeight;
-  const extruder = Math.max(1, Math.round(get('extruder')) || 1);
+  const extruder = Math.max(1, Math.round(get('extruder', SCALAR)) || 1);
   const nozzleIdx = extruder - 1;
   const minCfg = get('min_layer_height', nozzleIdx);
   const minNozzle = !(minCfg > 0) ? MIN_LAYER_HEIGHT_DEFAULT : Math.max(MIN_LAYER_HEIGHT, minCfg);
   const maxCfg = get('max_layer_height', nozzleIdx);
   const nozzle = get('nozzle_diameter', nozzleIdx);
   const maxNozzle = Math.max(minNozzle, !(maxCfg > 0) ? 0.75 * (nozzle > 0 ? nozzle : 0.4) : maxCfg);
-  const raft = get('raft_layers') > 0;
+  const raft = get('raft_layers', SCALAR) > 0;
   return {
     layerHeight,
     firstLayerHeight: raft ? layerHeight : first,

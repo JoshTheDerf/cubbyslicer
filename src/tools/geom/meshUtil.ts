@@ -1,4 +1,8 @@
-/** Small mesh helpers shared by the tools (closedness / volume checks, compaction, transforms). */
+/**
+ * Mesh buffer helpers shared by the tools and calibration: closedness / volume
+ * checks, compaction, transforms, merging. Import-time helpers (welding,
+ * bounds, recentring, triangle budgets) are in `project/mesh.ts`.
+ */
 import type { MeshArrays } from './extrude';
 
 /** Signed volume (positive for an outward-wound closed mesh). */
@@ -32,26 +36,33 @@ export function isClosedManifold(indices: ArrayLike<number>): boolean {
   return true;
 }
 
-/** Drop unreferenced vertices (after simplification / booleans). */
-export function compactMesh(positions: Float32Array, indices: Uint32Array): MeshArrays {
+/**
+ * Drop unreferenced vertices (after simplification / booleans / cuts), renumbering
+ * them in first-use order. `dropDegenerate` also drops triangles with a repeated index.
+ */
+export function compactMesh(positions: ArrayLike<number>, indices: ArrayLike<number>, opts?: { dropDegenerate?: boolean }): MeshArrays {
   const remap = new Int32Array(positions.length / 3).fill(-1);
-  let n = 0;
+  let n = 0, k = 0;
   const idx = new Uint32Array(indices.length);
-  for (let i = 0; i < indices.length; i++) {
-    const v = indices[i];
-    if (remap[v] < 0) remap[v] = n++;
-    idx[i] = remap[v];
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = indices[t], b = indices[t + 1], c = indices[t + 2];
+    if (opts?.dropDegenerate && (a === b || b === c || a === c)) continue;
+    for (let j = 0; j < 3; j++) {
+      const v = indices[t + j];
+      if (remap[v] < 0) remap[v] = n++;
+      idx[k++] = remap[v];
+    }
   }
   const pos = new Float32Array(n * 3);
   for (let v = 0; v < remap.length; v++) {
     const r = remap[v];
     if (r >= 0) { pos[r * 3] = positions[v * 3]; pos[r * 3 + 1] = positions[v * 3 + 1]; pos[r * 3 + 2] = positions[v * 3 + 2]; }
   }
-  return { positions: pos, indices: idx };
+  return { positions: pos, indices: k === idx.length ? idx : idx.slice(0, k) };
 }
 
 /** Apply a column-major 4x4 to a copy of the positions. */
-export function transformed(positions: Float32Array, m: ArrayLike<number>): Float32Array {
+export function transformed(positions: ArrayLike<number>, m: ArrayLike<number>): Float32Array {
   const out = new Float32Array(positions.length);
   for (let i = 0; i < positions.length; i += 3) {
     const x = positions[i], y = positions[i + 1], z = positions[i + 2];

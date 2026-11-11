@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Orca's title / menu bar: brand + menus + quick buttons (save, undo, redo)
- * on the left, the Prepare | Preview switch centred, and the slice controls
+ * on the left, the Design | Prepare | Preview switch centred, and the slice controls
  * (progress, "Slice plate", "Export G-code") at the far right.
  */
 import { computed } from 'vue';
@@ -16,16 +16,32 @@ import { cloud, isCloudDirty } from '../../cloud/store';
 import { isLocalDirty, local } from '../../localfs/store';
 import { cloudOpenDialog } from '../../cloud/commands';
 import BridgeChip from '../../bridge/BridgeChip.vue';
+import { activePluginPage, pluginPages } from '../../plugins/state';
+import { preferences } from '../preferences';
 
-const views = [
+/** Plugin page tabs shown before the rest go into "More" (Orca's "Visible plugin pages"). */
+const VISIBLE_PAGES = 3;
+const views = computed(() => [
+  // Orca 2.5's Design tab (experimental, src/design): first, as in Orca's tab order.
+  ...(preferences.designTab ? [{ value: 'design', label: 'Design', icon: 'i-lucide-pencil-ruler', ...(compact.value ? {} : { badge: { label: 'Exp', color: 'warning' as const, variant: 'subtle' as const, size: 'sm' as const } }), 'aria-label': 'Design (experimental)', 'data-testid': 'tab-design' }] : []),
   { value: 'prepare', label: 'Prepare', icon: 'i-lucide-box' },
   { value: 'preview', label: 'Preview', icon: 'i-lucide-layers' },
-];
+  // Orca 2.5 plugin pages (Pages capabilities), beside Prepare / Preview.
+  ...pluginPages.value.slice(0, VISIBLE_PAGES).map((t) => ({ value: `page:${t.key}`, label: t.name, icon: 'i-lucide-panels-top-left' })),
+]);
+const morePages = computed(() => [pluginPages.value.slice(VISIBLE_PAGES).map((t) => ({
+  label: t.name, icon: 'i-lucide-panels-top-left', onSelect: () => { activePluginPage.value = t.key; },
+}))]);
 // Narrow screens: icon-only view switch.
-const viewItems = computed(() => (phone.value ? views.map((v) => ({ ...v, label: '' , 'aria-label': v.label })) : views));
+const viewItems = computed(() => (phone.value ? views.value.map((v) => ({ ...v, label: '' , 'aria-label': v.label })) : views.value));
 const view = computed({
-  get: () => activeView.value,
-  set: (v: string | number) => { activeView.value = v === 'preview' ? 'preview' : 'prepare'; },
+  get: () => (activePluginPage.value ? `page:${activePluginPage.value}` : activeView.value),
+  set: (v: string | number) => {
+    const s = String(v);
+    if (s.startsWith('page:')) { activePluginPage.value = s.slice(5); return; }
+    activePluginPage.value = null;
+    activeView.value = s === 'preview' ? 'preview' : s === 'design' ? 'design' : 'prepare';
+  },
 });
 
 // Where the project lives in CubbyCAD (click: open another file there).
@@ -66,8 +82,12 @@ function onName(e: Event) {
     </div>
 
     <div class="top__center">
-      <UTabs v-model="view" :items="viewItems" :content="false" size="sm" variant="pill" color="neutral"
+      <!-- Manual activation: focus coming back to a tab (closing the palette, a dialog) must not switch views. -->
+      <UTabs v-model="view" :items="viewItems" :content="false" size="sm" variant="pill" color="neutral" activation-mode="manual"
              :ui="{ list: 'bg-elevated/60 p-0.5', indicator: 'bg-accented', trigger: `${phone ? 'px-3' : compact ? 'px-3' : 'px-5'} data-[state=active]:text-highlighted` }" aria-label="View" />
+      <UDropdownMenu v-if="morePages[0].length" :items="morePages">
+        <UButton icon="i-lucide-chevron-down" color="neutral" variant="ghost" size="sm" aria-label="More plugin pages" />
+      </UDropdownMenu>
     </div>
 
     <div class="top__right">

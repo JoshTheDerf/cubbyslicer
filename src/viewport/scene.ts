@@ -19,13 +19,23 @@ import { setPickRayFromCamera, setTouchScale, TransformGizmo } from '@cubby/shar
 import type { BedShape } from '../app/state';
 import type { Quat, Vec3 } from '../project/math';
 import type { MeshData, ProjectObject } from '../project/types';
-import { buildBed, buildBedExtras, disposeObject3D, plateLabelSprite } from './bed';
 import { plateBed, plateIndexAt } from '../project/plates';
-import { loadBedMesh, loadBedTexture } from './bedAssets';
+import { buildBeltMarks } from './belt';
 import type { BedAssets } from '../presets/types';
+import { PlateLayer } from './plateLayer';
+import { PART_COLORS, partColour } from './partStyle';
+import type { CollisionVolume } from './collisionVolumes';
+import { buildImexZones, ImexGhosts, type PlateHeads } from './imexLayer';
+import type { ImexTheme, ImexZoneLayout } from '../plates/imex';
+import { cappedPixelRatio, readGraphicsSettings } from './graphics';
+import { parseColour, toThreeColor, type RGBA } from '../lib/colour';
 import type { GizmoMode, TransformKind, ViewPreset } from './controller';
 import { readViewportTheme, type ViewportTheme } from './tokens';
 import { ViewCube } from './viewCube';
+import { TowerLayer } from './towerLayer';
+import { applyXrayState, clipBy, installXray, MassMarkerLayer, SectionView, XRAY } from './viewEffects';
+import type { MassMarker } from './massProps';
+import type { TowerView } from '../app/towerPreview';
 
 export interface SceneItem {
   obj: ProjectObject;
@@ -36,13 +46,9 @@ export interface SceneItem {
   partMeshes?: Map<string, MeshData>;
 }
 
-/** Orca-like colours for non-model volumes (translucent). */
-const PART_COLORS: Record<string, number> = {
-  negative: 0x8a8f98,
-  modifier: 0xf5c542,
-  support_blocker: 0xef5b5b,
-  support_enforcer: 0x4ea1ff,
-};
+
+/** A plate in an IDEX/IQEX parallel mode: its zones (world space) and the other carriages' maps. */
+export interface ImexPlateView extends PlateHeads { layout: ImexZoneLayout; theme: ImexTheme }
 
 export interface TransformResult { id: string; position: Vec3; rotation: Quat; scale: Vec3 }
 
@@ -60,6 +66,16 @@ export interface SceneCallbacks {
   onPartTransformEnd?(objectId: string, partId: string, t: { position: Vec3; rotation: Quat; scale: Vec3 }, kind: TransformKind): void;
   /** Gizmo drag of a CubbyCAD child node ended: its new transform in its parent node's (render) frame. */
   onCadNodeTransformEnd?(objectId: string, nodeId: string, t: { position: Vec3; rotation: Quat; scale: Vec3 }, kind: TransformKind): void;
+  /** The prime tower of `plate` was dragged to a new anchor (plate-local mm). */
+  onTowerMove?(plate: number, x: number, y: number): void;
+  /** Alt + wheel: move the section plane (desktop: ±0.01 per notch). */
+  onSectionWheel?(dir: 1 | -1): void;
+  /** Hover over an IDEX/IQEX ghost copy: its carriage (null: left it), client px. */
+  onImexGhostHover?(head: number | null, x: number, y: number): void;
+  /** A click on a ghost copy (desktop Plater::on_imex_ghost_click). */
+  onImexGhostClick?(head: number, x: number, y: number): void;
+  /** A center of mass marker was clicked (null: its details close), with its screen position (client px). */
+  onMassMarker?(m: { marker: MassMarker; x: number; y: number } | null): void;
 }
 
 /**
@@ -146,16 +162,23 @@ export class PrepareScene {
   /** The gizmo's dimension labels and rotation readout (DOM, over the canvas). */
   private labels: CSS2DRenderer;
   private theme: ViewportTheme;
-  private bedGroup: Group | null = null;
-  private bed: BedShape | null = null;
+  private plates: PlateLayer;
+  private imexGhosts = new ImexGhosts();
+  private towers: TowerLayer;
+  private towerPointer: number | null = null;
+  /** Orca 2.5 view options (viewEffects.ts). */
+  private xray = false;
+  private section = new SectionView();
+  private sectionState: { ratio: number; normal: Vector3 | null } = { ratio: 0, normal: null };
+  private massLayer = new MassMarkerLayer();
+  private pickedMarker: number | null = null;
+  private pickedAt = '';
+  private focus = false;
+  private imexPlates: ReadonlyArray<ImexPlateView | null> = [];
   private longPress: { x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null;
   private readonly touches = new Set<number>();
-  private plateCount = 1;
   /** The user has orbited / zoomed: stop auto-framing on resize. */
   private userCamera = false;
-  private activePlate = 0;
-  private bedAssets: BedAssets | null = null;
-  private bedExtrasToken = 0;
   private objectsGroup = new Group();
   private entries = new Map<string, Entry>();
   private geometries = new Map<string, { geo: BufferGeometry; refs: number }>();
@@ -199,9 +222,11 @@ export class PrepareScene {
 
   constructor(private container: HTMLElement, private cb: SceneCallbacks) {
     this.theme = readViewportTheme();
+    this.plates = new PlateLayer(this.scene, this.theme, () => this.requestRender());
     const gfx = readGraphicsSettings();
     this.pixelRatioCap = gfx.pixelRatioCap;
-    this.renderer = new WebGLRenderer({ antialias: gfx.antialias, alpha: true, powerPreference: 'high-performance' });
+    this.renderer = new WebGLRenderer({ antialias: gfx.antialias, alpha: true, powerPreference: 'high-performance', stencil: true });
+    this.renderer.localClippingEnabled = true;
     this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.domElement.classList.add('vp-canvas');
@@ -224,6 +249,10 @@ export class PrepareScene {
     this.scene.add(key, fill);
 
     this.scene.add(this.objectsGroup);
+    this.scene.add(this.imexGhosts.group);
+    this.towers = new TowerLayer(this.theme, (m) => clipBy(m, this.section));
+    this.scene.add(this.towers.group);
+    this.scene.add(this.section.caps, this.massLayer.group);
 
     // Selection bracket box (world AABB corners).
     this.selectionBox = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: this.theme.selected, depthTest: false, transparent: true, opacity: 0.9 }));
@@ -275,12 +304,23 @@ export class PrepareScene {
     const onMove = (e: PointerEvent) => this.onPointerMove(e);
     const onUp = (e: PointerEvent) => this.onPointerUp(e);
     const onCtx = (e: MouseEvent) => { e.preventDefault(); };
-    const onLeave = (e: PointerEvent) => { this.setHover(null); this.tool?.onPointer(this.toolEvent('leave', e)); };
+    const onLeave = (e: PointerEvent) => { this.setHover(null); this.cb.onImexGhostHover?.(null, 0, 0); this.towers.setHover(null); this.tool?.onPointer(this.toolEvent('leave', e)); };
     const onDbl = (e: MouseEvent) => { const hit = this.pick(e.clientX, e.clientY); if (hit) this.fitSelection(); };
+    // Alt + wheel moves the section plane (before OrbitControls zooms).
+    const onWheelCapture = (e: WheelEvent) => {
+      if (!e.altKey || e.target !== this.renderer.domElement) return;
+      e.preventDefault(); e.stopPropagation();
+      this.cb.onSectionWheel?.(e.deltaY > 0 ? -1 : 1);
+    };
+    container.addEventListener('wheel', onWheelCapture, { capture: true, passive: false });
+    this.cleanup.push(() => container.removeEventListener('wheel', onWheelCapture, { capture: true }));
     container.addEventListener('pointerdown', onDownCapture, true);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
-    const onCancel = (e: PointerEvent) => { this.touches.delete(e.pointerId); this.cancelLongPress(); };
+    const onCancel = (e: PointerEvent) => {
+      this.touches.delete(e.pointerId); this.cancelLongPress();
+      if (this.towerPointer === e.pointerId) { this.towerPointer = null; this.towers.cancelDrag(); this.requestRender(); }
+    };
     window.addEventListener('pointercancel', onCancel);
     dom.addEventListener('contextmenu', onCtx);
     dom.addEventListener('pointerleave', onLeave);
@@ -316,10 +356,7 @@ export class PrepareScene {
 
   // ---- lifecycle ----------------------------------------------------------
 
-  private pixelRatio(): number {
-    const dr = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    return this.pixelRatioCap === 0 ? Math.min(dr, 3) : Math.min(dr, this.pixelRatioCap);
-  }
+  private pixelRatio(): number { return cappedPixelRatio(this.pixelRatioCap); }
 
   dispose(): void {
     this.disposed = true;
@@ -336,7 +373,11 @@ export class PrepareScene {
     for (const g of this.geometries.values()) g.geo.dispose();
     this.entries.clear();
     this.geometries.clear();
-    if (this.bedGroup) disposeObject3D(this.bedGroup);
+    this.plates.dispose();
+    this.imexGhosts.dispose();
+    this.towers.dispose();
+    this.section.dispose();
+    this.massLayer.dispose();
     this.selectionBox.geometry.dispose();
     (this.selectionBox.material as LineBasicMaterial).dispose();
     this.faceMarker.geometry.dispose();
@@ -359,7 +400,7 @@ export class PrepareScene {
     this.viewCube?.update();
     // Until the user moves the camera, keep the plate framed (first layout,
     // rotating a phone, opening/closing the sidebar).
-    if (aspectChanged && !this.userCamera && this.bed) this.setView('iso', false);
+    if (aspectChanged && !this.userCamera && this.plates.bed) this.setView('iso', false);
     this.requestRender();
   }
 
@@ -392,6 +433,11 @@ export class PrepareScene {
       if (!this.wasVisible) this.viewCube?.update({ rebuild: true });
       this.updateCameraPlanes();
       this.gizmo.update();
+      this.imexGhosts.update();
+      if (this.massLayer.count) {
+        this.massLayer.update((p) => this.worldPerPixel(p), (p) => this.section.clips(p));
+        this.reportMarker();
+      }
       this.renderer.render(this.scene, this.camera);
       this.labels.render(this.scene, this.camera);
       this.viewCube?.render();
@@ -423,7 +469,7 @@ export class PrepareScene {
     this.requestRender();
   }
 
-  setBed(bed: BedShape): void { this.setPlates(bed, this.plateCount, this.activePlate); }
+  setBed(bed: BedShape): void { this.setPlates(bed, this.plates.count, this.plates.active); }
 
   /**
    * Plates (see project/plates.ts): `count` copies of the bed laid out in
@@ -431,82 +477,113 @@ export class PrepareScene {
    * Callers refit the camera (fitBed) when the user picks a plate explicitly.
    */
   setPlates(bed: BedShape, count: number, active: number): void {
-    const first = !this.bed;
-    const same = this.bed === bed && count === this.plateCount;
-    this.bed = bed;
-    this.plateCount = Math.max(1, count);
-    this.activePlate = Math.min(Math.max(0, active), this.plateCount - 1);
-    if (!same || !this.bedGroup) {
-      if (this.bedGroup) { this.scene.remove(this.bedGroup); disposeObject3D(this.bedGroup); }
-      const g = new Group();
-      g.name = 'plates';
-      for (let i = 0; i < this.plateCount; i++) {
-        const pg = buildBed(plateBed(bed, i, this.plateCount), this.theme);
-        pg.userData.plate = i;
-        if (this.plateCount > 1) pg.add(plateLabelSprite(plateBed(bed, i, this.plateCount), i, this.theme));
-        g.add(pg);
-      }
-      this.bedGroup = g;
-      this.scene.add(g);
-      void this.refreshBedExtras();
+    const prevActive = this.plates.active;
+    if (this.plates.set(bed, count, active)) this.setView('iso', false);
+    else if (this.focus && count > 1 && active !== prevActive) {
+      // With the other plates hidden, the view follows the selected plate (PartPlateList::select_plate).
+      const from = plateBed(bed, prevActive, count), to = plateBed(bed, active, count);
+      const d = new Vector3((to.min[0] + to.max[0] - from.min[0] - from.max[0]) / 2, (to.min[1] + to.max[1] - from.min[1] - from.max[1]) / 2, 0);
+      this.orbit.target.add(d);
+      this.camera.position.add(d);
+      this.orbit.update();
     }
-    this.styleActivePlate();
-    if (first) this.setView('iso', false);
-    this.requestRender();
-  }
-
-  /** Dim every plate but the active one (materials are per plate group). */
-  private styleActivePlate(): void {
-    this.bedGroup?.children.forEach((pg) => {
-      const on = pg.userData.plate === this.activePlate || this.plateCount === 1;
-      pg.traverse((o) => {
-        const mat = (o as Mesh).material as MeshStandardMaterial | undefined;
-        if (!mat || Array.isArray(mat)) return;
-        const base = (mat.userData.base ??= { opacity: mat.opacity, transparent: mat.transparent }) as { opacity: number; transparent: boolean };
-        const transparent = on ? base.transparent : true;
-        const opacity = on ? base.opacity : base.opacity * 0.4;
-        if (mat.transparent !== transparent || mat.opacity !== opacity) {
-          mat.transparent = transparent; mat.opacity = opacity; mat.needsUpdate = true;
-        }
-      });
-    });
+    if (this.focus) this.refreshFocus();
+    this.plates.updateCollisionVolumes(this.objectBoxes());
+    this.syncImexGhosts();
   }
 
   /** Plate index under a screen point (ray ∩ bed plane), or -1. */
   plateAt(clientX: number, clientY: number): number {
-    if (!this.bed) return -1;
+    const bed = this.plates.bed;
+    if (!bed) return -1;
     const r = this.renderer.domElement.getBoundingClientRect();
     setPickRayFromCamera(this.raycaster, new Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), this.camera);
     const hit = this.raycaster.ray.intersectPlane(new Plane(new Vector3(0, 0, 1), 0), new Vector3());
-    return hit ? plateIndexAt(hit.x, hit.y, this.plateCount, this.bed) : -1;
+    return hit ? plateIndexAt(hit.x, hit.y, this.plates.count, bed) : -1;
   }
 
   /** The printer model's bed mesh / texture (lazy; see bedAssets.ts). null = generic plate only. */
-  setBedAssets(assets: BedAssets | null): void {
-    if (assets?.model === this.bedAssets?.model && assets?.texture === this.bedAssets?.texture) return;
-    this.bedAssets = assets;
-    void this.refreshBedExtras();
+  setBedAssets(assets: BedAssets | null): void { this.plates.setAssets(assets); }
+
+  /** Toolhead collision volumes (Orca 2.5); `showAll` = View > "Show all collision volumes". */
+  setCollisionVolumes(vols: CollisionVolume[], showAll: boolean): void {
+    this.plates.setCollisionVolumes(vols, showAll);
+    this.plates.updateCollisionVolumes(this.objectBoxes());
   }
 
-  private async refreshBedExtras(): Promise<void> {
-    const token = ++this.bedExtrasToken;
-    const a = this.bedAssets;
-    const [mesh, tex] = await Promise.all([
-      a?.model ? loadBedMesh(a.model) : null,
-      a?.texture ? loadBedTexture(a.texture) : null,
-    ]);
-    if (token !== this.bedExtrasToken || this.disposed || !this.bed) return;
-    // The vendor mesh replaces the flat plate (grid, edge and axes stay on top),
-    // on every plate; extras live inside each plate group so dimming applies.
-    this.bedGroup?.children.forEach((pg) => {
-      const i = pg.userData.plate as number;
-      pg.traverse((o) => { if (o.name === 'plate') o.visible = !mesh; });
-      const old = pg.getObjectByName('bed-extras') as Group | undefined;
-      if (old) { old.removeFromParent(); disposeObject3D(old); }
-      if (mesh || tex) pg.add(buildBedExtras(plateBed(this.bed!, i, this.plateCount), this.theme, mesh, tex));
+  /**
+   * IDEX/IQEX parallel modes, per plate (null = normal plate): zone fills and
+   * strips on the bed, and a ghost of every object per other carriage.
+   */
+  setImex(perPlate: ReadonlyArray<ImexPlateView | null>): void {
+    this.imexPlates = perPlate;
+    const key = JSON.stringify(perPlate.map((v) => (v ? [v.layout.copyZones, v.layout.mirrorZones, v.layout.collisionZones, v.layout.marginBands, v.theme] : null)));
+    this.plates.setPlateOverlay('imex-zones', key, (i) => {
+      const v = perPlate[i];
+      return v?.layout.primaryZone ? buildImexZones(v.layout, v.theme) : null;
     });
-    this.styleActivePlate();
+    this.syncImexGhosts();
     this.requestRender();
+  }
+
+  private syncImexGhosts(): void {
+    const bed = this.plates.bed;
+    if (!bed || !this.imexPlates.some((v) => v?.heads.length)) { this.imexGhosts.sync([], []); return; }
+    const box = new Box3(), c = new Vector3();
+    this.imexGhosts.sync(this.items.flatMap((it) => {
+      const e = this.entries.get(it.obj.id);
+      if (!e) return [];
+      e.mesh.updateMatrixWorld();
+      box.setFromObject(e.mesh, false).getCenter(c);
+      return [{ id: e.id, mesh: e.mesh, plate: plateIndexAt(c.x, c.y, this.plates.count, bed), printed: it.obj.printable && it.obj.cad?.node.contribution !== 'subtract' }];
+    }), this.imexPlates);
+  }
+
+  /** Belt printers: the tilt line and, with an open Y axis, the belt beyond the bed (null = not a belt). */
+  setBelt(v: { up: Vector3 | null; openY: boolean } | null): void {
+    const key = JSON.stringify(v && [v.up?.toArray(), v.openY, this.plates.count]);
+    this.plates.setPlateOverlay('belt-marks', key, v && ((i) => {
+      const bed = this.plates.bed;
+      if (!bed) return null;
+      const pb = plateBed(bed, i, this.plates.count);
+      // One plate: show a good stretch of belt; several: stay inside the gap to the next row.
+      const ext = (pb.max[1] - pb.min[1]) * (this.plates.count > 1 ? 0.18 : 0.5);
+      return buildBeltMarks(pb, v.up, v.openY, ext, this.theme);
+    }));
+    this.requestRender();
+  }
+
+  /** Prime towers (app/towerPreview.ts), one per plate that prints one. */
+  setTowers(views: readonly TowerView[]): void {
+    const bed = this.plates.bed;
+    if (!bed) return;
+    this.towers.set(views, (i) => {
+      const pb = plateBed(bed, i, this.plates.count);
+      return [pb.min[0] - bed.min[0], pb.min[1] - bed.min[1]];
+    });
+    this.requestRender();
+  }
+
+  /** The prime tower under a screen point, unless an object is in front of it. */
+  private towerAt(clientX: number, clientY: number): number | null {
+    if (!this.towers.count) return null;
+    this.setNdc(clientX, clientY);
+    const t = this.towers.hit(this.raycaster.ray);
+    if (!t) return null;
+    const o = this.raycaster.intersectObjects(this.visibleMeshes(), true)[0];
+    return o && o.distance < t.distance ? null : t.plate;
+  }
+
+  /** World boxes of the printable, visible objects. */
+  private objectBoxes(): Box3[] {
+    const out: Box3[] = [];
+    for (const it of this.items) {
+      const e = this.entries.get(it.obj.id);
+      if (!e || !e.mesh.visible || !it.obj.printable) continue;
+      e.mesh.updateMatrixWorld();
+      out.push(new Box3().setFromObject(e.mesh, false));
+    }
+    return out;
   }
 
   // ---- objects --------------------------------------------------------------
@@ -545,6 +622,8 @@ export class PrepareScene {
       if (e && e.meshId !== obj.meshId) { this.removeEntry(e); e = undefined; }
       if (!e) {
         const mat = new MeshStandardMaterial({ roughness: 1, metalness: 0, flatShading: true, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+        installXray(mat);
+        clipBy(mat, this.section);
         const mesh = new Mesh(this.acquireGeometry(it.mesh), mat);
         mesh.userData.objectId = obj.id;
         e = { id: obj.id, meshId: obj.meshId, mesh, triangles: it.mesh.triangleCount, parts: [] };
@@ -557,7 +636,7 @@ export class PrepareScene {
         e.mesh.quaternion.set(obj.rotation[0], obj.rotation[1], obj.rotation[2], obj.rotation[3]);
         e.mesh.scale.set(obj.scale[0], obj.scale[1], obj.scale[2]);
       }
-      e.mesh.visible = obj.visible;
+      e.mesh.visible = obj.visible && this.inFocus(e, obj.id);
       this.syncParts(e, it);
       this.styleEntry(e, it);
     }
@@ -566,13 +645,16 @@ export class PrepareScene {
     this.parentCadFrame();
     if (!this.dragStart) this.updateGizmo();
     this.updateSelectionBox();
+    this.plates.updateCollisionVolumes(this.objectBoxes());
+    this.syncImexGhosts();
+    this.updateSection();
     this.requestRender();
   }
 
   /** Child meshes for parts: model parts share the object's material, other volume types are translucent. */
   private syncParts(e: Entry, it: SceneItem): void {
     const parts = it.obj.parts ?? [];
-    const keys = parts.map((p) => `${p.id}|${p.meshId}|${p.type}`);
+    const keys = parts.map((p) => `${p.id}|${p.meshId}|${p.type}|${p.preciseSeam?.type ?? ''}`);
     if (keys.join() !== e.parts.map((p) => p.key).join()) {
       for (const pe of e.parts) this.disposePart(e, pe);
       e.parts = [];
@@ -580,9 +662,10 @@ export class PrepareScene {
         const md = it.partMeshes?.get(p.meshId);
         if (!md) return;
         const mat = p.type === 'part' ? e.mesh.material : new MeshStandardMaterial({
-          color: PART_COLORS[p.type] ?? 0xffffff, transparent: true, opacity: 0.45, depthWrite: false, roughness: 1, metalness: 0,
+          color: partColour(p) ?? 0xffffff, transparent: true, opacity: 0.45, depthWrite: false, roughness: 1, metalness: 0,
           flatShading: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
         });
+        if (mat !== e.mesh.material) { installXray(mat); clipBy(mat, this.section); applyXrayState(mat, this.xrayActive(), { transparent: true, depthWrite: false }); }
         const m = new Mesh(this.acquireGeometry(md), mat);
         m.userData.objectId = e.id;
         m.userData.partId = p.id;
@@ -613,8 +696,11 @@ export class PrepareScene {
     const item = it ?? this.items.find((x) => x.obj.id === e.id);
     if (!item) return;
     const mat = e.mesh.material;
-    const base = item.warn ? this.theme.warn : item.obj.color ? safeColor(item.obj.color, this.theme.object) : this.theme.object;
-    mat.color.copy(base);
+    // Filament colours may be translucent (Orca 2.5 `#RRGGBBAA`): the object is drawn see-through, as Orca does.
+    const own = item.obj.color ? parseColour(item.obj.color) ?? safeCssColour(item.obj.color) : null;
+    const alpha = own && !item.warn ? own.a / 255 : 1;
+    if (item.warn || !own) mat.color.copy(item.warn ? this.theme.warn : this.theme.object);
+    else toThreeColor(own, '#888888', mat.color);
     const sel = this.selected.has(e.id), hov = this.hovered === e.id;
     if (sel) mat.emissive.copy(this.theme.selected).multiplyScalar(0.3);
     else if (hov) mat.emissive.copy(this.theme.hover).multiplyScalar(0.2);
@@ -623,9 +709,131 @@ export class PrepareScene {
     const hole = item.obj.cad?.node.contribution === 'subtract';
     if (hole && !item.warn) mat.color.setHex(PART_COLORS.negative);
     const ghost = !item.obj.printable || hole;
-    if (mat.transparent !== ghost) { mat.transparent = ghost; mat.needsUpdate = true; }
-    mat.opacity = ghost ? 0.4 : 1;
-    mat.depthWrite = !ghost;
+    const opacity = ghost ? 0.4 * alpha : Math.max(alpha, 0.15);
+    const transparent = opacity < 1;
+    mat.opacity = opacity;
+    applyXrayState(mat, this.xrayActive(), { transparent, depthWrite: !transparent });
+  }
+
+  // ---- Orca 2.5 view options -------------------------------------------------------------------
+
+  /** X-Ray is on and no painting tool draws the objects through its own overlay (desktop: painter gizmos). */
+  private xrayActive(): boolean { return this.xray && !this.tool?.strokes; }
+
+  /** Canvas menu "X-Ray": models drawn see-through. */
+  setXray(on: boolean): void {
+    this.xray = on;
+    this.applyXray();
+  }
+
+  private applyXray(): void {
+    const on = this.xrayActive();
+    XRAY.value = on ? 1 : 0;
+    for (const e of this.entries.values()) {
+      this.styleEntry(e);
+      for (const pe of e.parts) {
+        const m = pe.mesh.material as MeshStandardMaterial;
+        if (m !== e.mesh.material) applyXrayState(m, on, { transparent: true, depthWrite: false });
+      }
+    }
+    this.requestRender();
+  }
+
+  /** The section plane (viewportState.section): `normal` faces the camera it was aimed from. */
+  setSection(ratio: number, normal: Vec3 | null): void {
+    this.sectionState = { ratio, normal: normal ? new Vector3(...normal) : null };
+    this.updateSection();
+    this.requestRender();
+  }
+
+  /** The direction the section plane faces when aimed now: towards the camera (−forward). */
+  cameraFacing(): Vec3 {
+    const d = this.camera.getWorldDirection(new Vector3()).negate();
+    return [d.x, d.y, d.z];
+  }
+
+  private updateSection(): void {
+    const boxes = this.objectBoxes();
+    const box = boxes.length ? boxes.reduce((a, b) => a.union(b), new Box3()) : null;
+    this.section.update(this.sectionState.ratio, this.sectionState.normal, box);
+    const capped: Mesh[] = [];
+    for (const e of this.entries.values()) {
+      if (!e.mesh.visible) continue;
+      capped.push(e.mesh);
+      for (const pe of e.parts) if (pe.mesh.material === e.mesh.material) capped.push(pe.mesh);
+    }
+    this.section.syncMeshes(capped);
+  }
+
+  /** Canvas menu "Center of mass": the markers (massMarkers.ts), in bed coordinates. */
+  setMassMarkers(markers: MassMarker[]): void {
+    const prev = this.pickedMarker !== null ? this.massLayer.marker(this.pickedMarker) : undefined;
+    this.massLayer.set(markers);
+    // The details stay open while the marker they show is still there (same kind, same index).
+    if (this.pickedMarker !== null && (!prev || markers[this.pickedMarker]?.kind !== prev.kind)) this.closeMarker();
+    this.requestRender();
+  }
+
+  private screenOf(p: Vector3): { x: number; y: number } {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const v = p.clone().project(this.camera);
+    return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+  }
+
+  private reportMarker(): void {
+    if (this.pickedMarker === null) return;
+    const m = this.massLayer.marker(this.pickedMarker), p = this.massLayer.position(this.pickedMarker);
+    if (!m || !p) { this.closeMarker(); return; }
+    const s = this.screenOf(p);
+    const key = `${this.pickedMarker}|${s.x.toFixed(1)}|${s.y.toFixed(1)}|${m.sum.mass}`;
+    if (key === this.pickedAt) return;
+    this.pickedAt = key;
+    this.cb.onMassMarker?.({ marker: m, x: s.x, y: s.y });
+  }
+
+  /** A click on a center of mass marker shows its details instead of selecting (CenterOfMass::on_left_down); other clicks close them. */
+  private clickMarker(e: PointerEvent): boolean {
+    if (!this.massLayer.count || this.tool || this.layOnFace) return false;
+    const i = this.massLayer.pick((p) => this.screenOf(p), e.clientX, e.clientY);
+    if (i !== null) { this.pickedMarker = i; this.pickedAt = ''; this.reportMarker(); this.requestRender(); return true; }
+    this.closeMarker();
+    return false;
+  }
+
+  /** Close the marker details (Esc, the close button). */
+  closeMarker(): void {
+    if (this.pickedMarker === null) return;
+    this.pickedMarker = null;
+    this.pickedAt = '';
+    this.cb.onMassMarker?.(null);
+  }
+
+  /** Canvas menu "Focus mode": only the current plate (its bed, its objects, the selection) is shown. */
+  setFocusMode(on: boolean): void {
+    this.focus = on;
+    this.plates.focus = on;
+    this.plates.styleActive();
+    this.refreshFocus();
+  }
+
+  private refreshFocus(): void {
+    for (const it of this.items) {
+      const e = this.entries.get(it.obj.id);
+      if (e) e.mesh.visible = it.obj.visible && this.inFocus(e, it.obj.id);
+    }
+    this.towers.setOnly(this.focus && this.plates.count > 1 ? this.plates.active : null);
+    this.updateSection();
+    this.requestRender();
+  }
+
+  /** Shown in focus mode: on the current plate (its box overlaps it) or selected. */
+  private inFocus(e: Entry, id: string): boolean {
+    const bed = this.plates.bed;
+    if (!this.focus || !bed || this.plates.count < 2 || this.selected.has(id)) return true;
+    const pb = plateBed(bed, this.plates.active, this.plates.count);
+    e.mesh.updateMatrixWorld();
+    const b = new Box3().setFromObject(e.mesh, false);
+    return b.max.x >= pb.min[0] && b.min.x <= pb.max[0] && b.max.y >= pb.min[1] && b.min.y <= pb.max[1];
   }
 
   private removeEntry(e: Entry): void {
@@ -885,6 +1093,19 @@ export class PrepareScene {
         return;
       }
     }
+    // The prime tower: a left drag (one finger) moves it on the bed (desktop drags the wipe tower volume).
+    if (e.button === 0 && !overGizmo && !this.layOnFace && !this.tool && this.touches.size === 1) {
+      const plate = this.towerAt(e.clientX, e.clientY);
+      if (plate !== null && this.towers.beginDrag(plate, this.raycaster.ray)) {
+        e.stopPropagation();
+        e.preventDefault();
+        this.renderer.domElement.setPointerCapture(e.pointerId);
+        this.towerPointer = e.pointerId;
+        this.down = null;
+        this.requestRender();
+        return;
+      }
+    }
     const startBox = !touch && e.button === 0 && !overGizmo && !this.layOnFace && !this.tool && !this.pick(e.clientX, e.clientY);
     if (touch && !overGizmo && this.touches.size === 1) {
       const x = e.clientX, y = e.clientY;
@@ -914,6 +1135,12 @@ export class PrepareScene {
   private onPointerMove(e: PointerEvent): void {
     const lp = this.longPress;
     if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 8) this.cancelLongPress();
+    if (this.towerPointer === e.pointerId && this.towers.drag) {
+      this.setNdc(e.clientX, e.clientY);
+      this.towers.dragTo(this.raycaster.ray);
+      this.requestRender();
+      return;
+    }
     if (this.toolStroke && this.tool && e.pointerId === this.toolStroke.pointerId) {
       const ev = this.toolEvent('drag', e);
       ev.button = this.toolStroke.button;
@@ -951,7 +1178,15 @@ export class PrepareScene {
       }
       return;
     }
-    this.setHover(this.pickCheap(e.clientX, e.clientY));
+    const id = this.pickCheap(e.clientX, e.clientY);
+    this.setHover(id);
+    if (this.imexGhosts.count) {
+      const g = id ? null : this.imexGhosts.hit(this.raycaster);
+      this.cb.onImexGhostHover?.(g?.head ?? null, e.clientX, e.clientY);
+    }
+    const tower = id ? null : this.towerAt(e.clientX, e.clientY);
+    if (this.towers.setHover(tower)) this.requestRender();
+    this.renderer.domElement.style.cursor = tower !== null ? 'move' : '';
   }
 
   private worldNormal(hit: Intersection): Vector3 {
@@ -962,6 +1197,14 @@ export class PrepareScene {
   private onPointerUp(e: PointerEvent): void {
     this.touches.delete(e.pointerId);
     this.cancelLongPress();
+    if (this.towerPointer === e.pointerId) {
+      this.towerPointer = null;
+      try { this.renderer.domElement.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      const d = this.towers.endDrag();
+      if (d?.moved) this.cb.onTowerMove?.(d.plate, d.x, d.y);
+      this.requestRender();
+      return;
+    }
     if (this.toolStroke && e.pointerId === this.toolStroke.pointerId) {
       const ev = this.toolEvent('up', e);
       ev.button = this.toolStroke.button;
@@ -979,9 +1222,16 @@ export class PrepareScene {
       try { this.renderer.domElement.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
       if (moved) this.cb.onBoxSelect(this.idsInRect(d.x, d.y, e.clientX, e.clientY), d.shift || d.ctrl);
       else if (!d.shift && !d.ctrl) {
+        // A center of mass marker or an IDEX/IQEX ghost copy isn't an object, so a press on one began a box.
+        if (this.clickMarker(e)) return;
+        if (this.imexGhosts.count && !this.layOnFace) {
+          this.setNdc(e.clientX, e.clientY);
+          const g = this.imexGhosts.hit(this.raycaster);
+          if (g) { this.cb.onImexGhostClick?.(g.head, e.clientX, e.clientY); return; }
+        }
         this.cb.onPick(null, 'replace');
-        const p = this.plateCount > 1 ? this.plateAt(e.clientX, e.clientY) : -1;
-        if (p >= 0 && p !== this.activePlate) this.cb.onPlateClick?.(p);
+        const p = this.plates.count > 1 ? this.plateAt(e.clientX, e.clientY) : -1;
+        if (p >= 0 && p !== this.plates.active) this.cb.onPlateClick?.(p);
       }
       return;
     }
@@ -994,11 +1244,16 @@ export class PrepareScene {
       return;
     }
     if (d.button !== 0) return;
+    if (this.clickMarker(e)) return;
     const hit = this.pick(e.clientX, e.clientY);
     const id = (hit?.object.userData.objectId as string | undefined) ?? null;
-    if (!id && !this.layOnFace && this.plateCount > 1) {
+    if (!id && !this.layOnFace && !this.tool && this.imexGhosts.count) {
+      const g = this.imexGhosts.hit(this.raycaster);
+      if (g) { this.cb.onImexGhostClick?.(g.head, e.clientX, e.clientY); return; }
+    }
+    if (!id && !this.layOnFace && this.plates.count > 1) {
       const p = this.plateAt(e.clientX, e.clientY);
-      if (p >= 0 && p !== this.activePlate) this.cb.onPlateClick?.(p);
+      if (p >= 0 && p !== this.plates.active) this.cb.onPlateClick?.(p);
     }
     if (this.layOnFace) {
       if (hit && id) this.cb.onLayOnFace(id, this.worldNormal(hit).toArray() as Vec3);
@@ -1041,8 +1296,10 @@ export class PrepareScene {
 
   /** Install / remove the active tool. Tools draw into their own groups added to `scene`. */
   setToolHandler(h: ToolHandler | null): void {
+    const strokes = !!this.tool?.strokes;
     this.tool = h;
     this.toolStroke = null;
+    if (this.xray && strokes !== !!h?.strokes) this.applyXray();
     this.renderer.domElement.style.cursor = h ? (h.cursor ?? 'crosshair') : this.layOnFace ? 'crosshair' : '';
     if (!this.dragStart) this.updateGizmo();
     this.requestRender();
@@ -1114,11 +1371,7 @@ export class PrepareScene {
     }
   }
 
-  private bedBox(): Box3 {
-    const b = this.bed ? plateBed(this.bed, this.activePlate, this.plateCount) : null;
-    if (!b) return new Box3(new Vector3(0, 0, 0), new Vector3(220, 220, 0));
-    return new Box3(new Vector3(b.min[0], b.min[1], 0), new Vector3(b.max[0], b.max[1], Math.min(b.maxHeight || 0, 40)));
-  }
+  private bedBox(): Box3 { return this.plates.activeBox(); }
 
   private fitBox(box: Box3, dir?: Vector3, animate = true): void {
     const sphere = box.getBoundingSphere(new Sphere());
@@ -1246,21 +1499,9 @@ export class PrepareScene {
   }
 }
 
-/** Graphics prefs shared with the CubbyCAD editor (same origin → same localStorage key). */
-function readGraphicsSettings(): { pixelRatioCap: number; antialias: boolean } {
-  const out = { pixelRatioCap: 2, antialias: true };
-  try {
-    const raw = localStorage.getItem('cad-graphics');
-    if (!raw) return out;
-    const p = JSON.parse(raw) as { pixelRatioCap?: unknown; antialias?: unknown };
-    if (p.pixelRatioCap === 0 || p.pixelRatioCap === 1 || p.pixelRatioCap === 1.5 || p.pixelRatioCap === 2) out.pixelRatioCap = p.pixelRatioCap;
-    if (typeof p.antialias === 'boolean') out.antialias = p.antialias;
-  } catch { /* defaults */ }
-  return out;
-}
-
-function safeColor(s: string, fallback: Color): Color {
-  try { return new Color().setStyle(s); } catch { return fallback; }
+/** A CSS colour name / rgb() string (not hex) as an opaque RGBA, or null. */
+function safeCssColour(s: string): RGBA | null {
+  try { return parseColour(`#${new Color().setStyle(s).getHexString()}`); } catch { return null; }
 }
 
 

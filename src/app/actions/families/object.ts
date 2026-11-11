@@ -27,7 +27,7 @@ function nudgeBy(c: AppContext, arrow: string, fine: boolean): void {
   if (d) c.dispatch.nudge(d.x, d.y);
 }
 
-type SubType = 'part' | 'negative' | 'modifier' | 'support_blocker' | 'support_enforcer';
+type SubType = 'part' | 'negative' | 'modifier' | 'support_blocker' | 'support_enforcer' | 'precise_seam';
 type SubSource = 'box' | 'cylinder' | 'sphere' | 'slab' | 'file';
 /** Orca's right-click "Add part / negative part / modifier / support blocker / support enforcer" menus. */
 export const SUB_TYPES: Array<[SubType, string, string]> = [
@@ -36,10 +36,19 @@ export const SUB_TYPES: Array<[SubType, string, string]> = [
   ['modifier', 'Add modifier', 'i-lucide-sliders-horizontal'],
   ['support_blocker', 'Add support blocker', 'i-lucide-shield-off'],
   ['support_enforcer', 'Add support enforcer', 'i-lucide-shield-plus'],
+  // Orca 2.5: a seam modifier (Seam: center); its subtype is picked on the part afterwards.
+  ['precise_seam', 'Add precise seam', 'i-lucide-locate-fixed'],
 ];
 export const SUB_SOURCES: Array<[SubSource, string]> = [
   ['file', 'Load…'], ['box', 'Box'], ['cylinder', 'Cylinder'], ['sphere', 'Sphere'], ['slab', 'Slab'],
 ];
+
+/** Orca 2.5 Align / Distribute (GUI_Factories.cpp append_menu_items_align_distribute), X and Y. */
+export const ALIGN_ITEMS: Array<[string, string, 0 | 1, 'min' | 'center' | 'max']> = [
+  ['x-min', 'Align left (-X)', 0, 'min'], ['x-center', 'Align left-right center (X)', 0, 'center'], ['x-max', 'Align right (+X)', 0, 'max'],
+  ['y-min', 'Align front (-Y)', 1, 'min'], ['y-center', 'Align front-back center (Y)', 1, 'center'], ['y-max', 'Align back (+Y)', 1, 'max'],
+];
+export const DISTRIBUTE_ITEMS: Array<[string, string, 0 | 1]> = [['x', 'Distribute left-right (X)', 0], ['y', 'Distribute front-back (Y)', 1]];
 
 export function objectActions(): Action[] {
   const sel = (c: AppContext) => c.selection.count > 0;
@@ -97,10 +106,29 @@ export function objectActions(): Action[] {
       when: (c) => c.selection.count > 0, run: (c) => c.dispatch.arrangeSelection() },
     { id: 'arrange.options', title: 'Arrange options…', icon: 'i-lucide-settings-2', category: 'Arrange', aliases: ['arrange settings', 'spacing', 'auto rotate', 'arrange spacing'],
       run: () => openDialog('arrange') },
+    ...ALIGN_ITEMS.map(([k, title, axis, edge]): Action => ({
+      id: `object.align.${k}`, title, icon: axis === 0 ? 'i-lucide-align-horizontal-justify-center' : 'i-lucide-align-vertical-justify-center', category: 'Arrange',
+      aliases: ['align', 'line up', edge === 'center' ? 'centre' : edge === 'min' ? (axis ? 'front' : 'left') : (axis ? 'back' : 'right')],
+      description: 'Lines the selected objects up with the edge or centre of their joint bounding box.',
+      when: (c) => c.selection.count >= 2, run: (c) => c.dispatch.align(axis, edge),
+    })),
+    ...DISTRIBUTE_ITEMS.map(([k, title, axis]): Action => ({
+      id: `object.distribute.${k}`, title, icon: axis === 0 ? 'i-lucide-align-horizontal-space-between' : 'i-lucide-align-vertical-space-between', category: 'Arrange',
+      aliases: ['distribute', 'space evenly', 'spread'],
+      description: 'Spaces three or more selected objects evenly, keeping the outer two in place.',
+      when: (c) => c.selection.count >= 3, run: (c) => c.dispatch.distribute(axis),
+    })),
+    { id: 'object.toggle.primitive-options', title: 'Show options when adding a primitive', icon: 'i-lucide-ruler', category: 'Settings',
+      aliases: ['primitive size', 'shape size dialog', 'ask size'],
+      description: 'Adding a box, cylinder, sphere or slab part asks for its size first.',
+      state: (c) => (c.askPrimitiveSize ? 'on' : 'off'), run: (c) => c.dispatch.setAskPrimitiveSize(!c.askPrimitiveSize) },
     { id: 'object.split-objects', title: 'Split to objects', icon: 'i-lucide-split', category: 'Object', aliases: ['separate', 'break apart', 'explode'],
       when: sel, run: (c) => c.dispatch.splitToObjects() },
     { id: 'object.split-parts', title: 'Split to parts', icon: 'i-lucide-component', category: 'Object', aliases: ['separate parts', 'volumes'],
       when: sel, run: (c) => c.dispatch.splitToParts() },
+    { id: 'object.fix-model', title: 'Fix model', icon: 'i-lucide-wrench', category: 'Object', aliases: ['repair', 'repair mesh', 'fix mesh', 'make manifold', 'close holes'],
+      description: 'Repairs the selected objects\u2019 meshes: welds vertices, fills holes, removes self-intersections and loose shells. Paint is kept.',
+      when: sel, run: (c) => c.dispatch.repairMeshes('selection') },
     ...SUB_TYPES.flatMap(([type, label, icon]) => SUB_SOURCES.map(([source, sLabel]): Action => ({
       id: `object.add.${type}.${source}`, title: `${label}: ${sLabel}`, icon, category: 'Object',
       aliases: [`add ${label.toLowerCase()}`, sLabel.toLowerCase()],

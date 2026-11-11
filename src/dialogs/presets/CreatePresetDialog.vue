@@ -5,12 +5,15 @@
  * filament" (vendor, type, serial, based on a system filament, for chosen
  * printers). Both are saved as user presets.
  */
+import { afterPresetSelect } from '../../settings/applyAutoChanges';
 import { computed, reactive, ref, watch } from 'vue';
 import { mobileDialog } from '../../ui/mobileDialog';
+import AppDialog from '../../ui/AppDialog.vue';
 import { currentPresets } from '../../presets/store';
 import { DEFAULT_PRESET_ID, type PresetInfo, type PresetValues } from '../../presets/types';
 import { PresetNameError } from '../../presets/userPresets';
-import { asArray, cloneValue } from '../../presets/values';
+import { cloneValue } from '../../presets/values';
+import { SCALAR, asList, toNumber, valueAt } from '../../lib/configValue';
 import { schemaDefaults, tabOfScope } from '../../presets/resolve';
 import { settingsUi } from '../../settings/uiState';
 import { toast } from '../../ui';
@@ -55,21 +58,21 @@ watch(open, async (o) => {
     const cur = p.value.infos.value.printer;
     pf.template = cur.id;
     pf.vendor = ''; pf.model = '';
-    pf.nozzle = asArray(p.value.value('printer', 'nozzle_diameter'))[0] ?? '0.4';
-    const area = asArray(p.value.value('printer', schema.value?.options.printable_area ? 'printable_area' : 'bed_shape'));
+    pf.nozzle = valueAt(p.value.value('printer', 'nozzle_diameter'), SCALAR) ?? '0.4';
+    const area = asList(p.value.value('printer', schema.value?.options.printable_area ? 'printable_area' : 'bed_shape'));
     const pts = area.map((s) => s.split('x').map(Number)).filter((a) => a.length === 2 && a.every(Number.isFinite));
     if (pts.length >= 3) {
       const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
       pf.width = Math.max(...xs) - Math.min(...xs); pf.depth = Math.max(...ys) - Math.min(...ys);
       pf.originX = -Math.min(...xs); pf.originY = -Math.min(...ys);
     }
-    pf.height = Number(asArray(p.value.value('printer', schema.value?.options.printable_height ? 'printable_height' : 'max_print_height'))[0]) || 250;
+    pf.height = toNumber(valueAt(p.value.value('printer', schema.value?.options.printable_height ? 'printable_height' : 'max_print_height'), SCALAR), 0) || 250;
     vendors.value = (await p.value.catalog.vendors().catch(() => [])).map((v) => v.name).sort();
   } else {
     const slot = settingsUi.filamentSlot ?? 0;
     ff.slot = slot;
     ff.vendor = ''; ff.serial = '';
-    ff.type = asArray(p.value.value('filament', 'filament_type', slot))[0] ?? 'PLA';
+    ff.type = valueAt(p.value.value('filament', 'filament_type', slot), SCALAR) ?? 'PLA';
     ff.base = p.value.selectedInfo('filament', slot).source === 'system' ? p.value.selectedId('filament', slot) : baseItems.value[0]?.value ?? '';
     ff.printers = [p.value.infos.value.printer.name].filter((n) => p.value.infos.value.printer.source !== 'default' && !!n);
   }
@@ -110,11 +113,11 @@ async function create(): Promise<void> {
     if (props.kind === 'printer') {
       if (!(pf.width > 0 && pf.depth > 0 && pf.height > 0)) throw new PresetNameError('Enter a positive bed size and printable height.');
       const t = await templateFor('printer', pf.template);
-      const tplNozzles = asArray((await pr.resolvePreset('printer', pf.template || DEFAULT_PRESET_ID))?.values.nozzle_diameter ?? ['0.4']);
+      const tplNozzles = asList((await pr.resolvePreset('printer', pf.template || DEFAULT_PRESET_ID))?.values.nozzle_diameter ?? ['0.4']);
       const values = { ...t.values, ...printerOverrides(pf, schema.value, tplNozzles) };
       const created = pr.users.create({ kind: 'printer', name: n, parentId: t.parentId, inherits: t.inherits, values });
       await pr.refreshPrinterList();
-      if (useNow.value) await pr.selectPrinter(created.id);
+      if (useNow.value) { await pr.selectPrinter(created.id); void afterPresetSelect('printer'); }
       toast.success(`Created printer “${created.name}”.`);
     } else {
       if (!ff.base) throw new PresetNameError('Choose a filament to base the new one on.');
@@ -123,7 +126,7 @@ async function create(): Promise<void> {
       const values = { ...t.values, ...filamentOverrides(ff, schema.value, baseValues) };
       const created = pr.users.create({ kind: 'filament', name: n, parentId: t.parentId, inherits: t.inherits, values });
       await pr.refresh();
-      if (useNow.value) await pr.selectFilament(ff.slot, created.id);
+      if (useNow.value) { await pr.selectFilament(ff.slot, created.id); void afterPresetSelect('filament', ff.slot); }
       toast.success(`Created filament “${created.name}”.`);
     }
     open.value = false;
@@ -139,10 +142,8 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="kind === 'printer' ? 'Create printer' : 'Create filament'" :fullscreen="mobileDialog" :dismissible="!busy"
-          :description="mobileDialog ? undefined : kind === 'printer' ? 'A custom printer saved as a user preset, based on a template printer.' : 'A custom filament saved as a user preset, based on an existing filament.'"
-          :ui="{ content: 'sm:max-w-xl' }">
-    <template #body>
+  <AppDialog v-model:open="open" :title="kind === 'printer' ? 'Create printer' : 'Create filament'" size="xl" fullscreen :dismissible="!busy"
+             :description="mobileDialog ? undefined : kind === 'printer' ? 'A custom printer saved as a user preset, based on a template printer.' : 'A custom filament saved as a user preset, based on an existing filament.'">
       <div class="cp">
       <template v-if="kind === 'printer'">
         <div class="cp__grid2">
@@ -208,7 +209,6 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
       <UCheckbox v-if="!mobileDialog" v-model="useNow" :label="kind === 'printer' ? 'Use this printer now' : `Use it for filament ${ff.slot + 1}`" />
       <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" class="cp__full" />
       </div>
-    </template>
     <template #footer>
       <div class="flex w-full items-center justify-end gap-2">
         <UCheckbox v-if="mobileDialog" v-model="useNow" :label="kind === 'printer' ? 'Use now' : `Use for filament ${ff.slot + 1}`" class="me-auto min-w-0" />
@@ -216,7 +216,7 @@ const templateItems = computed(() => templates.value.map((t) => ({ value: t.id, 
         <UButton color="primary" label="Create" :loading="busy" :disabled="!name.trim()" @click="create" />
       </div>
     </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

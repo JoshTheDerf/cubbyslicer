@@ -10,7 +10,7 @@ describe('calibration forms', () => {
     expect(snapTemp(233)).toBe(230);
     expect(snapTemp(900)).toBe(500);
     expect(snapTemp(20)).toBe(155);
-    expect(tempParams(230, 190)).toEqual({ mode: 'temp_tower', start: 230, end: 190, step: 5 });
+    expect(tempParams(230, 190)).toEqual({ mode: 'temp_tower', start: 230, end: 190, step: 5, nozzleBasedResize: true, testModel: 0 });
     expect(typeof tempParams(200, 199)).toBe('string');
   });
 

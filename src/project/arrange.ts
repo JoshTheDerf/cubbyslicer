@@ -3,6 +3,10 @@
  * (AABB of each object's convex hull) inside the bed polygon, avoiding
  * exclude areas and fixed obstacles, then centring the packed group on the
  * bed when that keeps everything valid. Pure — no Vue/three.
+ *
+ * Used to place new objects (imports, duplicates, pastes, cut pieces) next to
+ * what is on a plate (store/placement.ts). The Arrange commands run Orca's
+ * arrange on the engine instead (app/shell/arrange.ts).
  */
 import type { BedShape } from '../app/state';
 import { pointInPolygon, polygonsOverlap, type Pt } from './math';

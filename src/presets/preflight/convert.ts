@@ -7,7 +7,8 @@
  * already knows are kept verbatim (native bundles pass through untouched).
  */
 import type { ConfigSchema, ConfigScope, ConfigValue } from '../../engine/types';
-import { parseDefault } from '../values';
+import { isVectorType, parseDefault } from '../values';
+import { SCALAR, valueAt } from '../../lib/configValue';
 import type { PresetKind, PresetValues } from '../types';
 import { orcaKeyMapGenerated } from './orcaKeyMap.generated';
 
@@ -30,13 +31,15 @@ export const TRANSFORMS: Record<string, (v: string) => string> = {
   transform_gcode_label_objects: (v) => (truthy(v) ? 'octoprint' : 'disabled'),
   transform_fuzzy_skin: (v) => v,
   transform_ensure_vertical_shell: (v) => (truthy(v) ? 'enabled' : 'disabled'),
-  transform_arc_fitting: (v) => (truthy(v) ? 'emit_center' : 'disabled'),
+  // Orca ≤ 2.4: a bool; 2.5: disabled | enabled | sparse_infill. preFlight can't fit arcs to the sparse
+  // infill alone: walls and surfaces stay straight there, so "sparse infill only" maps to disabled.
+  transform_arc_fitting: (v) => (truthy(v) || v === 'enabled' ? 'emit_center' : 'disabled'),
 };
 
 const PLATE_KEYS = ['hot_plate_temp', 'textured_plate_temp', 'supertack_plate_temp', 'eng_plate_temp', 'textured_cool_plate_temp', 'cool_plate_temp'];
 
 const mapValue = (v: ConfigValue, fn: (s: string) => string): ConfigValue => (Array.isArray(v) ? v.map(fn) : fn(v));
-const first = (v: ConfigValue | undefined) => (Array.isArray(v) ? v[0] : v);
+const first = (v: ConfigValue | undefined) => valueAt(v, SCALAR);
 
 /** Orca shrink (100% = none) → preFlight compensation (0% = none). */
 function convertShrink(v: string): string {
@@ -171,9 +174,12 @@ export function orcaToPreflight(kind: PresetKind, values: PresetValues, isNative
   // Native keys win over mapped ones.
   for (const [k, v] of Object.entries(mapped)) if (!(k in out) && isNative(k)) out[k] = v;
   if (isVector) {
+    // Orca 2.5 made ~45 process keys per-variant vectors (outer_wall_acceleration, …): a template reading one
+    // that preFlight doesn't define gets its `orca:*` placeholder variable, a vector now, so index it too.
+    const vec = orcaSchema ? (k: string) => isVector(k) || (!isNative(k) && isVectorType(orcaSchema.options[k]?.type)) : isVector;
     for (const [k, v] of Object.entries(out)) {
       if (!GCODE_KEYS.has(k)) continue;
-      out[k] = mapValue(v, (g) => translateGcode(g, isVector));
+      out[k] = mapValue(v, (g) => translateGcode(g, vec));
     }
   }
   return out;

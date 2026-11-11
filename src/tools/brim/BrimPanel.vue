@@ -9,12 +9,13 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import { Matrix4, Plane, Vector3 } from 'three';
 import { getObject, objects, meshRevision, selectedIds, setBrimPoints, setObjectOverride } from '../../project/store';
 import { resolvedConfig } from '../../app/state';
+import { SCALAR, valueAt } from '../../lib/configValue';
 import type { BrimPoint } from '../../project/types';
 import type { Pt } from '../../project/math';
 import type { ToolPointerEvent } from '../../viewport/scene';
 import { touch } from '../../app/shell/uiState';
 import ToolPanel from '../ToolPanel.vue';
-import { closeTool, installHandler, toolScene } from '../state';
+import { closeTool, installHandler, toolScene, useToolKeys } from '../state';
 import { COLORS, ToolOverlay, circleLine, disc, render, volumeMatrix } from '../overlay';
 import { EAR_DEFAULTS, detectionRadiusMax, invalidEars, type Loop } from './brimEars';
 import { autoEars, defaultEarDiameter, earToLocal, firstLayer } from './objectEars';
@@ -22,7 +23,8 @@ import { autoEars, defaultEarDiameter, earToLocal, firstLayer } from './objectEa
 const objId = computed(() => (selectedIds.value.length === 1 ? selectedIds.value[0] : null));
 const obj = computed(() => (objId.value ? getObject(objId.value) ?? null : null));
 
-const diameter = ref(defaultEarDiameter());
+/** Orca 2.5 edits the ear radius ("Brim ear radius", 0.1–100 mm); ears store it too. */
+const radius = ref(defaultEarDiameter() / 2);
 const maxAngle = ref(EAR_DEFAULTS.maxAngle);
 const detection = ref(EAR_DEFAULTS.detectionRadius);
 const selected = ref<Set<number>>(new Set());
@@ -54,8 +56,7 @@ const detectionMax = computed(() => (layer.value ? detectionRadiusMax(layer.valu
 const brimType = computed(() => {
   const o = obj.value;
   const own = o?.overrides.brim_type;
-  const v = own ?? resolvedConfig.value.brim_type;
-  return (Array.isArray(v) ? v[0] : v) as string | undefined;
+  return valueAt(own ?? resolvedConfig.value.brim_type, SCALAR);
 });
 const hasBrimType = computed(() => 'brim_type' in resolvedConfig.value || !!obj.value?.overrides.brim_type);
 
@@ -98,7 +99,7 @@ function onPointer(e: ToolPointerEvent): boolean {
   if (selected.value.size) { selected.value = new Set(); draw(); return true; }
   if (e.hit && e.hit.objectId === obj.value.id) {
     const pos = layer.value ? earToLocal(obj.value.id, e.hit.point.x, e.hit.point.y, layer.value.bottom) : null;
-    if (pos) commit([...points.value, { pos, radius: diameter.value / 2 }], 'Add brim ear');
+    if (pos) commit([...points.value, { pos, radius: radius.value }], 'Add brim ear');
     return true;
   }
   return false;
@@ -106,7 +107,7 @@ function onPointer(e: ToolPointerEvent): boolean {
 
 function autoGenerate(): void {
   if (!obj.value) return;
-  const add = autoEars(obj.value.id, { detectionRadius: detection.value, maxAngle: maxAngle.value, diameter: diameter.value });
+  const add = autoEars(obj.value.id, { detectionRadius: detection.value, maxAngle: maxAngle.value, diameter: radius.value * 2 });
   if (add.length) commit([...points.value, ...add], 'Auto generate brim ear');
 }
 function deleteSelected(): void {
@@ -117,7 +118,7 @@ function deleteSelected(): void {
 function deleteAll(): void { commit([], 'Delete all brim ears'); selected.value = new Set(); }
 function applyRadiusToSelected(): void {
   if (!selected.value.size) return;
-  commit(points.value.map((b, i) => (selected.value.has(i) ? { ...b, radius: diameter.value / 2 } : b)), 'Brim ears edit');
+  commit(points.value.map((b, i) => (selected.value.has(i) ? { ...b, radius: radius.value } : b)), 'Brim ears edit');
 }
 function setPainted(): void { if (obj.value) setObjectOverride(obj.value.id, 'brim_type', 'painted'); }
 
@@ -136,11 +137,7 @@ function draw(): void {
   render();
 }
 
-function onKey(e: KeyboardEvent): void {
-  const t = e.target as HTMLElement | null;
-  if (t?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
-  if ((e.key === 'Delete' || e.key === 'Backspace') && selected.value.size) { e.preventDefault(); e.stopImmediatePropagation(); deleteSelected(); }
-}
+useToolKeys({ deleteSelected: { title: 'Delete selected brim ears', available: () => selected.value.size > 0, run: deleteSelected } });
 
 watch([obj, meshRevision], () => { computeLayer(); draw(); }, { deep: true });
 watch([worldPts, invalid, selected], draw);
@@ -149,10 +146,9 @@ watch(toolScene, () => { installHandler({ onPointer, hideGizmo: true }); draw();
 onMounted(() => {
   computeLayer();
   installHandler({ onPointer, hideGizmo: true });
-  window.addEventListener('keydown', onKey, true);
   draw();
 });
-onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydown', onKey, true); overlay.dispose(); });
+onBeforeUnmount(() => { installHandler(null); overlay.dispose(); });
 </script>
 
 <template>
@@ -162,10 +158,10 @@ onBeforeUnmount(() => { installHandler(null); window.removeEventListener('keydow
         {{ touch ? 'Tap' : 'Click' }} the object to add an ear at its base; {{ touch ? 'tap' : 'click' }} an ear to select it<template v-if="!touch">, right-click to delete it</template>.
       </p>
       <div class="be__grid">
-        <span class="be__lbl">Head diameter</span>
+        <span class="be__lbl">Brim ear radius</span>
         <div class="flex items-center gap-2">
-          <USlider v-model="diameter" :min="EAR_DEFAULTS.headDiameterMin" :max="EAR_DEFAULTS.headDiameterMax" :step="0.1" size="sm" class="flex-1" aria-label="Head diameter" />
-          <UInputNumber :step-snapping="false" v-model="diameter" :min="EAR_DEFAULTS.headDiameterMin" :max="EAR_DEFAULTS.headDiameterMax" :step="0.1" size="xs" class="w-20" :format-options="{ maximumFractionDigits: 1 }" aria-label="Head diameter (mm)" />
+          <USlider v-model="radius" :min="EAR_DEFAULTS.radiusMin" :max="EAR_DEFAULTS.radiusMax" :step="0.1" size="sm" class="flex-1" aria-label="Brim ear radius" />
+          <UInputNumber :step-snapping="false" v-model="radius" :min="EAR_DEFAULTS.radiusMin" :max="EAR_DEFAULTS.radiusMax" :step="0.1" size="xs" class="w-20" :format-options="{ maximumFractionDigits: 1 }" aria-label="Brim ear radius (mm)" />
         </div>
         <span class="be__lbl">Max angle</span>
         <div class="flex items-center gap-2">

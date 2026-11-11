@@ -6,7 +6,7 @@
 import {
   BufferGeometry, DoubleSide, Float32BufferAttribute, Group, LineBasicMaterial, LineLoop, LineSegments, Mesh,
   MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, Shape, ShapeGeometry, Sprite, SpriteMaterial, CanvasTexture,
-  SRGBColorSpace, Vector2, type Texture,
+  SRGBColorSpace, Vector2, type Object3D, type Texture,
 } from 'three';
 import type { BedShape } from '../app/state';
 import type { ViewportTheme } from './tokens';
@@ -140,7 +140,7 @@ export function buildBedExtras(bed: BedShape, theme: ViewportTheme, mesh: Buffer
   return g;
 }
 
-export function disposeObject3D(root: Group): void {
+export function disposeObject3D(root: Object3D): void {
   root.traverse((o) => {
     const m = o as Mesh;
     if (!o.userData.shared) m.geometry?.dispose();

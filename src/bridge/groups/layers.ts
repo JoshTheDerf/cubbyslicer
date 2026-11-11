@@ -183,7 +183,7 @@ export function layerTools(): BridgeTool[] {
       name: 'custom_gcode',
       description:
         'Custom G-code at a layer of a plate (the preview slider’s ticks): op add | remove | clear | list. Give `z` (print Z, mm) or `layer` (1-based, from the plate’s last slice when it is the active plate). ' +
-        'type: color_change (engines with M600: preFlight, Full Spectrum; `color` "#RRGGBB"), tool_change (switch to `filament`; OrcaSlicer changes colour this way), pause (`message`), custom (`gcode`), template (the printer’s template_custom_gcode). ' +
+        'type: color_change (engines with M600: preFlight; `color` "#RRGGBB"), tool_change (switch to `filament`; OrcaSlicer changes colour this way), pause (`message`), custom (`gcode`), template (the printer’s template_custom_gcode). ' +
         'Changes mark the plate’s slice out of date.',
       inputSchema: obj({
         op: oneOfS(GCODE_OPS, 'What to do.'), plate: num('Plate (1-based, default active).'), z: num('Print Z mm.'), layer: num('Layer number (1-based).'),

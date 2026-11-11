@@ -105,16 +105,3 @@ export function openKv(): Promise<KvBackend> {
   })();
   return defaultKv;
 }
-
-/** Synchronous localStorage helpers for small UI state (selection, overrides). */
-export function lsGet<T>(key: string): T | null {
-  try {
-    const ls = (globalThis as { localStorage?: Storage }).localStorage;
-    const raw = ls?.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch { return null; }
-}
-
-export function lsSet(key: string, value: unknown): void {
-  try { (globalThis as { localStorage?: Storage }).localStorage?.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
-}

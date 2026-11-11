@@ -20,6 +20,7 @@ import {
   WebGLRenderer, WebGLRenderTarget,
 } from 'three';
 import type { RgbaImage } from './encode';
+import { parseColourOr, toRgb01 } from '../../lib/colour';
 
 export interface ThumbVolume {
   positions: Float32Array;
@@ -102,12 +103,8 @@ function getRenderer(): WebGLRenderer | null {
   return renderer;
 }
 
-/** '#RRGGBB' → linear 0..1 floats as Orca uses them (no colour management). */
-function rgb(hex: string): [number, number, number] {
-  const m = /^#?([0-9a-f]{6})/i.exec(hex.trim());
-  const n = m ? parseInt(m[1], 16) : 0x888888;
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
-}
+/** Colour string → 0..1 floats as Orca uses them (no colour management). */
+const rgb = (hex: string) => toRgb01(parseColourOr(hex, '#888888'));
 
 /** adjust_color_for_rendering(): near-black filaments are lifted to 0.2 grey. */
 function adjust([r, g, b]: [number, number, number]): [number, number, number] {

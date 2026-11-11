@@ -206,13 +206,3 @@ export function normalizeInput(type: ConfigOptionType, text: string): string {
   }
 }
 
-/** First element of a vector, or the scalar itself. */
-export function firstOf(v: ConfigValue | undefined): string | undefined {
-  if (v === undefined) return undefined;
-  return Array.isArray(v) ? v[0] : v;
-}
-
-export function asArray(v: ConfigValue | undefined): string[] {
-  if (v === undefined) return [];
-  return Array.isArray(v) ? v : [v];
-}

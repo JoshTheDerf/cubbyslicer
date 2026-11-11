@@ -4,6 +4,9 @@
  * over or opening a project over a plate with objects asks the user, and
  * writing over an existing CubbyCAD file asks before replacing it.
  * Local files go through cubby-mcp paths (open_project, export_3mf).
+ *
+ * cubby-mcp keeps the arguments `path`, `url`, `savePath` and `tab` for itself and
+ * never forwards them, so a file inside a CubbyCAD workspace is `cloudPath`.
  */
 import { argString, base64ToBytes, type BridgeTool } from '@cubby/shared/bridge';
 import { importBuffer, newProject } from '../../app/shell/actions';
@@ -30,9 +33,9 @@ function workspace(id: unknown): { id: string; name: string; writable: boolean }
 }
 
 function pathArg(args: Record<string, unknown>, ext?: string): string {
-  const p = argString(args, 'path')!.replace(/^\/+/, '');
-  if (!isSafePath(p)) throw new Error('path must be a relative path inside the workspace, e.g. "prints/bracket.3mf".');
-  if (ext && !p.toLowerCase().endsWith(ext)) throw new Error(`path must end in ${ext}.`);
+  const p = argString(args, 'cloudPath')!.replace(/^\/+/, '');
+  if (!isSafePath(p)) throw new Error('cloudPath must be a relative path inside the workspace, e.g. "prints/bracket.3mf".');
+  if (ext && !p.toLowerCase().endsWith(ext)) throw new Error(`cloudPath must end in ${ext}.`);
   return p;
 }
 
@@ -146,7 +149,7 @@ export function fileTools(): BridgeTool[] {
       name: 'open_cloud_file',
       description: 'Open a CubbyCAD workspace file: a 3MF project replaces the project (the user is asked first when the plate has objects) and becomes the save location; a model is added to the active plate.',
       timeoutMs: 10 * 60_000,
-      inputSchema: obj({ workspaceId: str('Workspace id.'), path: str('File path from list_cloud_files.') }, ['workspaceId', 'path']),
+      inputSchema: obj({ workspaceId: str('Workspace id.'), cloudPath: str('File path inside the workspace (a `path` from list_cloud_files).') }, ['workspaceId', 'cloudPath']),
       async run(args) {
         await signedIn();
         const w = workspace(args.workspaceId);
@@ -161,7 +164,7 @@ export function fileTools(): BridgeTool[] {
       name: 'save_to_cloud',
       description: 'Save the project as a 3MF into a CubbyCAD workspace (File → Save to CubbyCAD as…); it becomes the project’s save location. Replacing another existing file asks the user first, like the dialog.',
       timeoutMs: 10 * 60_000,
-      inputSchema: obj({ workspaceId: str('Workspace id.'), path: str(`File path, e.g. "${suggestedProjectName()}".`) }, ['workspaceId', 'path']),
+      inputSchema: obj({ workspaceId: str('Workspace id.'), cloudPath: str(`File path inside the workspace, e.g. "${suggestedProjectName()}".`) }, ['workspaceId', 'cloudPath']),
       async run(args) {
         await signedIn();
         const w = workspace(args.workspaceId);
@@ -178,7 +181,7 @@ export function fileTools(): BridgeTool[] {
       name: 'export_to_cloud',
       description: 'Export into a CubbyCAD workspace: kind "gcode" (the active plate’s sliced G-code) or "3mf" (the active plate’s meshes). Replacing an existing file asks the user first.',
       timeoutMs: 10 * 60_000,
-      inputSchema: obj({ kind: oneOfS(['gcode', '3mf'], 'What to export.'), workspaceId: str('Workspace id.'), path: str('File path (default: the suggested name).') }, ['kind', 'workspaceId']),
+      inputSchema: obj({ kind: oneOfS(['gcode', '3mf'], 'What to export.'), workspaceId: str('Workspace id.'), cloudPath: str('File path inside the workspace (default: the suggested name).') }, ['kind', 'workspaceId']),
       async run(args) {
         const kind = oneOf(args.kind, ['gcode', '3mf'] as const, 'kind');
         await signedIn();
@@ -186,7 +189,7 @@ export function fileTools(): BridgeTool[] {
         if (!w.writable) throw new Error(`Workspace "${w.name}" is read-only.`);
         const payload = exportPayload(kind);
         if (!payload) throw new Error(kind === 'gcode' ? 'Slice the plate first.' : 'The plate is empty.');
-        const path = args.path === undefined ? payload.name : pathArg(args, kind === 'gcode' ? '.gcode' : '.3mf');
+        const path = args.cloudPath === undefined ? payload.name : pathArg(args, kind === 'gcode' ? '.gcode' : '.3mf');
         if (!(await confirmReplace(w.id, path, false))) return { data: { ok: false, error: 'The user declined to replace the file.' } };
         const ok = await exportTo(kind, w.id, path);
         return { data: { ok, workspace: w.name, path } };

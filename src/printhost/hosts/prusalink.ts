@@ -7,39 +7,17 @@
  *           storage from GET api/v1/storage (first writable), default /usb
  *   upload (legacy): POST api/files/local multipart: path, print, file
  */
-import { digestAuthorization, parseChallenge, type DigestChallenge } from '../digest';
-import { HostError, type HostContext, type HostEnv, type HostRequest, type PrintHostDriver, type RequestOptions } from '../types';
+import { digestClient } from '../digest';
+import { HostError, type HostContext, type HostEnv, type PrintHostDriver } from '../types';
 import { escapePath, joinRemote } from '../url';
-import { client, expectOk, formFile, is2xx, tryJson } from '../util';
+import { client, expectOk, formFile, headerIf, is2xx, tryJson } from '../util';
 
 interface VersionReply { api?: string; text?: string; capabilities?: Record<string, unknown> }
 
 export function prusaLinkClient(ctx: HostContext, env: HostEnv) {
-  const c = client(ctx, env);
-  let challenge: DigestChallenge | null = null;
-  let nc = 0;
-  const digest = ctx.authType === 'user';
-  const authHeaders = (req: HostRequest): Record<string, string> => {
-    if (!digest) return ctx.apiKey ? { 'X-Api-Key': ctx.apiKey } : {};
-    return challenge ? { Authorization: digestAuthorization(challenge, ctx.user, ctx.password, req.method, req.url, ++nc) } : {};
-  };
-  async function send(req: HostRequest, opts?: RequestOptions) {
-    let r = await c.send({ ...req, headers: { ...req.headers, ...authHeaders(req) } }, opts);
-    if (r.status !== 401 || !digest) return r;
-    const ch = parseChallenge(r.header('WWW-Authenticate'));
-    if (!ch) {
-      throw new HostError('auth',
-        'PrusaLink wants an HTTP digest login, but the browser can’t read its challenge (the printer doesn’t expose WWW-Authenticate to other sites). Use the API key authorization instead, or upload from the PrusaLink web page.',
-        undefined, 401);
-    }
-    const retry = !challenge || challenge.nonce !== ch.nonce;
-    challenge = ch; nc = 0;
-    if (!retry) throw new HostError('auth', 'PrusaLink rejected the user name or password.', undefined, 401);
-    r = await c.send({ ...req, headers: { ...req.headers, ...authHeaders(req) } }, opts);
-    if (r.status === 401) throw new HostError('auth', 'PrusaLink rejected the user name or password.', undefined, 401);
-    return r;
-  }
-  return { url: c.url, send };
+  if (ctx.authType !== 'user') return client(ctx, env, () => headerIf('X-Api-Key', ctx.apiKey));
+  return digestClient(client(ctx, env), ctx.user, ctx.password, 'PrusaLink',
+    'PrusaLink wants an HTTP digest login, but the browser can’t read its challenge (the printer doesn’t expose WWW-Authenticate to other sites). Use the API key authorization instead, or upload from the PrusaLink web page.');
 }
 
 async function version(p: ReturnType<typeof prusaLinkClient>, signal?: AbortSignal): Promise<{ text?: string; usePut: boolean }> {

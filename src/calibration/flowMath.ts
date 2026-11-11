@@ -3,23 +3,8 @@
  * (Flow.cpp, calib.cpp CalibPressureAdvance / CalibPressureAdvancePattern
  * geometry), evaluated against a flat resolved config.
  */
-import type { ConfigValue, FlatConfig } from '../engine/types';
-
-export function num(v: ConfigValue | undefined, index = 0, fallback = 0): number {
-  const s = Array.isArray(v) ? (v[index] ?? v[0]) : v;
-  if (s === undefined || s === '' || s === 'nil') return fallback;
-  const n = parseFloat(String(s));
-  return Number.isFinite(n) ? n : fallback;
-}
-
-/** ConfigBase::get_abs_value: a float, or a percent of `ratioOver` ("110%"). */
-export function absValue(cfg: FlatConfig, key: string, ratioOver = 0): number {
-  const v = cfg[key];
-  const s = String(Array.isArray(v) ? v[0] ?? '' : v ?? '').trim();
-  if (s.endsWith('%')) return (parseFloat(s) / 100) * ratioOver;
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : 0;
-}
+import type { FlatConfig } from '../engine/types';
+import { cfgAbs, cfgNumber, SCALAR } from '../lib/configValue';
 
 /** Flow::auto_extrusion_width for perimeters / infill (1.125 × nozzle). */
 export function autoExtrusionWidth(nozzle: number): number { return 1.125 * nozzle; }
@@ -29,13 +14,19 @@ export function mm3PerMm(width: number, height: number): number {
   return height * (width - height * (1 - Math.PI / 4));
 }
 
-/** CalibPressureAdvance::find_optimal_PA_speed. */
+/**
+ * CalibPressureAdvance::find_optimal_PA_speed: max(100, outer wall speed),
+ * capped by the max volumetric speed; `outer_wall_speed` and `nozzle_diameter`
+ * at the bare extruder element, the volumetric limit at the filament's, as
+ * Orca 2.5 reads them. An unset volumetric limit (0) leaves the speed uncapped:
+ * Orca would return 0, a speed the engine refuses (min 1).
+ */
 export function findOptimalPASpeed(cfg: FlatConfig, lineWidth: number, layerHeight: number, extruder = 0, filament = 0): number {
-  const maxVol = num(cfg.filament_max_volumetric_speed, filament, 0);
-  const nozzle = num(cfg.nozzle_diameter, extruder, 0.4);
+  const maxVol = cfgNumber(cfg, 'filament_max_volumetric_speed', filament, 0);
+  const nozzle = cfgNumber(cfg, 'nozzle_diameter', extruder, 0.4);
   const w = lineWidth > 0 ? lineWidth : autoExtrusionWidth(nozzle);
   const perMm = mm3PerMm(w, layerHeight);
-  const outer = num(cfg.outer_wall_speed, 0, 0);
+  const outer = cfgNumber(cfg, 'outer_wall_speed', extruder, 0);
   const speed = Math.max(100, outer);
   return Math.floor(maxVol > 0 && perMm > 0 ? Math.min(speed, maxVol / perMm) : speed);
 }
@@ -72,12 +63,13 @@ export class PAPatternGeometry {
 
   constructor(private readonly cfg: FlatConfig, private readonly start: number, private readonly end: number, private readonly step: number, private readonly accel: number) {}
 
-  private get nozzle(): number { return num(this.cfg.nozzle_diameter, 0, 0.4); }
-  lineWidth(): number { const w = absValue(this.cfg, 'line_width', this.nozzle); return w > 0 ? w : autoExtrusionWidth(this.nozzle); }
-  lineWidthFirstLayer(): number { const w = absValue(this.cfg, 'initial_layer_line_width', this.nozzle); return w > 0 ? w : autoExtrusionWidth(this.nozzle); }
-  heightLayer(): number { return absValue(this.cfg, 'layer_height'); }
-  heightFirstLayer(): number { return absValue(this.cfg, 'initial_layer_print_height'); }
-  wallCount(): number { return Math.round(num(this.cfg.wall_loops, 0, 3)); }
+  private get nozzle(): number { return cfgNumber(this.cfg, 'nozzle_diameter', SCALAR, 0.4); }
+  private abs(key: string, over = 0): number { return cfgAbs(this.cfg, key, SCALAR, over); }
+  lineWidth(): number { const w = this.abs('line_width', this.nozzle); return w > 0 ? w : autoExtrusionWidth(this.nozzle); }
+  lineWidthFirstLayer(): number { const w = this.abs('initial_layer_line_width', this.nozzle); return w > 0 ? w : autoExtrusionWidth(this.nozzle); }
+  heightLayer(): number { return this.abs('layer_height'); }
+  heightFirstLayer(): number { return this.abs('initial_layer_print_height'); }
+  wallCount(): number { return Math.round(cfgNumber(this.cfg, 'wall_loops', SCALAR, 3)); }
   numPatterns(): number { return Math.ceil((this.end - this.start) / this.step + 1); }
 
   private rad(deg: number): number { return (deg * Math.PI) / 180; }

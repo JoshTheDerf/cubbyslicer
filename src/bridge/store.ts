@@ -6,25 +6,27 @@
  * The tool handlers (./tools.ts) load on first connect.
  */
 import { reactive, shallowRef } from 'vue';
-import { BridgeClient, type BridgeState, type ConfirmRequest } from '@cubby/shared/bridge';
-
-type PendingConfirm = ConfirmRequest & { resolve: (r: { ok: boolean; always: boolean }) => void };
+import { BridgeClient, type BridgeState } from '@cubby/shared/bridge';
+import { openDialog } from '../dialogs/state';
+import { askConfirm } from '../app/shell/uiState';
 
 export const bridgeUi = reactive({
-  open: false,
   /** Code to prefill (from `?mcp=CODE`). */
   prefill: '',
-  confirm: null as PendingConfirm | null,
 });
 
 export const bridge = new BridgeClient({
   app: 'slicer',
   appName: 'CubbySlicer',
   tools: () => import('./tools').then((m) => m.slicerTools()),
-  confirm: (req) => new Promise((resolve) => {
-    bridgeUi.confirm?.resolve({ ok: false, always: false });
-    bridgeUi.confirm = { ...req, resolve };
-  }),
+  // The agent's printer tools wait on the app's confirm dialog, with a "don't ask again" box.
+  confirm: async (req) => {
+    const a = await askConfirm({
+      title: req.title, message: req.message, confirmLabel: req.confirmLabel ?? 'Allow',
+      checkLabel: 'Allow without asking until I disconnect', dismissible: false, testId: 'bridge-confirm',
+    });
+    return { ok: a.choice === 'confirm', always: a.choice === 'confirm' && a.checked };
+  },
 });
 
 export const bridgeState = shallowRef<BridgeState>(bridge.state);
@@ -32,13 +34,7 @@ bridge.subscribe((s) => { bridgeState.value = s; });
 
 export function openBridgeDialog(prefill = ''): void {
   bridgeUi.prefill = prefill;
-  bridgeUi.open = true;
-}
-
-export function answerConfirm(ok: boolean, always = false): void {
-  const c = bridgeUi.confirm;
-  bridgeUi.confirm = null;
-  c?.resolve({ ok, always });
+  openDialog('bridge');
 }
 
 let started = false;

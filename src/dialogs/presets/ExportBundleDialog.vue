@@ -7,17 +7,25 @@
  */
 import { computed, ref, watch } from 'vue';
 import { mobileDialog } from '../../ui/mobileDialog';
+import AppDialog from '../../ui/AppDialog.vue';
 import { activeEngine } from '../../app/state';
 import { downloadBytes } from '../../app/shell/download';
 import { currentPresets } from '../../presets/store';
 import type { UserPreset } from '../../presets/userPresets';
 import { toast } from '../../ui';
 import { dialogs } from '../state';
-import { EXPORT_LABELS, filamentBaseName, filamentBundle, presetsZip, printerBundle, type BundleFile, type ExportKind } from './bundleExport';
+import { SCALAR, valueAt } from '../../lib/configValue';
+import { BED_ASSET_SLOTS, type BedAssetFile, type BedAssetOption } from '../../presets/bundleImport';
+import { loadBedAsset, parseAssetRef } from '../bed/customBed';
+import { dataUrlBytes, EXPORT_LABELS, filamentBaseName, filamentBundle, presetsZip, presetVersionTag, printerBundle, type BundleFile, type ExportKind } from './bundleExport';
 
 const kind = ref<ExportKind>('printer_bundle');
+/** Orca "Include custom bed texture and model" (on by default; printer config bundles only). */
+const includeBed = ref(true);
 const chosen = ref<Set<string>>(new Set());
 const p = computed(() => currentPresets.value);
+/** Orca's preset `version` from the engine's schema (falls back to 2.5.0.0). */
+const versionTag = () => presetVersionTag(p.value.schema.value?.version);
 const users = computed(() => p.value.users?.list.value ?? []);
 const byKind = (k: UserPreset['kind']) => users.value.filter((u) => u.kind === k);
 
@@ -62,22 +70,38 @@ async function vendorOf(u: UserPreset): Promise<string> {
   return info?.vendor || 'Custom';
 }
 
+/**
+ * The printer's custom bed texture / model stored in this browser (Orca reads
+ * the files its option paths name and skips missing ones; a plain path from an
+ * imported desktop preset can't be read here, so it is skipped too).
+ */
+async function bedFiles(u: UserPreset): Promise<Partial<Record<BedAssetOption, BedAssetFile>>> {
+  const out: Partial<Record<BedAssetOption, BedAssetFile>> = {};
+  for (const { option } of BED_ASSET_SLOTS) {
+    const r = parseAssetRef(valueAt(u.values[option], SCALAR) ?? '');
+    const a = r ? await loadBedAsset(r.id).catch(() => null) : null;
+    if (!a) continue;
+    try { out[option] = { name: a.name || r!.name, data: dataUrlBytes(a.dataUrl) }; } catch { /* unreadable: skip like a missing file */ }
+  }
+  return out;
+}
+
 async function exportNow(): Promise<void> {
   const out: BundleFile[] = [];
   try {
     if (kind.value === 'printer_bundle') {
       for (const id of chosen.value) {
         const pr = users.value.find((u) => u.id === id);
-        if (pr) out.push(printerBundle(pr, users.value, { parentName: pr.inherits }));
+        if (pr) out.push(printerBundle(pr, users.value, { parentName: pr.inherits, version: versionTag(), bedAssets: includeBed.value ? await bedFiles(pr) : undefined }));
       }
     } else if (kind.value === 'filament_bundle') {
       for (const name of chosen.value) {
         const list = byKind('filament').filter((u) => filamentBaseName(u.name) === name);
-        out.push(filamentBundle(name, await Promise.all(list.map(async (preset) => ({ preset, vendor: await vendorOf(preset) })))));
+        out.push(filamentBundle(name, await Promise.all(list.map(async (preset) => ({ preset, vendor: await vendorOf(preset) }))), undefined, versionTag()));
       }
     } else {
       const k = kind.value === 'printer_presets' ? 'printer' : kind.value === 'filament_presets' ? 'filament' : 'process';
-      out.push(presetsZip(k, byKind(k).filter((u) => chosen.value.has(u.id))));
+      out.push(presetsZip(k, byKind(k).filter((u) => chosen.value.has(u.id)), versionTag()));
     }
   } catch (e) {
     toast.error('Couldn’t export the presets.', { detail: (e as Error)?.message });
@@ -92,12 +116,13 @@ async function exportNow(): Promise<void> {
 </script>
 
 <template>
-  <UModal v-model:open="dialogs.exportBundle" title="Export preset bundle" :fullscreen="mobileDialog" :ui="{ content: 'sm:max-w-xl', body: 'flex flex-col gap-3 phone:overflow-hidden' }">
-    <template #body>
+  <AppDialog v-model:open="dialogs.exportBundle" title="Export preset bundle" size="xl" fullscreen body-class="flex flex-col gap-3 phone:overflow-hidden"
+             confirm-label="Export" confirm-icon="i-lucide-download" :confirm-disabled="!chosen.size" @confirm="exportNow">
       <UFormField label="Export type">
         <USelect v-if="mobileDialog" v-model="kind" :items="kindItems" value-key="value" size="sm" class="w-full" aria-label="Export type" />
         <URadioGroup v-else v-model="kind" :items="kindItems" size="sm" />
       </UFormField>
+      <UCheckbox v-model="includeBed" :disabled="kind !== 'printer_bundle'" size="sm" label="Include custom bed texture and model" />
       <UAlert v-if="activeEngine === 'preflight'" color="warning" variant="subtle" icon="i-lucide-info"
               description="These are preFlight presets: OrcaSlicer can import the files, but preFlight option names may not all be recognised." />
       <p class="text-xs text-muted">{{ note }}</p>
@@ -112,14 +137,7 @@ async function exportNow(): Promise<void> {
         </label>
         <p v-if="!rows.length" class="eb__empty">No user presets of this type yet. Save a preset (or create a printer / filament) first.</p>
       </div>
-    </template>
-    <template #footer>
-      <div class="flex w-full justify-end gap-2">
-        <UButton variant="ghost" color="neutral" label="Cancel" @click="dialogs.exportBundle = false" />
-        <UButton color="primary" icon="i-lucide-download" label="Export" :disabled="!chosen.size" @click="exportNow" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>

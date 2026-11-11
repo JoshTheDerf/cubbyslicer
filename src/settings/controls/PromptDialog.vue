@@ -1,6 +1,7 @@
 <script setup lang="ts">
-/** Name prompt / confirmation dialog (UModal). Parent validates and sets `error`. */
+/** Name prompt / confirmation dialog (AppDialog). Parent validates and sets `error`. */
 import { ref } from 'vue';
+import AppDialog from '../../ui/AppDialog.vue';
 
 const props = defineProps<{
   title: string;
@@ -22,15 +23,13 @@ function submit(id: string): void {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :description="label !== undefined ? message : undefined" :ui="{ content: 'sm:max-w-md' }"
-          @after:leave="emit('close')">
-    <template #body>
+  <AppDialog v-model:open="open" :title="title" :description="label !== undefined ? message : undefined" size="md"
+             @after:leave="emit('close')">
       <p v-if="message && label === undefined" class="text-sm text-muted whitespace-pre-wrap">{{ message }}</p>
       <UFormField v-if="label !== undefined" :label="label" :error="error ?? undefined">
         <UInput v-model="value" autofocus spellcheck="false" class="w-full" @keydown.enter.prevent="submit(acts[acts.length - 1].id)" />
       </UFormField>
       <p v-else-if="error" class="mt-2 text-sm text-error">{{ error }}</p>
-    </template>
     <template #footer>
       <div class="flex w-full flex-wrap justify-end gap-2">
         <UButton v-for="(a, i) in acts" :key="a.id" :label="a.text"
@@ -38,5 +37,5 @@ function submit(id: string): void {
                  @click="submit(a.id)" />
       </div>
     </template>
-  </UModal>
+  </AppDialog>
 </template>

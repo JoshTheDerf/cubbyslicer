@@ -134,25 +134,30 @@ const shot = async (page, name) => { await page.screenshot({ path: resolve(out, 
   await ctx.close();
 }
 
-// 7. Full Spectrum: four colours, mixed filaments + the gradient editor, and a sliced gradient.
+// 7. Mixed filaments (OrcaSlicer 2.5 colour mixing; needs a 2.5 engine): four colours, the gradient editor, and a sliced gradient.
 {
-  const { ctx, page } = await session(undefined, 'fullspectrum');
-  await page.waitForSelector('.mf', { timeout: 120000 });
+  const { ctx, page } = await session();
   await colours(page, ['#E63946', '#F1C453', '#1D6FD8', '#F4F1EA']);
+  await page.waitForSelector('.mf', { timeout: 120000 });
   await page.waitForTimeout(3000);
-  await page.getByRole('button', { name: 'Add mixed filament' }).click();
-  await page.getByRole('radio', { name: 'Gradient' }).click();
-  await page.getByRole('button', { name: 'Filament', exact: true }).click();
+  await page.getByRole('button', { name: 'Add mixed filament' }).first().click();
+  await page.getByRole('checkbox', { name: 'Gradient Effect' }).click();
   await page.waitForTimeout(800);
   await shot(page, 'mixed-gradient-editor');
-  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('button', { name: 'OK', exact: true }).click();
   await page.waitForTimeout(3000);
   await handy(page, 'calicat');
-  const id = await page.evaluate(() => Number([...document.querySelectorAll('.mf__row')].pop()?.querySelector('.mf__no')?.textContent));
+  const id = await page.evaluate(() => Number([...document.querySelectorAll('.mf__row')].pop()?.querySelector('.mf__sw')?.textContent));
   await page.evaluate((i) => { const P = window.__cubbyProject; P.setObjectOverride(P.objects.value[0].id, 'extruder', String(i)); }, id);
+  // A gradient prints only with "Mixed color sublayer" on (else the engine warns and ignores it).
+  await page.evaluate(() => window.__cubbyPresets.currentPresets.value.setValue('process', 'enable_mixed_color_sublayer', '1'));
   await act(page, 'view.fit-selection'); await page.waitForTimeout(1200);
   await shot(page, 'mixed-filaments');
   await slice(page);
+  // Colour by filament, so the gradient shows (the default is by line type).
+  await page.getByRole('combobox', { name: 'Colour scheme' }).first().click();
+  await page.getByRole('option', { name: 'Filament', exact: true }).click();
+  await page.waitForTimeout(4000);
   await shot(page, 'mixed-preview');
   await ctx.close();
 }

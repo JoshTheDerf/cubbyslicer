@@ -2,5 +2,5 @@
 export { default as PrintHostDialogs } from './PrintHostDialogs.vue';
 export { default as PrintHostButton } from './PrintHostButton.vue';
 export { openPhysicalPrinterDialog, openSendDialog, physicalPrinter, hostReady } from './store';
-export { printhostActions, registerPrinthostActions } from './actions';
+export { printhostActions } from './actions';
 export { HOSTS, OTHER_UNSUPPORTED } from './registry';

@@ -8,6 +8,8 @@
  * and the caller reports that digest auth isn't possible from a browser.
  */
 import { md5Hex } from './md5';
+import { HostError, type HostRequest, type HostResponse, type RequestOptions } from './types';
+import type { Client } from './util';
 
 export interface DigestChallenge {
   realm: string;
@@ -54,4 +56,30 @@ export function digestAuthorization(
   if (qop) parts.push(`qop=${qop}`, `nc=${ncHex}`, `cnonce=${q(cnonce)}`);
   if (ch.opaque !== undefined) parts.push(`opaque=${q(ch.opaque)}`);
   return `Digest ${parts.join(', ')}`;
+}
+
+/**
+ * Wrap a client so requests answer a digest challenge: the first request goes
+ * out bare (or with the last challenge), a 401 is retried once with the
+ * printer's new nonce. `noChallenge` explains what to do when the browser
+ * can't read WWW-Authenticate (not exposed cross-origin).
+ */
+export function digestClient(c: Client, user: string, password: string, label: string, noChallenge: string): Client {
+  let challenge: DigestChallenge | null = null;
+  let nc = 0;
+  const auth = (req: HostRequest): Record<string, string> =>
+    (challenge ? { Authorization: digestAuthorization(challenge, user, password, req.method, req.url, ++nc) } : {});
+  async function send(req: HostRequest, opts?: RequestOptions): Promise<HostResponse> {
+    let r = await c.send({ ...req, headers: { ...req.headers, ...auth(req) } }, opts);
+    if (r.status !== 401) return r;
+    const ch = parseChallenge(r.header('WWW-Authenticate'));
+    if (!ch) throw new HostError('auth', noChallenge, undefined, 401);
+    const retry = !challenge || challenge.nonce !== ch.nonce;
+    challenge = ch; nc = 0;
+    if (!retry) throw new HostError('auth', `${label} rejected the user name or password.`, undefined, 401);
+    r = await c.send({ ...req, headers: { ...req.headers, ...auth(req) } }, opts);
+    if (r.status === 401) throw new HostError('auth', `${label} rejected the user name or password.`, undefined, 401);
+    return r;
+  }
+  return { ...c, send };
 }

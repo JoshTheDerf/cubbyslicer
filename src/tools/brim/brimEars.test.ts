@@ -74,7 +74,8 @@ describe('brim ears', () => {
 
   it('defaults and limits', () => {
     expect(defaultHeadDiameter(0.5, 0.4)).toBe(8);
-    expect(defaultHeadDiameter(2, 0.4)).toBe(20);
+    expect(defaultHeadDiameter(2, 0.4)).toBe(32);
+    expect(defaultHeadDiameter(20, 0.4)).toBe(200);
     expect(detectionRadiusMax([])).toBe(100);
   });
 });

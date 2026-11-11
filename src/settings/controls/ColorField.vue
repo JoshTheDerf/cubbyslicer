@@ -1,9 +1,14 @@
 <script setup lang="ts">
 /**
- * Colour swatch that opens a UColorPicker in a UPopover (+ hex input and an
- * optional palette). Keeps an existing alpha suffix (#RRGGBBAA) intact.
+ * Colour swatch that opens Orca 2.5's colour picker (src/ui/colorPicker, solid colours as Orca's
+ * setting fields use it) in a popover. Keeps an existing alpha suffix (#RRGGBBAA) intact.
+ * `palette` / `resettable` add quick chips and "use the preset colour" under the picker.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
+import { normaliseHex, swatchBackground, withRgb } from '../../lib/colour';
+import ColorPicker from '../../ui/colorPicker/ColorPicker.vue';
+import ColorPickerHost from '../../ui/colorPicker/ColorPickerHost.vue';
+import type { Selection } from '../../ui/colorPicker/model';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -18,44 +23,39 @@ const props = withDefaults(defineProps<{
 }>(), { size: 'xs', palette: () => [] });
 const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>();
 
-const hex = computed(() => {
-  const m = /^#([0-9a-f]{6})/i.exec(props.modelValue.trim());
-  return m ? `#${m[1].toUpperCase()}` : '#000000';
-});
-const alpha = computed(() => (/^#[0-9a-f]{8}$/i.test(props.modelValue.trim()) ? props.modelValue.trim().slice(7) : ''));
-const draft = ref(hex.value);
-watch(hex, (h) => { draft.value = h; });
+const open = ref(false);
+/** RGB part (#RRGGBB) for the picker; the alpha of the value is kept on edit. */
+const hex = computed(() => normaliseHex(props.modelValue)?.slice(0, 7) ?? '#000000');
+const swatch = computed(() => (normaliseHex(props.modelValue) ? swatchBackground(props.modelValue) : hex.value));
+const selection = computed<Selection>(() => ({ type: 'solid', colors: [hex.value] }));
 
 function set(v: string): void {
-  const m = /^#?([0-9a-f]{6})$/i.exec(v.trim());
-  if (!m) { draft.value = hex.value; return; }
-  const next = `#${m[1].toUpperCase()}${alpha.value}`;
-  if (next !== props.modelValue) emit('update:modelValue', next);
+  const rgb = normaliseHex(v)?.slice(0, 7);
+  const next = rgb ? withRgb(props.modelValue, rgb) ?? rgb : null;
+  if (next && next !== props.modelValue) emit('update:modelValue', next);
 }
+function confirm(sel: Selection): void { set(sel.colors[0]); open.value = false; }
 </script>
 
 <template>
-  <UPopover :content="{ side: 'bottom', align: 'start' }">
+  <ColorPickerHost v-model:open="open">
+    <template #trigger>
     <button type="button" class="cf" :class="[`cf--${size}`, { 'cf--swatch': swatchOnly }]" :disabled="disabled"
             :aria-label="ariaLabel ?? 'Colour'" :title="modelValue || hex">
-      <span class="cf__sw" :style="{ background: hex }" />
+      <span class="cf__sw" :style="{ background: swatch }" />
       <span v-if="!swatchOnly" class="cf__hex">{{ hex }}</span>
     </button>
-    <template #content>
-      <div class="flex w-56 flex-col gap-2 p-2" data-color-popover>
-        <UColorPicker :model-value="hex" size="sm" @update:model-value="(v: string | undefined) => v && set(v)" />
-        <div class="flex items-center gap-1">
-          <UInput v-model="draft" size="xs" class="flex-1 font-mono" aria-label="Hex colour" spellcheck="false"
-                  @keydown.enter="set(draft)" @blur="set(draft)" />
-          <UButton v-if="resettable" size="xs" variant="ghost" icon="i-lucide-rotate-ccw" title="Use the preset colour" @click="emit('update:modelValue', '')" />
-        </div>
-        <div v-if="palette.length" class="flex flex-wrap gap-1">
+    </template>
+      <div data-color-popover>
+        <ColorPicker v-if="open" :selection="selection" @confirm="confirm" @cancel="open = false" />
+        <div v-if="palette.length || resettable" class="flex flex-wrap items-center gap-1 px-2.5 pb-2.5">
           <button v-for="c in palette" :key="c" type="button" class="cf__chip" :class="{ on: c.toUpperCase() === hex }" :style="{ background: c }"
-                  :title="c" :aria-label="`Use ${c}`" @click="set(c)" />
+                  :title="c" :aria-label="`Use ${c}`" @click="set(c); open = false" />
+          <UButton v-if="resettable" size="xs" variant="ghost" icon="i-lucide-rotate-ccw" label="Preset colour" title="Use the preset colour" class="ms-auto"
+                   @click="emit('update:modelValue', ''); open = false" />
         </div>
       </div>
-    </template>
-  </UPopover>
+  </ColorPickerHost>
 </template>
 
 <style scoped>

@@ -5,7 +5,6 @@ import type { ConfigValue, EngineId } from '../engine/types';
 
 /** Preset tab / collection. (Orca JSON `type`: machine | process | filament.) */
 export type PresetKind = 'printer' | 'process' | 'filament';
-export const PRESET_KINDS: readonly PresetKind[] = ['printer', 'process', 'filament'];
 
 /** Orca/Bambu JSON `type` for a kind. */
 export const ORCA_JSON_TYPE: Record<PresetKind, string> = { printer: 'machine', process: 'process', filament: 'filament' };
@@ -54,6 +53,8 @@ export interface PresetInfo {
   defaultFilaments?: string[];
   /** From the OrcaFilamentLibrary (Orca) — used for grouping. */
   fromLibrary?: boolean;
+  /** Filament preset's `filament_id` (own, else its parent's): the engine's `filament_ids` (PresetBundle full_config). */
+  filamentId?: string;
 }
 
 export interface VendorInfo {
@@ -100,15 +101,18 @@ export interface PresetCatalog {
   modelDefaultBedType?(vendorId: string, model: string): Promise<string | null>;
   /** URLs of a machine model's bed mesh (STL) and texture (SVG/PNG), if it has them (Orca model JSON bed_model / bed_texture). */
   modelBedAssets?(vendorId: string, model: string): Promise<BedAssets | null>;
+  /** The machine model's vendor `model_id` (BBL "N9" = A2L), or null. */
+  modelId?(vendorId: string, model: string): Promise<string | null>;
   /** Flattened (inheritance-resolved) values of a system preset. */
   resolve(id: string, kind: PresetKind): Promise<PresetValues | null>;
-  /** Find a system preset by name (for imports / user presets referencing a parent by name). */
-  findByName(kind: PresetKind, name: string, vendorHint?: string): Promise<PresetInfo | null>;
+  /** Find a system preset by name (for imports / user presets referencing a parent by name).
+   *  `autoMatch` false: no "Generic X @System" fallback for a missing generic filament (Orca catalog). */
+  findByName(kind: PresetKind, name: string, vendorHint?: string, autoMatch?: boolean): Promise<PresetInfo | null>;
 }
 
 /** Keys that describe a preset rather than configure the engine. */
 export const STRUCTURAL_KEYS: ReadonlySet<string> = new Set([
-  'name', 'inherits', 'from', 'instantiation', 'type', 'setting_id', 'version', 'is_custom_defined',
+  'name', 'inherits', 'include', 'from', 'instantiation', 'type', 'setting_id', 'version', 'is_custom_defined',
   'renamed_from', 'description', 'alias', 'base_id', 'user_id', 'updated_time', 'filament_id_map',
 ]);
 

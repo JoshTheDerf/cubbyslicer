@@ -6,7 +6,7 @@
  */
 import { nextTick, reactive, ref, watch } from 'vue';
 import type { ConfigMode } from '../engine/types';
-import { lsGet, lsSet } from '../presets/kv';
+import { readJson, writeJson } from '../lib/storage';
 import type { PresetKind } from '../presets/types';
 import type { SettingsTabId } from './layout/types';
 
@@ -15,19 +15,19 @@ export type SettingsRegion = 'global' | 'objects';
 export type SidebarSection = 'printer' | 'filament' | 'objects' | 'process';
 
 export const settingsUi = reactive({
-  mode: (lsGet<ConfigMode>('cubby.settings.mode') ?? 'advanced') as ConfigMode,
+  mode: (readJson<ConfigMode>('cubby.settings.mode') ?? 'advanced') as ConfigMode,
   /** Preset kind last focused / edited (drives the save / revert actions). */
-  tab: (lsGet<SettingsTabId>('cubby.settings.tab') ?? 'process') as SettingsTabId,
+  tab: (readJson<SettingsTabId>('cubby.settings.tab') ?? 'process') as SettingsTabId,
   filamentSlot: 0,
   /** Orca's process "Global | Objects" switch. */
-  region: (lsGet<SettingsRegion>('cubby.settings.region') ?? 'global') as SettingsRegion,
+  region: (readJson<SettingsRegion>('cubby.settings.region') ?? 'global') as SettingsRegion,
   /** Open "Printer settings" / "Filament settings" dialog (Orca's edit buttons next to the combos). */
   editor: null as 'printer' | 'filament' | null,
   /** Selected page per tab (page id from the built layout). */
   pageByTab: {} as Partial<Record<SettingsTabId, string>>,
   /** Collapsed option groups (group id). */
   collapsedGroups: [] as string[],
-  collapsedSections: (lsGet<SidebarSection[]>('cubby.settings.collapsed') ?? []) as SidebarSection[],
+  collapsedSections: (readJson<SidebarSection[]>('cubby.settings.collapsed') ?? []) as SidebarSection[],
   /** Key flashed after a search jump. */
   highlightKey: null as string | null,
   /** Number of mounted SettingsPanel instances (sidebar-only actions are gated on it). */
@@ -35,10 +35,10 @@ export const settingsUi = reactive({
   /** Number of mounted SettingsHost instances (the settings dialogs; normally 1). */
   hosts: 0,
 });
-watch(() => settingsUi.mode, (m) => lsSet('cubby.settings.mode', m));
-watch(() => settingsUi.tab, (t) => lsSet('cubby.settings.tab', t));
-watch(() => settingsUi.region, (r) => lsSet('cubby.settings.region', r));
-watch(() => settingsUi.collapsedSections.slice(), (c) => lsSet('cubby.settings.collapsed', c));
+watch(() => settingsUi.mode, (m) => writeJson('cubby.settings.mode', m));
+watch(() => settingsUi.tab, (t) => writeJson('cubby.settings.tab', t));
+watch(() => settingsUi.region, (r) => writeJson('cubby.settings.region', r));
+watch(() => settingsUi.collapsedSections.slice(), (c) => writeJson('cubby.settings.collapsed', c));
 // Closing the printer / filament dialog hands the save / revert actions back to the process preset.
 watch(() => settingsUi.editor, (e) => { settingsUi.tab = e ?? 'process'; });
 

@@ -3,7 +3,8 @@
  * extruder type, validation messages and Calib_Params building. Pure.
  */
 import type { CalibParams } from '../engine/types';
-import { parseIntList } from './flowMath';
+import { mm3PerMm, parseIntList } from './flowMath';
+import type { CalibRequest } from './plan';
 
 // ---- temperature -------------------------------------------------------------------------
 
@@ -41,17 +42,21 @@ export function snapTemp(t: number): number {
   return Math.floor(Math.max(155, Math.min(500, Math.round(t))) / 5) * 5;
 }
 
-export function tempParams(start: number, end: number): CalibParams | string {
+/** Temp_Calibration_Dlg::on_start. `resize`: "Auto-scale for nozzle"; `model` (belt printers only): 0 Standard, 1 Overhang. */
+export function tempParams(start: number, end: number, resize = true, model = 0): CalibRequest | string {
   if (!Number.isFinite(start) || !Number.isFinite(end) || start > 500 || end < 155 || end > start - 5) {
     return 'Please enter valid values: start ≤ 500 °C, end ≥ 155 °C and start ≥ end + 5 °C.';
   }
-  return { mode: 'temp_tower', start: Math.round(start), end: Math.round(end), step: 5 };
+  return { mode: 'temp_tower', start: Math.round(start), end: Math.round(end), step: 5, nozzleBasedResize: resize, testModel: model };
 }
 
 // ---- pressure advance -------------------------------------------------------------------
 
 export type PAMethod = 'pa_tower' | 'pa_line' | 'pa_pattern';
 export interface PAForm { method: PAMethod; bowden: boolean; start: number; end: number; step: number; printNumbers: boolean; accels: string; speeds: string }
+
+/** Belt printers only run the PA tower so far (calib_dlg.cpp is_belt_printer_selected). */
+export function paMethodsFor(belt: boolean): PAMethod[] { return belt ? ['pa_tower'] : ['pa_tower', 'pa_line', 'pa_pattern']; }
 
 /** PA_Calibration_Dlg::reset_params. */
 export function paDefaults(method: PAMethod, bowden: boolean): Pick<PAForm, 'start' | 'end' | 'step' | 'printNumbers'> {
@@ -83,6 +88,81 @@ export function rangeParams(mode: 'retraction_tower' | 'vol_speed_tower' | 'vfa_
     return `Please enter valid values: ${min}, step > 0 and end ≥ start + step.`;
   }
   return { mode, start, end, step };
+}
+
+// ---- VFA auto-adjust (VFA_Test_Dlg::on_start) ----------------------------------------------
+
+export interface VfaFacts {
+  nozzle: number;
+  /** Process layer height (used when not resizing). */
+  presetLayerHeight: number;
+  /** filament_max_volumetric_speed (0: no limit). */
+  maxVolSpeed: number;
+  /** Printer min / max layer height (0: unset). */
+  minLayerHeight: number;
+  maxLayerHeight: number;
+  /** Outer wall line width, else line width, else the nozzle. */
+  lineWidth: number;
+}
+
+export type VfaDecision =
+  | { kind: 'ok' }
+  /** The layer height was lowered to reach the end speed: tell the user. */
+  | { kind: 'reduced'; layerHeight: number; message: string }
+  /** Even the smallest layer height can't reach it: lower the end speed too, if the user agrees. */
+  | { kind: 'lower-end'; layerHeight: number; end: number; message: string }
+  /** The top blocks will be clamped: continue only if the user agrees. */
+  | { kind: 'clamp'; message: string };
+
+/** Max outer-wall speed at layer height `lh` within the filament's volumetric limit. */
+export function vfaSpeedLimit(f: VfaFacts, lh: number): number {
+  const perMm = mm3PerMm(f.lineWidth, lh);
+  return perMm > 0 ? f.maxVolSpeed / perMm : 1e9;
+}
+
+/**
+ * When the end speed exceeds what the filament's max volumetric speed allows,
+ * the engine clamps the outer wall speed and the top blocks print at the same
+ * speed. With auto-adjust (and resizing) pick the largest layer height of the
+ * printer's compatible process presets (within the machine limits, never
+ * above the default) that reaches the end speed; failing that, the smallest
+ * one and a lower end speed. `candidates` is only called when needed.
+ */
+export async function vfaAdjust(p: { start: number; end: number; step: number }, resize: boolean, autoAdjust: boolean, f: VfaFacts,
+  candidates: () => number[] | Promise<number[]>): Promise<VfaDecision> {
+  const defaultLh = resize ? f.nozzle / 2 : (f.presetLayerHeight > 0 ? f.presetLayerHeight : f.nozzle / 2);
+  if (!(f.maxVolSpeed > 0 && f.nozzle > 0 && p.end > vfaSpeedLimit(f, defaultLh))) return { kind: 'ok' };
+  const over = `The end speed (${p.end.toFixed(0)} mm/s) exceeds the filament’s maximum volumetric speed (${f.maxVolSpeed.toFixed(1)} mm³/s)`;
+  const clamp = (question: string): VfaDecision => ({
+    kind: 'clamp',
+    message: `${over}, which limits the outer wall to about ${vfaSpeedLimit(f, defaultLh).toFixed(0)} mm/s at this line width and layer height. `
+      + `Speeds above this will be clamped, so the upper blocks of the tower will not print at the requested speed. ${question}`,
+  });
+  if (!(autoAdjust && resize)) {
+    return clamp(resize ? 'Enable “Auto-adjust” to fix this automatically, or continue anyway?'
+      : 'Enable “Auto-scale for nozzle” and “Auto-adjust” to fix this automatically, or continue anyway?');
+  }
+  const list = [...new Set((await candidates())
+    .filter((lh) => lh > 0 && !(f.minLayerHeight > 0 && lh < f.minLayerHeight - 1e-6) && !(f.maxLayerHeight > 0 && lh > f.maxLayerHeight + 1e-6))
+    .map((lh) => Math.round(lh * 1e6) / 1e6))].sort((a, b) => a - b);
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] > defaultLh + 1e-6) continue; // never raise the layer height above the default
+    if (vfaSpeedLimit(f, list[i]) >= p.end) {
+      return {
+        kind: 'reduced', layerHeight: list[i],
+        message: `${over} at the default layer height (${defaultLh.toFixed(2)} mm). The layer height has been reduced to ${list[i].toFixed(2)} mm (a value used by this printer’s profiles) so the tower can reach the requested speed.`,
+      };
+    }
+  }
+  if (!list.length) return clamp('Continue anyway?');
+  const minLh = list[0];
+  let end = Math.floor(vfaSpeedLimit(f, minLh) / p.step) * p.step; // snap down to a step multiple
+  if (end < p.start + p.step) end = p.start + p.step;
+  return {
+    kind: 'lower-end', layerHeight: minLh, end,
+    message: `Even at the smallest layer height used by this printer’s profiles (${minLh.toFixed(2)} mm) the end speed (${p.end.toFixed(0)} mm/s) exceeds the filament’s maximum volumetric speed (${f.maxVolSpeed.toFixed(1)} mm³/s). `
+      + `The layer height will be set to ${minLh.toFixed(2)} mm and the end speed lowered to ${end.toFixed(0)} mm/s. Continue?`,
+  };
 }
 
 // ---- input shaping / cornering ----------------------------------------------------------------

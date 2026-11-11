@@ -310,3 +310,6 @@ export function queueParam(objectId: string, nodeId: string, key: string, value:
 
 /** Drag released: commit what is queued and close the undo step. */
 export function commitParams(): void { closeGesture = true; void drain(); }
+
+/** No parameter edit queued or being evaluated (tests: an undo right after a drag waits for this). */
+export function paramsIdle(): boolean { return !draining && !queue.length && !timer; }

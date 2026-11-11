@@ -6,12 +6,15 @@
  */
 import { argNumber, argString, type BridgeTool } from '@cubby/shared/bridge';
 import { activeEngine, resolvedConfig } from '../../app/state';
-import { isOrcaFamily, type CalibParams } from '../../engine/types';
+import { calibrationUnavailable } from '../../engine/capabilities';
+import type { CalibParams } from '../../engine/types';
+import type { CalibRequest } from '../../calibration/plan';
 import { currentPresets, presetsSettled } from '../../presets/store';
-import { asArray } from '../../presets/values';
+import { asList, cfgString, SCALAR } from '../../lib/configValue';
+import { HANDY_MODELS } from '../../calibration/handyModels';
 import {
   corneringDefaults, corneringParams, paDefaults, paParams, rangeDefaults, rangeParams, SHAPING_DAMP_DEFAULTS, SHAPING_FREQ_DEFAULTS, shaperTypesFor,
-  shapingDampParams, shapingFreqParams, tempFilamentOf, tempParams, tempRangeFor, type PAMethod,
+  paMethodsFor, shapingDampParams, shapingFreqParams, tempFilamentOf, tempParams, tempRangeFor, vfaAdjust, type PAMethod,
 } from '../../calibration/forms';
 import { activeCalib } from '../../calibration/state';
 import { objects } from '../../project/store';
@@ -19,7 +22,7 @@ import { oneOf } from '../logic';
 import { bool, num, obj, objectBrief, oneOfS, str } from './util';
 
 const TESTS = ['temp', 'flow', 'pa', 'retraction', 'volumetric', 'vfa', 'is_freq', 'is_damp', 'cornering', 'tolerance'] as const;
-const HANDY = ['orca-cube', 'orca-sliced', 'tolerance', 'benchy', 'calicat', 'fdm-test', 'voron-cube', 'bunny', 'string-hell'] as const;
+const HANDY = HANDY_MODELS.map((m) => m.id);
 const FLOW = ['yolo', 'yolo_perfectionist', 'pass1', 'pass2'] as const;
 
 export function calibrationTools(): BridgeTool[] {
@@ -27,10 +30,11 @@ export function calibrationTools(): BridgeTool[] {
     {
       name: 'calibrate',
       description:
-        'Set up a calibration print from the Calibration menu (OrcaSlicer / Full Spectrum engines). It replaces the project: with objects on the plate the user confirms in the browser. Then slice. ' +
+        'Set up a calibration print from the Calibration menu (OrcaSlicer engine). It replaces the project: with objects on the plate the user confirms in the browser. Then slice. ' +
         'test: temp (start / end °C, default from the filament type), flow (type yolo | yolo_perfectionist | pass1 | pass2, pattern archimedeanchords | monotonic), ' +
-        'pa (method pa_tower | pa_line | pa_pattern, bowden, start / end / step, printNumbers, accels / speeds comma lists for pa_pattern), ' +
-        'retraction (mm), volumetric (mm³/s), vfa (mm/s) (start / end / step), is_freq (startX / endX / startY / endY Hz, damp, shaper, model 0 ringing | 1 fast), ' +
+        'temp also takes resize (auto-scale for the nozzle, default true) and on belt printers model 0 standard | 1 overhang. ' +
+        'pa (method pa_tower | pa_line | pa_pattern — belt printers: pa_tower only, bowden, start / end / step, printNumbers, accels / speeds comma lists for pa_pattern), ' +
+        'retraction (mm), volumetric (mm³/s), vfa (mm/s) (start / end / step; vfa also resize and autoAdjust (default true): when the end speed exceeds the filament’s max volumetric speed the layer height and, if needed, the end speed are lowered, as the dialog does — reported in warning), is_freq (startX / endX / startY / endY Hz, damp, shaper, model 0 ringing | 1 fast), ' +
         'is_damp (freqX / freqY Hz, start / end 0-1, shaper, model), cornering (start / end: jerk mm/s or junction deviation mm, model 0-2), tolerance (Orca tolerance test model). ' +
         'The test’s suggested settings become unsaved preset edits, like in the app.',
       timeoutMs: 10 * 60_000,
@@ -41,20 +45,23 @@ export function calibrationTools(): BridgeTool[] {
         method: oneOfS(['pa_tower', 'pa_line', 'pa_pattern'], 'pa: method (default pa_tower).'), bowden: bool('pa: Bowden extruder.'), printNumbers: bool('pa_line: print numbers.'),
         accels: str('pa_pattern: accelerations, e.g. "1000,3000".'), speeds: str('pa_pattern: speeds, e.g. "100,200".'),
         startX: num('Hz'), endX: num('Hz'), startY: num('Hz'), endY: num('Hz'), damp: num('0-1'), freqX: num('Hz'), freqY: num('Hz'),
-        shaper: str('Input shaper type (depends on the firmware; the error lists them).'), model: num('Test model 0 / 1 (cornering 0-2).'),
+        shaper: str('Input shaper type (depends on the firmware; the error lists them).'), model: num('Test model 0 / 1 (cornering 0-2; temp on belt printers 0 standard | 1 overhang).'),
+        resize: bool('temp / vfa: auto-scale for the nozzle (default true).'), autoAdjust: bool('vfa: auto-adjust to the filament’s max volumetric speed (default true; needs resize).'),
       }, ['test']),
       async run(args) {
         const test = oneOf(args.test, TESTS, 'test');
         await presetsSettled();
         const run = await import('../../calibration/run');
-        if (test !== 'tolerance' && !isOrcaFamily(activeEngine.value)) throw new Error('Calibration prints need the OrcaSlicer or Full Spectrum engine (set_engine).');
+        const unavailable = test === 'tolerance' ? null : calibrationUnavailable(activeEngine.value);
+        if (unavailable) throw new Error(`${unavailable} (set_engine)`);
         const n = (k: string, d: number) => argNumber(args, k, { optional: true }) ?? d;
+        const b = (k: string, d: boolean) => (typeof args[k] === 'boolean' ? args[k] as boolean : d);
         const facts = run.calibPrinterFacts();
         const shaperOf = () => {
           const list = shaperTypesFor(facts.flavor);
           return args.shaper === undefined ? list[0] : oneOf(args.shaper, list, 'shaper');
         };
-        let params: CalibParams | string | null = null;
+        let params: CalibRequest | string | null = null;
         let runner: ((p: CalibParams) => Promise<boolean>) | null = null;
         let warning: string | undefined;
         let ok: boolean;
@@ -69,12 +76,14 @@ export function calibrationTools(): BridgeTool[] {
           default: {
             const cfg = resolvedConfig.value;
             if (test === 'temp') {
-              const type = asArray(currentPresets.value.value('filament', 'filament_type', 0))[0] ?? asArray(cfg.filament_type)[0] ?? 'PLA';
+              const type = asList(currentPresets.value.value('filament', 'filament_type', 0))[0] ?? cfgString(cfg, 'filament_type', SCALAR, 'PLA');
               const d = tempRangeFor(tempFilamentOf(type));
-              params = tempParams(n('start', d.start), n('end', d.end)); runner = run.calibTemp;
+              const model = facts.belt ? n('model', 0) : 0;
+              if (model !== 0 && model !== 1) throw new Error('model must be 0 (standard) or 1 (overhang).');
+              params = tempParams(n('start', d.start), n('end', d.end), b('resize', true), model); runner = run.calibTemp;
             } else if (test === 'pa') {
-              const method = (args.method === undefined ? 'pa_tower' : oneOf(args.method, ['pa_tower', 'pa_line', 'pa_pattern'] as const, 'method')) as PAMethod;
-              const bowden = typeof args.bowden === 'boolean' ? args.bowden : asArray(cfg.extruder_type)[0] === 'Bowden';
+              const method: PAMethod = args.method === undefined ? 'pa_tower' : oneOf(args.method, paMethodsFor(facts.belt), 'method');
+              const bowden = typeof args.bowden === 'boolean' ? args.bowden : cfgString(cfg, 'extruder_type', SCALAR) === 'Bowden';
               const d = paDefaults(method, bowden);
               params = paParams({
                 method, bowden, start: n('start', d.start), end: n('end', d.end), step: n('step', d.step),
@@ -82,11 +91,21 @@ export function calibrationTools(): BridgeTool[] {
                 accels: argString(args, 'accels', { optional: true }) ?? '', speeds: argString(args, 'speeds', { optional: true }) ?? '',
               });
               runner = run.calibPA;
-            } else if (test === 'retraction' || test === 'volumetric' || test === 'vfa') {
-              const mode = test === 'retraction' ? 'retraction_tower' : test === 'volumetric' ? 'vol_speed_tower' : 'vfa_tower';
+            } else if (test === 'vfa') {
+              const d = rangeDefaults('vfa_tower');
+              const r = rangeParams('vfa_tower', n('start', d.start), n('end', d.end), n('step', d.step));
+              if (typeof r === 'string') throw new Error(r);
+              const resize = b('resize', true);
+              const adj = await vfaAdjust(r, resize, b('autoAdjust', true), { nozzle: facts.nozzle, lineWidth: facts.vfa.wallLineWidth, ...facts.vfa }, run.compatibleLayerHeights);
+              // No one to ask: apply the dialog's adjustment and report its message.
+              if (adj.kind !== 'ok') warning = adj.message;
+              params = { ...r, nozzleBasedResize: resize, vfaLayerHeight: adj.kind === 'reduced' || adj.kind === 'lower-end' ? adj.layerHeight : 0, ...(adj.kind === 'lower-end' ? { end: adj.end } : {}) };
+              runner = run.calibVFA;
+            } else if (test === 'retraction' || test === 'volumetric') {
+              const mode = test === 'retraction' ? 'retraction_tower' : 'vol_speed_tower';
               const d = rangeDefaults(mode);
               params = rangeParams(mode, n('start', d.start), n('end', d.end), n('step', d.step));
-              runner = test === 'retraction' ? run.calibRetraction : test === 'volumetric' ? run.calibMaxVolSpeed : run.calibVFA;
+              runner = test === 'retraction' ? run.calibRetraction : run.calibMaxVolSpeed;
             } else if (test === 'is_freq') {
               const d = SHAPING_FREQ_DEFAULTS;
               params = shapingFreqParams({ model: n('model', d.model) === 1 ? 1 : 0, shaper: shaperOf(), startX: n('startX', d.startX), endX: n('endX', d.endX), startY: n('startY', d.startY), endY: n('endY', d.endY), damp: n('damp', d.damp) }, facts.flavor === 'reprapfirmware');

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseGcode } from './parser/parse';
 import prusa from './__fixtures__/prusa-style.gcode?raw';
-import { previewActions, registerPreviewActions } from './actions';
+import { previewActions } from './actions';
 import { activeView } from '../app/state';
-import { getAction } from '../app/actions/registry';
+import { getAction, registerActions } from '../app/actions/registry';
 import type { AppContext } from '../app/actions/context';
 
 const CTX = {} as AppContext;
@@ -95,7 +95,7 @@ describe('preview actions', () => {
   });
 
   it('registers with the app registry, scoped to preview', () => {
-    const dispose = registerPreviewActions();
+    const dispose = registerActions(previewActions);
     expect(getAction('preview.layer.up')?.binding).toEqual({ key: 'arrowup', scope: 'preview' });
     expect(previewActions.every((a) => !a.binding || a.binding.scope === 'preview')).toBe(true);
     dispose();

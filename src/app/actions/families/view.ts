@@ -1,6 +1,9 @@
 import { SNAP_OPTIONS } from '@cubby/shared/snap';
 import type { Action } from '../types';
-import type { ViewPreset } from '../../../viewport/controller';
+import {
+  alignSectionToCamera, toggleCenterOfMass, toggleCollisionVolumes, toggleFocusMode, toggleSection, toggleXray, viewportState, type ViewPreset,
+} from '../../../viewport/controller';
+import { previewData, previewOptions, toggleOption } from '../../../preview/store';
 
 // Orca: Tab Prepare/Preview, Shift+Tab collapse sidebar, 0-6 camera views (Orca uses Ctrl+0-6,
 // which browsers reserve for tab switching; bare digits match the Preview's view keys),
@@ -45,6 +48,29 @@ export function viewActions(): Action[] {
     { id: 'view.camera.toggle-projection', title: 'Switch perspective / orthographic', icon: 'i-lucide-aperture', category: 'View',
       aliases: ['ortho', 'perspective', 'projection', 'camera type'], binding: { key: 'k', scope: 'prepare' }, when: inPrepare,
       run: (c) => c.dispatch.setCameraType(c.cameraType === 'perspective' ? 'orthographic' : 'perspective') },
+    // Orca 2.5 View > "Show all collision volumes" (Ctrl+Shift+K).
+    { id: 'view.collision-volumes', title: 'Show all collision volumes', icon: 'i-lucide-box-select', category: 'View',
+      aliases: ['toolhead', 'collision', 'exclusion volume', 'keep-out'], binding: { key: 'k', ctrlOrMeta: true, shift: true, scope: 'prepare' },
+      when: inPrepare, state: () => (viewportState.showCollisionVolumes ? 'on' : 'off'), run: () => toggleCollisionVolumes() },
+    // Orca 2.5 canvas menu (GLCanvas3D::_render_canvas_toolbar): X-Ray, Focus mode, Center of mass; the section view button.
+    { id: 'view.xray', title: 'X-Ray', icon: 'i-lucide-scan-eye', category: 'View', aliases: ['see-through', 'transparent', 'xray', 'inside'],
+      when: inPrepare, state: () => (viewportState.xray ? 'on' : 'off'), run: () => toggleXray() },
+    { id: 'view.section', title: 'Section view', icon: 'i-lucide-square-split-horizontal', category: 'View', aliases: ['cut away', 'clipping plane', 'cross section', 'look inside'],
+      when: (c) => c.view === 'prepare' || c.view === 'preview', state: () => (viewportState.section.ratio > 0 ? 'on' : 'off'), run: () => toggleSection() },
+    { id: 'view.section.align', title: 'Section view: set viewing angle', icon: 'i-lucide-scan-line', category: 'View', aliases: ['section plane', 'face camera'],
+      when: (c) => c.view === 'prepare' || c.view === 'preview', run: () => alignSectionToCamera() },
+    { id: 'view.center-of-mass', title: 'Center of mass', icon: 'i-lucide-locate-fixed', category: 'View', aliases: ['centre of mass', 'balance', 'weight', 'inertia', 'mass'],
+      when: inPrepare, state: () => (viewportState.centerOfMass ? 'on' : 'off'), run: () => toggleCenterOfMass() },
+    { id: 'view.focus-mode', title: 'Focus mode', icon: 'i-lucide-focus', category: 'View', aliases: ['current plate only', 'hide other plates'],
+      when: inPrepare, state: () => (viewportState.focusMode ? 'on' : 'off'), run: () => toggleFocusMode() },
+    // Orca 2.5 Preview view menu: "Show raw G-code (belt only)" (B) and "Show IDEX/IQEX Toolhead".
+    { id: 'view.belt-raw-gcode', title: 'Show raw G-code (belt only)', icon: 'i-lucide-axis-3d', category: 'View',
+      aliases: ['belt', 'designed view', 'machine coordinates', 'tilted layers'], binding: { key: 'b', scope: 'preview' },
+      when: (c) => c.view === 'preview' && (previewData.value?.header.beltTiltAngle ?? 0) > 0,
+      state: () => (previewOptions.value.beltRaw ? 'on' : 'off'), run: () => toggleOption('beltRaw') },
+    { id: 'view.imex-toolheads', title: 'Show IDEX/IQEX toolheads', icon: 'i-lucide-box', category: 'View',
+      aliases: ['idex', 'iqex', 'carriage', 'toolhead box', 'parallel printing'], when: (c) => c.view === 'preview',
+      state: () => (previewOptions.value.imexToolheads ? 'on' : 'off'), run: () => toggleOption('imexToolheads') },
     ...SNAP_OPTIONS.map((o): Action => ({
       id: `view.snap.${o.value}`, title: o.value ? `Grid snap ${o.label}` : 'Grid snap off', icon: 'i-lucide-magnet', category: 'View',
       aliases: ['snap', 'grid', 'increment'], state: (c) => (c.snapIncrement === o.value ? 'on' : 'off'),

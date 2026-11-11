@@ -15,6 +15,8 @@ export interface StepOptions {
   angularDeflection: number;
   /** One object per solid instead of one merged object. */
   split: boolean;
+  /** Open the file in the Design tab as exact B-rep bodies instead (CAD kernel `import_step`). */
+  toDesign?: boolean;
 }
 
 export const STEP_DEFAULTS: StepOptions = { linearDeflection: 0.003, angularDeflection: 0.5, split: false };

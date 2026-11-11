@@ -5,17 +5,18 @@
  * fills set per-triangle states. Each call is one undo step on the mesh's
  * paint (instances share it).
  */
+import { SCALAR, valueAt } from '../../lib/configValue';
 import { argNumber, type BridgeTool } from '@cubby/shared/bridge';
 import { Matrix4, Vector3 } from 'three';
 import { activeEngine, resolvedConfig } from '../../app/state';
-import { engineTool } from '../../engine/client';
-import { isOrcaFamily, type PaintLayer, type PaintMap, type ToolMesh } from '../../engine/types';
+import { paintFromStates } from '../../engine/client';
+import { engineCaps, type PaintLayer, type PaintMap, type ToolMesh } from '../../engine/types';
 import { getMesh, getMeshPaint, objectInfo, setMeshPaint } from '../../project/store';
 import { composeTRS } from '../../project/math';
-import { closePaint, paintEngine } from '../../paint/controller';
+import { closePaint } from '../../paint/controller';
+import { paintWith } from '../../paint/session';
 import { maxStateFor, paintUi, PAINT_TITLES } from '../../paint/state';
-import { currentPresets } from '../../presets/store';
-import { mixedFilaments } from '../../mixed/store';
+import { filamentColours } from '../../mixed/store';
 import { mergePaint, nearestTriangle, oneOf, trianglesFacing, vec3 } from '../logic';
 import { bool, num, obj, objectArg, oneOfS, plateIndexOf, plateOrigin, str, vec3s } from './util';
 
@@ -23,22 +24,8 @@ const LAYERS = ['support', 'seam', 'color', 'fuzzy'] as const;
 const MODES = ['fill', 'clear', 'height', 'sphere', 'smart_fill', 'bucket', 'facing'] as const;
 const LABELS: Record<PaintLayer, string> = { support: 'Paint supports', seam: 'Paint seam', color: 'Paint color', fuzzy: 'Paint fuzzy skin' };
 
-async function statesToPaint(mesh: ToolMesh, tris: number[], state: number): Promise<PaintMap> {
-  if (!tris.length) return [];
-  return (await engineTool<{ paint: PaintMap }>('paint_from_states', { states: tris.map((t) => [t, state]) }, [mesh], paintEngine())).result.paint;
-}
-
-/** One brush operation in an engine painting session over the current paint. */
-async function sessionApply(mesh: ToolMesh, layer: PaintLayer, current: PaintMap | undefined, apply: Record<string, unknown>): Promise<PaintMap> {
-  const eng = paintEngine();
-  const open = await engineTool<{ handle: number }>('paint_open', { paint: current ?? [], maxState: maxStateFor(layer) }, [mesh], eng);
-  const handle = open.result.handle;
-  try {
-    await engineTool('paint_apply', { handle, ...apply }, [], eng);
-    return (await engineTool<{ paint: PaintMap }>('paint_get', { handle }, [], eng)).result.paint;
-  } finally {
-    void engineTool('paint_close', { handle }, [], eng).catch(() => {});
-  }
+function statesToPaint(mesh: ToolMesh, tris: number[], state: number): Promise<PaintMap> {
+  return paintFromStates(mesh, tris.map((t): [number, number] => [t, state]));
 }
 
 export function paintTools(): BridgeTool[] {
@@ -72,7 +59,7 @@ export function paintTools(): BridgeTool[] {
         let state: number;
         if (args.erase === true) state = 0;
         else if (layer === 'color') {
-          const n = currentPresets.value.selection.filaments.length + mixedFilaments.value.length;
+          const n = filamentColours().length;
           const f = argNumber(args, 'filament', { optional: true }) ?? 1;
           if (!Number.isInteger(f) || f < 1 || f > Math.min(n, maxStateFor('color'))) throw new Error(`filament must be 1-${Math.min(n, maxStateFor('color'))} (set_filaments adds slots).`);
           state = f;
@@ -119,7 +106,7 @@ export function paintTools(): BridgeTool[] {
             const zMin = argNumber(args, 'zMin'), zMax = argNumber(args, 'zMax');
             if (!(zMax! > zMin!)) throw new Error('zMax must be above zMin.');
             const bottom = objectInfo.value.get(o.id)?.min[2] ?? 0;
-            next = await sessionApply(tm, layer, current, { kind: 'height', facet: 0, point: [0, 0, 0], camera: cam, radius: zMax! - zMin!, zWorld: bottom + zMin!, trafo: m, state });
+            next = await paintWith(tm, layer, current, { kind: 'height', facet: 0, point: [0, 0, 0], camera: cam, radius: zMax! - zMin!, zWorld: bottom + zMin!, trafo: m, state });
             break;
           }
           case 'sphere': {
@@ -127,12 +114,12 @@ export function paintTools(): BridgeTool[] {
             const radius = argNumber(args, 'radius', { optional: true }) ?? 5;
             if (!(radius > 0 && radius <= 500)) throw new Error('radius must be 0-500 mm.');
             if (s.distance > 1) note = `The point is ${s.distance.toFixed(1)} mm off the surface; the sphere was centred on the closest surface point.`;
-            next = await sessionApply(tm, layer, current, { kind: 'sphere', facet: s.facet, point: s.point, camera: cam, radius, trafo: m, state });
+            next = await paintWith(tm, layer, current, { kind: 'sphere', facet: s.facet, point: s.point, camera: cam, radius, trafo: m, state });
             break;
           }
           case 'smart_fill': case 'bucket': {
             const s = seedAt(worldPoint());
-            next = await sessionApply(tm, layer, current, { kind: mode === 'bucket' ? 'bucket' : 'fill', facet: s.facet, point: s.point, camera: cam, angle: angle ?? 30, trafo: m, state });
+            next = await paintWith(tm, layer, current, { kind: mode === 'bucket' ? 'bucket' : 'fill', facet: s.facet, point: s.point, camera: cam, angle: angle ?? 30, trafo: m, state });
             break;
           }
         }
@@ -140,9 +127,9 @@ export function paintTools(): BridgeTool[] {
         const painted = getMeshPaint(o.meshId)[layer]?.length ?? 0;
         let hint: string | undefined;
         if (layer === 'support' && painted) {
-          const key = isOrcaFamily(activeEngine.value) ? 'enable_support' : 'support_material';
+          const key = engineCaps(activeEngine.value).supportKey;
           const v = o.overrides[key] ?? resolvedConfig.value[key];
-          const on = (Array.isArray(v) ? v[0] : v) === '1';
+          const on = valueAt(v, SCALAR) === '1';
           if (!on) hint = `Supports are off, so painted enforcers won’t print. Turn them on with set_settings { "${key}": true } (objectId for this object only).`;
         }
         return { data: { ok: true, layer: PAINT_TITLES[layer], paintedTriangles: painted, note, hint } };

@@ -14,6 +14,8 @@ import {
 import { nodeIcon, nodeKindLabel, nodeName } from './tree';
 import { ShapeParamsForm } from './ui';
 import { renameObject } from '../project/store';
+import { preferences } from '../app/preferences';
+import { run } from '../app/shell/useActions';
 
 const obj = cadObject;
 const root = computed(() => obj.value?.cad?.node ?? null);
@@ -83,6 +85,9 @@ watch(() => obj.value?.id, () => { renaming.value = null; });
       <UIcon name="i-lucide-shapes" class="size-4 text-muted" />
       <span class="cp__title">Shape</span>
       <span class="cp__sub" :title="obj.name">{{ obj.name }}</span>
+      <UTooltip v-if="preferences.designTab" text="Convert to Design body: rebuild this shape on the CAD kernel (exact for boxes, cylinders, spheres…) to fillet, shell and drill it in the Design tab">
+        <UButton icon="i-lucide-pencil-ruler" color="neutral" variant="ghost" size="xs" aria-label="Convert to Design body" data-testid="cad-to-design" @click="run('object.to-design')" />
+      </UTooltip>
     </header>
 
     <div v-show="cadUi.panelOpen" class="cp__body">

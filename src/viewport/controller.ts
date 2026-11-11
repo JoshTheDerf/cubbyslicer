@@ -6,6 +6,7 @@
 import { reactive } from 'vue';
 import type { CameraType } from '@cubby/shared/camera';
 import { SnapSetting } from '@cubby/shared/snap';
+import { readString, writeString } from '../lib/storage';
 
 /** 'all' is CubbyCAD's full edit gizmo (move, rotate and scale handles together), the default. */
 export type GizmoMode = 'all' | 'translate' | 'rotate' | 'scale';
@@ -17,9 +18,11 @@ export type { CameraType };
 /** Grid snap for gizmo drags and arrow nudges (mm, 0 = off), persisted per browser. */
 const snapSetting = new SnapSetting({ initial: 0, storageKey: 'cubby.slicer.snap' });
 const CAMERA_KEY = 'cubby.slicer.camera';
+const COM_KEY = 'cubby.slicer.center-of-mass';
+const FOCUS_KEY = 'cubby.slicer.focus-mode';
 
 function storedCameraType(): CameraType {
-  try { return localStorage.getItem(CAMERA_KEY) === 'orthographic' ? 'orthographic' : 'perspective'; } catch { return 'perspective'; }
+  return readString(CAMERA_KEY) === 'orthographic' ? 'orthographic' : 'perspective';
 }
 
 export const viewportState = reactive({
@@ -27,7 +30,48 @@ export const viewportState = reactive({
   layOnFace: false,
   camera: storedCameraType(),
   snap: snapSetting.value,
+  /** Orca View > "Show all collision volumes": every toolhead collision prism at full height. */
+  showCollisionVolumes: false,
+  /** Orca 2.5 canvas menu "X-Ray": Prepare draws models see-through (not saved, as desktop's Plater flag). */
+  xray: false,
+  /** Orca 2.5 canvas menu "Center of mass" (desktop's app config `show_center_of_mass`). */
+  centerOfMass: readString(COM_KEY) === '1',
+  /** Orca 2.5 canvas menu "Focus mode": only the current plate in Prepare (desktop's `focus_mode`, off by default). */
+  focusMode: readString(FOCUS_KEY) === '1',
+  /**
+   * Orca 2.5 section view (GLCanvas3D::SectionView), shared by Prepare and Preview: `ratio` 0 = off,
+   * up to 1 = everything cut away; `normal` faces the camera it was aimed from (null until first aimed).
+   */
+  section: { ratio: 0, lastRatio: 0, normal: null as [number, number, number] | null, panelOpen: false, aim: 0 },
 });
+
+export function toggleXray(on = !viewportState.xray): void { viewportState.xray = on; }
+export function toggleCenterOfMass(on = !viewportState.centerOfMass): void { viewportState.centerOfMass = on; writeString(COM_KEY, on ? '1' : '0'); }
+export function toggleFocusMode(on = !viewportState.focusMode): void {
+  viewportState.focusMode = on;
+  writeString(FOCUS_KEY, on ? '1' : '0');
+  // Desktop zooms to the current plate when focus mode turns on.
+  if (on) fitBed();
+}
+
+/** GLCanvas3D::set_section_view_ratio: clamped to 0..1; the first cut faces the camera. */
+export function setSectionRatio(ratio: number): void {
+  const s = viewportState.section;
+  ratio = Math.min(1, Math.max(0, Math.round(ratio * 1e4) / 1e4));
+  if (ratio === s.ratio) return;
+  if (ratio === 0) s.lastRatio = s.ratio;
+  s.ratio = ratio;
+  if (!s.normal) alignSectionToCamera();
+}
+/** GLCanvas3D::toggle_section_view: off, or back to the last cut (0.5 the first time). */
+export function toggleSection(): void {
+  const s = viewportState.section;
+  setSectionRatio(s.ratio > 0 ? 0 : s.lastRatio > 0 ? s.lastRatio : 0.5);
+}
+/** "Set viewing angle": the plane faces the camera (the scene reads `aim` and writes `normal`). */
+export function alignSectionToCamera(): void { viewportState.section.aim++; }
+
+export function toggleCollisionVolumes(on = !viewportState.showCollisionVolumes): void { viewportState.showCollisionVolumes = on; }
 
 export interface ViewportHandle {
   setView(p: ViewPreset): void;
@@ -60,7 +104,7 @@ export function toggleLayOnFace(on = !viewportState.layOnFace): void { viewportS
 /** Perspective / orthographic projection of the Prepare view (the scene watches it). */
 export function setCameraType(t: CameraType): void {
   viewportState.camera = t;
-  try { localStorage.setItem(CAMERA_KEY, t); } catch { /* not persisted */ }
+  writeString(CAMERA_KEY, t);
 }
 export function toggleCameraType(): void { setCameraType(viewportState.camera === 'perspective' ? 'orthographic' : 'perspective'); }
 

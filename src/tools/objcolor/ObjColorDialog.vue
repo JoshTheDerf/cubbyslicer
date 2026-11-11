@@ -6,15 +6,15 @@
  * strings via the engine) and set its base filament.
  */
 import { computed, ref, watch } from 'vue';
-import { getMesh, getObject, setObjectOverride } from '../../project/store';
-import * as store from '../../project/store';
+import { getMesh, getObject, setMeshPaint, setObjectOverride } from '../../project/store';
 import { currentPresets } from '../../presets/store';
 import { paintFromStates } from '../../engine/client';
-import type { PaintMap } from '../../engine/types';
 import { pickFiles } from '../../app/shell/download';
 import { toast } from '../../ui';
 import { colorDistance, fallbackColor, kmeans, nearestFilaments, paintStates, parseMtl, recommendedClusters, type WeightedColor } from './objColor';
 import { objColorRequest } from './request';
+import AppDialog from '../../ui/AppDialog.vue';
+import { SCALAR, toBool, valueAt } from '../../lib/configValue';
 
 const MAX_COLORS = 16; // Orca EnforcerBlockerType::ExtruderMax
 const NEW = 0; // slot value meaning "append as a new filament"
@@ -48,10 +48,7 @@ const clusterWeights = computed(() => {
 
 const p = computed(() => currentPresets.value);
 const filaments = computed(() => p.value.selection.filaments.map((_, i) => p.value.filamentColour(i)));
-const semm = computed(() => {
-  const v = p.value.value('printer', 'single_extruder_multi_material');
-  return (Array.isArray(v) ? v[0] : v) === '1';
-});
+const semm = computed(() => toBool(valueAt(p.value.value('printer', 'single_extruder_multi_material'), SCALAR)));
 const canAppend = computed(() => semm.value && filaments.value.length < 64);
 
 /** Per cluster: 1-based filament slot, or NEW. */
@@ -112,8 +109,6 @@ async function apply(): Promise<void> {
     const { base, states } = paintStates(it.faceGroups.tri, groupCluster.map((c) => (c < 0 ? 1e9 : c)), slots);
     if (base !== 1) setObjectOverride(o.id, 'extruder', String(base));
     if (states.length) {
-      const setMeshPaint = (store as unknown as { setMeshPaint?: (meshId: string, layer: 'color', paint: PaintMap | null) => void }).setMeshPaint;
-      if (!setMeshPaint) throw new Error('Colour painting storage is not available in this build.');
       const paint = await paintFromStates({ positions: mesh.positions, indices: mesh.indices }, states);
       setMeshPaint(mesh.id, 'color', paint);
     }
@@ -134,8 +129,8 @@ function finish(): void {
 </script>
 
 <template>
-  <UModal v-model:open="open" title="Import OBJ colours" :description="item ? `${item.name}: map the model’s colours to filaments.` : ''" :ui="{ content: 'sm:max-w-lg' }">
-    <template #body>
+  <AppDialog v-model:open="open" title="Import OBJ colours" :description="item ? `${item.name}: map the model’s colours to filaments.` : ''" size="lg"
+             cancel-label="Keep uncoloured" confirm-label="Apply" :confirm-loading="busy" @confirm="apply">
       <div v-if="item" class="oc">
         <UAlert v-if="unknown" color="warning" variant="subtle" icon="i-lucide-triangle-alert"
                 :title="`${unknown} material${unknown === 1 ? '' : 's'} without colour`"
@@ -180,14 +175,7 @@ function finish(): void {
           This printer has {{ filaments.length }} filament slot{{ filaments.length === 1 ? '' : 's' }}. Enable “Single extruder multi-material” in the printer settings to add more.
         </p>
       </div>
-    </template>
-    <template #footer>
-      <div class="flex justify-end gap-2 w-full">
-        <UButton color="neutral" variant="ghost" label="Keep uncoloured" @click="finish" />
-        <UButton color="primary" :loading="busy" label="Apply" @click="apply" />
-      </div>
-    </template>
-  </UModal>
+  </AppDialog>
 </template>
 
 <style scoped>
