@@ -13,9 +13,9 @@ import { sanitizeObjects } from '../project/persistence/format';
 import { FakeKernel, NOOP_SHELL } from './kernel/fake';
 import { design, designReady, setDesignBackend } from './session';
 import * as C from './commands';
-import { card, cardProblem, confirmCard, cancelCard, ghost, offerItems, openCard, runPreview, setCardValue } from './create';
+import { bodyMass, card, cardProblem, checkInterference, confirmCard, cancelCard, ghost, offerItems, openCard, runPreview, setCardValue } from './create';
 import { cancelPick, finishPick, picking, pickHit, startPick } from './pick';
-import { designUi } from './state';
+import { designUi, pickEdges, toggleSetEdge } from './state';
 import { exactBuild, splitScale, addPrimitiveBody } from './primitives';
 import { importStepToDesign, meshBlob } from './io';
 import { CREATE_TOOLS, flipFrame, frameFromAxis, inFrame, nearestThread } from './tools';
@@ -236,6 +236,62 @@ describe('offer menu', () => {
     const body = labels(offerItems({ kind: 'body', body: 1 }, {}, noop));
     expect(body).toContain('Rename…');
     expect(body).toContain('Boolean with another body');
+    expect(body).toContain('Volume and area');
+    expect(body).toContain('Interference');
+  });
+
+  it('Interference is greyed with Orca’s reason below two bodies', async () => {
+    await openProject(FakeKernel.recipe([{ type: 'Sketch' }, box()]));
+    const row = offerItems({ kind: 'body', body: 0 }, {}, noop).flat().flatMap((i) => [i, ...(i.children ?? []).flat()]).find((i) => /^Interference/.test(i.label));
+    expect(row).toMatchObject({ label: 'Interference needs at least two bodies', disabled: true });
+  });
+});
+
+describe('view and analysis', () => {
+  it('Shift+click builds Orca’s edge set: add, remove, hand over, clear', () => {
+    const p0 = { kind: 'edge' as const, body: 0, edge: 3, generation: 1 };
+    const p1 = toggleSetEdge(p0, 5)!;
+    expect(pickEdges(p1)).toEqual([3, 5]);
+    const p2 = toggleSetEdge(p1, 7)!;
+    expect(pickEdges(p2)).toEqual([3, 5, 7]);
+    expect(pickEdges(toggleSetEdge(p2, 5))).toEqual([3, 7]);
+    const back = toggleSetEdge(p2, 7)!;
+    expect(back.edge).toBe(5);
+    expect(pickEdges(back)).toEqual([3, 5]);
+    expect(toggleSetEdge(p0, 3)).toBeNull();
+  });
+
+  it('Fillet / Chamfer from an edge set dresses every edge in it; the offer names the set', async () => {
+    await openProject(twoBodies());
+    designUi.pick = { kind: 'edge', body: 0, edge: 2, generation: design.generation, more: [0, 1] };
+    expect(offerItems(designUi.pick, {}, { renameBody: () => {}, colorBody: () => {}, deleteBody: () => {}, zoom: () => {}, editFeature: () => {} })[0][0].label).toBe('3 edges of Body 1');
+    await openCard('fillet', { prefill: { kind: 'Chamfer' } });
+    expect(card.draft.edges).toMatchObject({ body: 0, ids: [0, 1, 2] });
+    expect((await confirmCard()).ok).toBe(true);
+    expect([...fake.docs.values()][0].features.at(-1)).toMatchObject({ type: 'Chamfer', dressup_edges: [0, 1, 2], target_body: 0 });
+  });
+
+  it('Volume and area: Orca’s report (mm³ / mm², two decimals, the body’s name)', async () => {
+    await openProject(twoBodies());
+    const m = await bodyMass(0);
+    expect(m?.volume).toBe(2000);
+    expect(design.status).toEqual({ kind: 'info', text: 'Base: volume 2000.00 mm³, area 1000.00 mm²' });
+    expect(await bodyMass(9)).toBeNull();
+    expect(design.status?.text).toBe('Select a body to measure it');
+  });
+
+  it('Check interference: overlapping pairs on the status line, worst first; none; fewer than two bodies', async () => {
+    await openProject(twoBodies());
+    await checkInterference();
+    expect(design.status).toEqual({ kind: 'ok', text: 'No interference found' });
+    // The fake lays bodies side by side: slide the second half-way into the first.
+    [...fake.docs.values()][0].bodies[1].x = 10;
+    const r = await checkInterference();
+    expect(r?.count).toBe(1);
+    expect(design.status).toEqual({ kind: 'warn', text: '1 overlapping pair: Base ↔ Knob 1000.00 mm³' });
+    await openProject(FakeKernel.recipe([{ type: 'Sketch' }, box()]));
+    expect(await checkInterference()).toBeNull();
+    expect(design.status?.text).toBe('Interference needs at least two bodies');
   });
 });
 

@@ -8,7 +8,25 @@ import { reactive } from 'vue';
 export type DesignPick =
   | { kind: 'body'; body: number }
   | { kind: 'face'; body: number; face: number; generation: number }
-  | { kind: 'edge'; body: number; edge: number; generation: number };
+  /** `more`: Orca's edge set — the other edges Shift / Ctrl+clicked on the same body, in click order (`edge` is the last). */
+  | { kind: 'edge'; body: number; edge: number; generation: number; more?: number[] };
+
+/** Every edge of an edge pick: the set's others, then the current one (Orca's `selected_edges`). */
+export function pickEdges(p: DesignPick | null): number[] {
+  return p?.kind === 'edge' ? [...(p.more ?? []), p.edge] : [];
+}
+
+/**
+ * Orca's Shift / Ctrl+click on `edge` of an edge pick's body (DesignSketchTool::handle_solid_click):
+ * a new edge joins the set and becomes the current one; one already in the set leaves it; the
+ * current one leaving hands over to the previous, and the last one leaving clears the selection.
+ */
+export function toggleSetEdge(p: Extract<DesignPick, { kind: 'edge' }>, edge: number): Extract<DesignPick, { kind: 'edge' }> | null {
+  const more = [...(p.more ?? [])];
+  if (edge === p.edge) return more.length ? { ...p, edge: more.pop()!, more } : null;
+  if (more.includes(edge)) return { ...p, more: more.filter((e) => e !== edge) };
+  return { ...p, edge, more: [...more, p.edge] };
+}
 
 export const designUi = reactive({
   /** Selected feature rows (indices), in click order; the last is the one being edited. */
@@ -28,6 +46,8 @@ export const designUi = reactive({
   panelOpen: false,
   /** The sidebar section shown on phones (one at a time). */
   phoneSection: 'features' as 'features' | 'bodies' | 'variables',
+  /** Orca's Design section view: a horizontal cut at `z` (bed mm), keeping the lower half or, `upper`, the upper one. */
+  section: null as null | { z: number; upper: boolean },
 });
 
 /** The feature whose parameters the editor shows (the last selected row). */

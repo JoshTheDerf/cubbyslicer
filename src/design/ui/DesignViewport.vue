@@ -9,7 +9,7 @@ import { Box3, Color, Vector3 } from 'three';
 import { bed } from '../../project/store';
 import { DesignScene, type DesignHighlight, type DesignHit, type ScenePickMode } from '../scene/DesignScene';
 import { design, displayBodies, readDesign, setStatus } from '../session';
-import { designUi, type DesignPick } from '../state';
+import { designUi, pickEdges, toggleSetEdge, type DesignPick } from '../state';
 import { registerDesignViewport } from '../viewport';
 import { pickGeneration, pickHit, picking, rollbackBodies, type PickValue } from '../pick';
 import { card, ghost, setCardValue } from '../create';
@@ -70,7 +70,7 @@ const highlight = computed<DesignHighlight>(() => {
   const p = designUi.pick;
   if (p?.kind === 'body') bodies.add(p.body);
   else if (p?.kind === 'face') faces.set(p.body, new Set([p.face]));
-  else if (p?.kind === 'edge') edges.set(p.body, new Set([p.edge]));
+  else if (p?.kind === 'edge') edges.set(p.body, new Set(pickEdges(p)));
   const sel = new Set(designUi.selected);
   if (sel.size) {
     const ff = featureFaces.value;
@@ -191,9 +191,32 @@ function sketchAt(x: number, y: number): number | null {
   return hitSketch(list, (p) => { const q = s.project(p); return q[2] > 1 ? null : [q[0], q[1]]; }, x - r.left, y - r.top);
 }
 
+/**
+ * Orca's edge set (DesignSketchTool::handle_solid_click): with an edge selected, Shift / Ctrl+click
+ * on another edge of the same body adds it, on one already in the set removes it (the current one
+ * leaving hands over to the previous; the last leaving clears the selection). Only edges, only one
+ * body: a dress-up acts on one body. Returns false when the click isn't about the set.
+ */
+function extendEdgeSet(at: { clientX: number; clientY: number }): boolean {
+  const p = designUi.pick;
+  if (p?.kind !== 'edge' || p.generation !== design.generation) return false;
+  const pe = scene.value?.pickEdgeAt(at.clientX, at.clientY, 14) ?? null;
+  if (!pe || pe.body !== p.body) return false;
+  const next = toggleSetEdge(p, pe.edge);
+  designUi.pick = next;
+  last = null;
+  if (!next) { setStatus('info', 'Nothing selected'); return true; }
+  const n = pickEdges(next).length;
+  setStatus('info', n > 1
+    ? `${bodyLabel(next.body)}: ${n} edges selected — Shift+click adds or removes one, Fillet/Chamfer dresses them all.`
+    : `Edge ${next.edge} of ${bodyLabel(next.body)} selected — Shift+click to add edges, or click again for the whole body.`);
+  return true;
+}
+
 function onClick(hit: DesignHit | null, mods: { shift: boolean; ctrl: boolean; clientX: number; clientY: number }) {
   if (sk.choosing) { chooseSketchFace(hit); return; }
   if (picking.spec) { onPickClick(hit, mods); return; }
+  if ((mods.shift || mods.ctrl) && !card.tool && extendEdgeSet(mods)) return;
   // Orca: a click inside a finished sketch's region (or on its stroke) picks the sketch —
   // into the open card's Sketch row, else as the selected feature.
   const si = sketchAt(mods.clientX, mods.clientY);
@@ -247,9 +270,9 @@ function onClick(hit: DesignHit | null, mods: { shift: boolean; ctrl: boolean; c
       .catch(() => {});
   } else {
     designUi.pick = { kind: 'edge', body: hit.body, edge: edge!, generation: gen };
-    setStatus('info', `Edge ${edge} of ${bodyLabel(hit.body)}. Click again for the whole body.`);
+    setStatus('info', `Edge ${edge} of ${bodyLabel(hit.body)}. Shift+click to add edges, or click again for the whole body.`);
     void readDesign(async (c, doc) => (await c.call<{ curve: string; length: number }>('edge_info', { doc, body: hit.body, edge, generation: gen })).result)
-      .then((e) => { if (designUi.pick?.kind === 'edge' && designUi.pick.edge === edge && design.generation === gen) setStatus('info', `Edge ${edge} of ${bodyLabel(hit.body)}: ${e.curve}, ${e.length.toFixed(2)} mm. Click again for the whole body.`); })
+      .then((e) => { if (designUi.pick?.kind === 'edge' && designUi.pick.edge === edge && !designUi.pick.more?.length && design.generation === gen) setStatus('info', `Edge ${edge} of ${bodyLabel(hit.body)}: ${e.curve}, ${e.length.toFixed(2)} mm. Shift+click to add edges, or click again for the whole body.`); })
       .catch(() => {});
   }
 }
@@ -287,6 +310,7 @@ onMounted(() => {
         s.sketchView(plane, box);
       },
       zoom: (d) => s.zoom(d),
+      modelMidZ: () => s.modelMidZ(),
       screenPoint: (p) => s.screenPoint([p[0], p[1], p[2]]),
       capture: async (w, h) => {
         s.requestRender();
@@ -310,6 +334,7 @@ onBeforeUnmount(() => { registerDesignViewport(null); scene.value?.dispose(); sc
 watch([scene, shownBodies, bodyColours], ([s, list, cols]) => s?.setBodies(list, cols), { immediate: true });
 watch([scene, pickMode], ([s, m]) => s?.setPickMode(m), { immediate: true });
 watch([scene, ghost], ([s, g]) => s?.setGhost(g), { immediate: true });
+watch([scene, () => designUi.section && { ...designUi.section }], ([s, c]) => s?.setSection(c ?? null), { immediate: true });
 watch([scene, () => designUi.hiddenBodies.slice()], ([s, h]) => s?.setHidden(h), { immediate: true });
 watch([scene, highlight], ([s, h]) => s?.setHighlight(h), { immediate: true });
 watch([scene, bed, () => designUi.showBed], ([s, b, show]) => s?.setBed(b, show), { immediate: true });

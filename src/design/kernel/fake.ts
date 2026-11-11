@@ -414,6 +414,17 @@ export class FakeKernel implements KernelBackend {
         if (!b) throw new Fail(-32602, 'no such body');
         return { result: { volume: b.w * b.h * b.d, surface_area: 2 * (b.w * b.h + b.h * b.d + b.w * b.d), center_of_mass: [b.x + b.w / 2, b.h / 2, b.d / 2], is_solid: true, valid: true } };
       }
+      case 'check_interference': {
+        // Boxes at [x, x+w] × [0, h] × [0, d]: the overlap of two is a box too.
+        const bs = this.doc(p).bodies, min = Number(p.min_volume ?? 1e-6);
+        const interferences: Array<{ body_a: number; body_b: number; volume: number }> = [];
+        for (let a = 0; a < bs.length; a++) for (let b = a + 1; b < bs.length; b++) {
+          const A = bs[a], B = bs[b];
+          const v = Math.max(0, Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x)) * Math.min(A.h, B.h) * Math.min(A.d, B.d);
+          if (v > min) interferences.push({ body_a: a, body_b: b, volume: v });
+        }
+        return { result: { ok: true, count: interferences.length, interferences } };
+      }
       case 'thread_standards': return { result: { threads: [
         { name: 'M6', major_diameter: 6, pitch: 1, series: 'metric_coarse', depth: 0.6134, minor_diameter: 4.917, internal_depth: 0.541 },
         { name: 'M8', major_diameter: 8, pitch: 1.25, series: 'metric_coarse', depth: 0.767, minor_diameter: 6.647, internal_depth: 0.677 },

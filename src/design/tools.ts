@@ -102,7 +102,8 @@ const lastBody = (c: ToolCtx) => { for (let i = c.bodies.length - 1; i >= 0; i--
 const pickedBody = (c: ToolCtx, p: DesignPick | null) => (p && c.bodies[p.body] ? p.body : lastBody(c));
 const pv = (v: unknown): PickValue | null => (v && typeof v === 'object' && Array.isArray((v as PickValue).ids) ? v as PickValue : null);
 const faceOf = (p: DesignPick | null): PickValue | null => (p?.kind === 'face' ? { body: p.body, ids: [p.face], generation: p.generation } : null);
-const edgeOf = (p: DesignPick | null): PickValue | null => (p?.kind === 'edge' ? { body: p.body, ids: [p.edge], generation: p.generation } : null);
+/** The picked edge — or Orca's Shift+click edge set, all of it ("Fillet/Chamfer dresses them all"). */
+const edgeOf = (p: DesignPick | null): PickValue | null => (p?.kind === 'edge' ? { body: p.body, ids: [...(p.more ?? []), p.edge], generation: p.generation } : null);
 const num = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const sketches = (c: ToolCtx) => c.features.filter((f) => f.type === 'Sketch');
 const lastSketch = (c: ToolCtx) => sketches(c).at(-1)?.index ?? -1;
@@ -657,7 +658,7 @@ export const CREATE_TOOLS: CreateTool[] = [
       { key: 'axis_p2', label: 'Point 2', kind: 'vec3', unit: MM, when: (d) => d.axis_type === 'TwoPoints' },
     ],
     init: (_c, p) => ({
-      axis_type: p?.kind === 'edge' ? 'AlongEdge' : p?.kind === 'face' ? 'FaceNormal' : 'TwoPoints', face: faceOf(p), edge: edgeOf(p), axis_plane_a: 0, axis_plane_b: 1,
+      axis_type: p?.kind === 'edge' ? 'AlongEdge' : p?.kind === 'face' ? 'FaceNormal' : 'TwoPoints', face: faceOf(p), edge: p?.kind === 'edge' ? { body: p.body, ids: [p.edge], generation: p.generation } : null, axis_plane_a: 0, axis_plane_b: 1,
       axis_p1: [0, 0, 0], axis_p2: [10, 0, 0],
     }),
     type: () => 'Axis',

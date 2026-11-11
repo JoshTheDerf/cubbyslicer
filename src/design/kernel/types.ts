@@ -199,6 +199,9 @@ export interface PreviewResult { ok: boolean; error: string; meshes: Array<{ bod
 /** `mass_properties`. */
 export interface MassProperties { volume: number; surface_area: number; center_of_mass: Vec3; is_solid: boolean; valid: boolean }
 
+/** `check_interference`: solid body pairs whose intersection encloses more than `min_volume` mm³ (a < b). */
+export interface InterferenceResult { ok: boolean; count: number; interferences: Array<{ body_a: number; body_b: number; volume: number }> }
+
 /** `import_mesh` (McpControl's conversion report). */
 export interface ImportMeshResult extends MutationResult { watertight?: boolean; is_solid?: boolean; faces_final?: number; first_feature?: number; volume?: number }
 /** `import_step`. */

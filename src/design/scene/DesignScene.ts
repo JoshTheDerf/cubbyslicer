@@ -25,6 +25,7 @@ import { buildBed, disposeObject3D } from '../../viewport/bed';
 import { cappedPixelRatio, readGraphicsSettings } from '../../viewport/graphics';
 import { readViewportTheme, tokenColor, type ViewportTheme } from '../../viewport/tokens';
 import { ViewCube } from '../../viewport/viewCube';
+import { SectionView, clipBy } from '../../viewport/viewEffects';
 import type { ViewPreset } from '../../viewport/controller';
 import type { DisplayBody } from '../kernel/mesh';
 
@@ -136,6 +137,9 @@ export class DesignScene {
   private colFeature: Color;
   private colEdge: Color;
   private colRef: Color;
+  /** Orca's Design section view: Prepare's clipping plane, held horizontal at `sectionCut.z` (no cap: Orca's only hides). */
+  private section = new SectionView();
+  private sectionCut: { z: number; upper: boolean } | null = null;
 
   constructor(private container: HTMLElement, private cb: DesignSceneCallbacks) {
     this.theme = readViewportTheme();
@@ -148,6 +152,7 @@ export class DesignScene {
     this.renderer = new WebGLRenderer({ antialias: gfx.antialias, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: false });
     this.renderer.setPixelRatio(cappedPixelRatio(gfx.pixelRatioCap));
     this.renderer.setClearColor(0x000000, 0);
+    this.renderer.localClippingEnabled = true;
     this.renderer.domElement.classList.add('vp-canvas');
     this.renderer.domElement.dataset.designCanvas = '';
     container.appendChild(this.renderer.domElement);
@@ -168,6 +173,7 @@ export class DesignScene {
     this.edgeMaterial = new LineMaterial({ color: this.colSelected.getHex(), linewidth: 3, worldUnits: false, depthTest: false, transparent: true });
     this.refEdgeMaterial = new LineMaterial({ color: this.colRef.getHex(), linewidth: 4, worldUnits: false, depthTest: false, transparent: true });
     this.hoverEdgeMaterial = new LineMaterial({ color: this.colHover.getHex(), linewidth: 4, worldUnits: false, depthTest: false, transparent: true, opacity: 0.9 });
+    for (const m of [this.edgeMaterial, this.refEdgeMaterial, this.hoverEdgeMaterial]) clipBy(m, this.section);
 
     const dom = this.renderer.domElement;
     this.orbit = new OrbitControls(this.camera, dom);
@@ -276,6 +282,7 @@ export class DesignScene {
     if (this.originGroup) disposeObject3D(this.originGroup);
     this.edgeOverlay?.geometry.dispose();
     this.edgeMaterial.dispose();
+    this.section.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -369,6 +376,7 @@ export class DesignScene {
       g.setAttribute('color', new BufferAttribute(col, 3));
       g.computeBoundingBox(); g.computeBoundingSphere();
       const mat = new MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.05, side: DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+      clipBy(mat, this.section);
       const mesh = new Mesh(g, mat);
       mesh.userData.body = d.body;
       // Edge polylines → segments (seams and degenerate edges are pickable but not drawn).
@@ -381,7 +389,7 @@ export class DesignScene {
       }
       const eg = new BufferGeometry();
       eg.setAttribute('position', new Float32BufferAttribute(seg, 3));
-      const edges = new LineSegments(eg, new LineBasicMaterial({ color: this.colEdge, transparent: true, opacity: 0.85 }));
+      const edges = new LineSegments(eg, new LineBasicMaterial({ color: this.colEdge, transparent: true, opacity: 0.85, clippingPlanes: this.section.planes }));
       edges.renderOrder = 1;
       const entry: BodyEntry = { data: d, mesh, edges, base, faceVerts: null };
       this.bodies.set(d.body, entry);
@@ -393,6 +401,7 @@ export class DesignScene {
     }
     this.applyColours();
     this.updateEdgeOverlay();
+    this.applySection();
     if (!this.framedOnce && this.bodies.size) { this.framedOnce = true; if (!this.userCamera) this.fitAll(false); }
     this.requestRender();
   }
@@ -452,7 +461,7 @@ export class DesignScene {
     if (this.ghostGroup) { this.scene.remove(this.ghostGroup); disposeObject3D(this.ghostGroup); this.ghostGroup = null; }
     if (list?.length) {
       const g = new Group();
-      const mat = new MeshStandardMaterial({ color: this.colRef, transparent: true, opacity: 0.38, roughness: 0.6, metalness: 0, side: DoubleSide, depthWrite: false });
+      const mat = new MeshStandardMaterial({ color: this.colRef, transparent: true, opacity: 0.38, roughness: 0.6, metalness: 0, side: DoubleSide, depthWrite: false, clippingPlanes: this.section.planes });
       for (const m of list) {
         if (!m.indices.length) continue;
         const geo = new BufferGeometry();
@@ -545,6 +554,43 @@ export class DesignScene {
     if (this.hoverEdge) this.updateHoverEdge();
   }
 
+  // ---- section view --------------------------------------------------------------------------
+
+  /** Every body's box (hidden ones too: Orca's model bounding box). */
+  private bodiesBox(): Box3 {
+    const box = new Box3();
+    for (const e of this.bodies.values()) if (e.mesh.geometry.boundingBox) box.union(e.mesh.geometry.boundingBox);
+    return box;
+  }
+
+  /** The model's mid-height, where Orca's section starts (DesignCanvas::model_mid_z; 0 with no bodies). */
+  modelMidZ(): number {
+    const box = this.bodiesBox();
+    return box.isEmpty() ? 0 : (box.min.z + box.max.z) / 2;
+  }
+
+  /**
+   * Orca's Design section view (DesignCanvas::set_section_plane): hide everything above `z`, or
+   * below it with `upper`; null shows it all. It only hides geometry — no cap, nothing changes.
+   */
+  setSection(cut: { z: number; upper: boolean } | null): void {
+    this.sectionCut = cut;
+    this.applySection();
+  }
+
+  /** Point Prepare's SectionView (a ratio over the content's sphere) at the absolute height. */
+  private applySection(): void {
+    const cut = this.sectionCut, box = this.bodiesBox();
+    if (!cut || box.isEmpty()) this.section.update(0, null, null);
+    else {
+      const cz = (box.min.z + box.max.z) / 2, r = Math.max(1e-3, box.getSize(new Vector3()).length() / 2);
+      // SectionView cuts away n·p > n·c + r − 2r·ratio: n = +Z keeps what is below z, −Z what is above.
+      const ratio = cut.upper ? (r - cz + cut.z) / (2 * r) : (r + cz - cut.z) / (2 * r);
+      this.section.update(ratio, new Vector3(0, 0, cut.upper ? -1 : 1), box);
+    }
+    this.requestRender();
+  }
+
   /** The printer bed (Orca's pinned "Bed" row). */
   setBed(bed: BedShape | null, show: boolean): void {
     if (bed !== this.bedShape) {
@@ -587,7 +633,8 @@ export class DesignScene {
     if (!r.width || !r.height) return null;
     setPickRayFromCamera(this.raycaster, new Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), this.camera);
     const meshes = [...this.bodies.values()].filter((e) => !this.hidden.has(e.data.body)).map((e) => e.mesh);
-    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    // What the section view hides can't be clicked: the first hit on the kept part.
+    const hit = this.raycaster.intersectObjects(meshes, false).find((h) => !this.section.clips(h.point));
     if (!hit || hit.faceIndex == null) return null;
     const b = hit.object.userData.body as number;
     const e = this.bodies.get(b)!;
@@ -606,6 +653,8 @@ export class DesignScene {
     let best: number | null = null, bestD = maxPx;
     for (let k = 0; k < d.edgeIds.length; k++) {
       for (let p = d.edgeStarts[k]; p + 1 < d.edgeStarts[k + 1]; p++) {
+        if (this.section.clips(a.set(d.edgePoints[3 * p], d.edgePoints[3 * p + 1], d.edgePoints[3 * p + 2]))
+          && this.section.clips(b2.set(d.edgePoints[3 * p + 3], d.edgePoints[3 * p + 4], d.edgePoints[3 * p + 5]))) continue;
         const [x0, y0, z0] = toScreen(a.set(d.edgePoints[3 * p], d.edgePoints[3 * p + 1], d.edgePoints[3 * p + 2]));
         const [x1, y1, z1] = toScreen(b2.set(d.edgePoints[3 * p + 3], d.edgePoints[3 * p + 4], d.edgePoints[3 * p + 5]));
         if (z0 > 1 || z1 > 1) continue;

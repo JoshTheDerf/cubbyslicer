@@ -14,13 +14,13 @@ import { toast } from '../ui';
 import {
   clearDesign, commitCandidates, commitToPlate, deleteBody, deleteFeatures, editInDesign, moveFeature, selectAllFeatures, setSuppressed, unlinkObjects,
 } from './commands';
-import { design, designKernel, editBlocker, projectHasDesign, reopenDesign } from './session';
+import { design, designKernel, editBlocker, projectHasDesign, reopenDesign, setStatus } from './session';
 import { clearDesignSelection, designUi } from './state';
 import { designViewport } from './viewport';
 import { cadUi } from '../cad/commands';
 import { pickBodyColor } from './bodyColor';
 import { cancelPick, finishPick, picking } from './pick';
-import { cancelCard, card, confirmCard, openCard, toolAvailable } from './create';
+import { cancelCard, card, checkInterference, confirmCard, openCard, toolAvailable } from './create';
 import { CREATE_TOOLS } from './tools';
 import type { KeyBinding } from '../app/actions/types';
 
@@ -43,6 +43,22 @@ const ALIASES: Partial<Record<string, string[]>> = {
   pattern: ['array', 'repeat', 'circular', 'linear'], transform: ['move', 'rotate'], boolean: ['union', 'subtract', 'join', 'intersect', 'combine'],
   cut: ['split', 'slice'], plane: ['datum', 'reference plane'], axis: ['datum axis'], pushpull: ['press pull', 'extrude face', 'offset face'], deleteface: ['remove face', 'defeature'],
 };
+
+/** Orca's Section View (DesignPanel::toggle_section_view): on at the model's mid-height, keeping the lower half. */
+function toggleSection(): void {
+  if (designUi.section) { designUi.section = null; setStatus('info', 'Section view off'); return; }
+  designUi.section = { z: designViewport()?.modelMidZ() ?? 0, upper: false };
+  setStatus('info', 'Section view on — hides half the model to see inside; PageUp / PageDown move the plane, Flip shows the other half');
+}
+function flipSection(): void {
+  const s = designUi.section;
+  if (!s) return;
+  designUi.section = { ...s, upper: !s.upper };
+  setStatus('info', designUi.section.upper ? 'Section view — showing the upper half' : 'Section view — showing the lower half');
+}
+/** PageUp / PageDown: Orca moves the plane 2 mm a press. */
+function moveSection(dz: number): void { if (designUi.section) designUi.section = { ...designUi.section, z: designUi.section.z + dz }; }
+const sectionOn = () => inDesign() && !!designUi.section;
 
 async function pickAndImport(accept: string, each: (f: File) => Promise<void>): Promise<void> {
   const { pickFiles } = await import('../app/shell/download');
@@ -117,6 +133,19 @@ export function designActions(): Action[] {
     { id: 'design.toggle-bed', title: 'Show bed', icon: 'i-lucide-grid-2x2', category: 'Design', aliases: ['plate', 'build plate'],
       binding: { key: 'b', ctrlOrMeta: true, shift: true, scope: 'design' }, when: () => inDesign(), state: () => (designUi.showBed ? 'on' : 'off'),
       run: () => { designUi.showBed = !designUi.showBed; } },
+    { id: 'design.section', title: 'Section view', icon: 'i-lucide-square-split-vertical', category: 'Design', aliases: ['cut view', 'clipping', 'cross section', 'see inside'],
+      description: 'Hide the half of the model above a horizontal plane to see inside (Orca’s Section View). PageUp / PageDown move the plane, F flips the half kept.',
+      binding: { key: 'x', scope: 'design' }, when: () => inDesign() && design.phase === 'open', state: () => (designUi.section ? 'on' : 'off'), run: toggleSection },
+    { id: 'design.section.flip', title: 'Flip section', icon: 'i-lucide-flip-vertical-2', category: 'Design', aliases: ['other half'],
+      description: 'Show the opposite half of the section view.',
+      binding: { key: 'f', scope: 'design', passThroughWhenUnavailable: true }, when: sectionOn, run: flipSection },
+    { id: 'design.section.up', title: 'Move section plane up', icon: 'i-lucide-arrow-up', category: 'Design', paletteHidden: true,
+      binding: { key: 'pageup', scope: 'design', passThroughWhenUnavailable: true }, when: sectionOn, run: () => moveSection(2) },
+    { id: 'design.section.down', title: 'Move section plane down', icon: 'i-lucide-arrow-down', category: 'Design', paletteHidden: true,
+      binding: { key: 'pagedown', scope: 'design', passThroughWhenUnavailable: true }, when: sectionOn, run: () => moveSection(-2) },
+    { id: 'design.interference', title: 'Check interference', icon: 'i-lucide-boxes', category: 'Design', aliases: ['overlap', 'clash', 'collision', 'intersecting bodies'],
+      description: 'Find bodies that overlap and report the shared volume of each pair (Orca’s Check interference). Changes nothing.',
+      when: () => inDesign() && design.phase === 'open', run: () => report(checkInterference()) },
     { id: 'design.reopen', title: 'Reopen design', icon: 'i-lucide-refresh-cw', category: 'Design', aliases: ['reload design', 'retry'],
       when: () => inDesign() && (design.phase === 'closed' || design.phase === 'failed'), run: () => reopenDesign() },
     { id: 'design.clear', title: 'Clear design…', icon: 'i-lucide-eraser', category: 'Design', tone: 'danger', aliases: ['new design', 'erase design', 'delete design'],

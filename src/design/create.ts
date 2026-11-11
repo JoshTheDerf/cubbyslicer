@@ -13,10 +13,10 @@ import { toast } from '../ui';
 import { phone } from '../app/shell/uiState';
 import type { JobContext } from './kernel/client';
 import { decodePlateMeshes } from './kernel/mesh';
-import type { DatumsResult, FeatureType, HoleStandard, MassProperties, MutationResult, PlateMeshLayout, PreviewResult, ThreadStandard } from './kernel/types';
+import type { DatumsResult, FeatureType, HoleStandard, InterferenceResult, MassProperties, MutationResult, PlateMeshLayout, PreviewResult, ThreadStandard } from './kernel/types';
 import { cancelPick, picking } from './pick';
 import { design, designKernel, editBlocker, readDesign, runEdit, setStatus } from './session';
-import { designUi, type DesignPick } from './state';
+import { designUi, pickEdges, type DesignPick } from './state';
 import { beginSketch, startSketch } from './sketch/session';
 import { CREATE_TOOLS, getTool, type CreateTool, type Draft, type KernelReads, type ToolCtx } from './tools';
 import type { GhostMesh } from './scene/DesignScene';
@@ -262,11 +262,43 @@ export async function runPreview(): Promise<{ ok: boolean; error: string; triang
 
 // ---- bodies ----------------------------------------------------------------------------------
 
-/** Volume and area of a body (Orca's offer "Volume and area"). */
-export async function bodyMass(b: number): Promise<MassProperties> {
-  const m = await readDesign(async (c, doc) => (await c.call<MassProperties>('mass_properties', { doc, body: b })).result);
-  setStatus('info', `Body ${b + 1}: volume ${m.volume.toFixed(1)} mm³ (${(m.volume / 1000).toFixed(2)} cm³), area ${m.surface_area.toFixed(1)} mm²${m.is_solid ? '' : ' — not a closed solid'}.`);
+/** A body as Orca's reports name it: its name, else "Body N" (1-based). */
+const reportName = (b: number) => design.bodies[b]?.name || `Body ${b + 1}`;
+
+/**
+ * Volume and area of a body (Orca's offer "Volume and area", DesignPanel::on_mass_properties): a
+ * report on the status line — mm³ and mm², two decimals, no density so no mass. A sheet body has
+ * an area and no volume.
+ */
+export async function bodyMass(b: number): Promise<MassProperties | null> {
+  if (!design.bodies[b]) { setStatus('info', 'Select a body to measure it'); return null; }
+  let m: MassProperties;
+  try {
+    m = await readDesign(async (c, doc) => (await c.call<MassProperties>('mass_properties', { doc, body: b })).result);
+  } catch {
+    setStatus('error', 'This body could not be measured');
+    return null;
+  }
+  const name = reportName(b);
+  setStatus('info', m.is_solid
+    ? `${name}: volume ${m.volume.toFixed(2)} mm³, area ${m.surface_area.toFixed(2)} mm²`
+    : `${name}: sheet body, area ${m.surface_area.toFixed(2)} mm², no volume — thicken it to get one`);
   return m;
+}
+
+/**
+ * Orca's interference check (DesignPanel::on_check_interference): every pair of solid bodies that
+ * overlap, reported on the status line — worst overlap first, the first three by name with their
+ * shared volume, then "…". Bodies that only touch enclose no volume and are not reported.
+ */
+export async function checkInterference(): Promise<InterferenceResult | null> {
+  if (design.bodies.length < 2) { setStatus('info', 'Interference needs at least two bodies'); return null; }
+  const r = await readDesign(async (c, doc) => (await c.call<InterferenceResult>('check_interference', { doc })).result, 'Checking interference');
+  const pairs = [...(r.interferences ?? [])].sort((a, b) => b.volume - a.volume);
+  if (!pairs.length) { setStatus('ok', 'No interference found'); return r; }
+  const list = pairs.slice(0, 3).map((p) => `${reportName(p.body_a)} ↔ ${reportName(p.body_b)} ${p.volume.toFixed(2)} mm³`).join(', ');
+  setStatus('warn', `${pairs.length} overlapping pair${pairs.length === 1 ? '' : 's'}: ${list}${pairs.length > 3 ? ', …' : ''}`);
+  return r;
 }
 
 // ---- the offer menu (DesignOffer) ---------------------------------------------------------------
@@ -292,8 +324,10 @@ export function offerItems(p: DesignPick | null, info: { surface?: string; curve
   const cyl = p?.kind === 'face' && info.surface === 'cylinder';
   const edge = p?.kind === 'edge';
   const circle = edge && info.curve === 'circle';
+  const nEdges = pickEdges(p).length;
   const head = !p ? 'Nothing selected'
     : p.kind === 'body' ? `${bodyN} — solid body`
+      : p.kind === 'edge' && nEdges > 1 ? `${nEdges} edges of ${bodyN}`
       : p.kind === 'face' ? `${flat ? 'Flat' : cyl ? 'Cylindrical' : 'Curved'} face ${p.face} of ${bodyN}`
         : `${circle ? 'Circular' : info.curve === 'line' ? 'Straight' : ''} edge ${p.edge} of ${bodyN}`.replace(/^ /, '');
   const groups: OfferItem[][] = [[{ type: 'label', label: head }]];
@@ -359,7 +393,11 @@ export function offerItems(p: DesignPick | null, info: { surface?: string; curve
     { label: 'Plane', icon: icon('plane'), kbds: ['shift', 'p'], onSelect: run('plane', flat ? undefined : { faceA: null }) },
     { label: 'Axis', icon: icon('axis'), kbds: ['shift', 'a'], onSelect: run('axis') },
     ...(!p || cyl ? [{ label: 'Helix', icon: icon('helix'), onSelect: run('helix', cyl ? { plane: 'face', planeFace: faceRef } : undefined) }] : []),
-    ...(p ? [{ label: 'Volume and area', icon: 'i-lucide-ruler', onSelect: () => { void bodyMass(p.body).catch((e: unknown) => toast.error(String((e as Error)?.message ?? e))); } }] : []),
+    ...(p ? [{ label: 'Volume and area', icon: 'i-lucide-ruler', onSelect: () => { void bodyMass(p.body); } }] : []),
+    // Orca's offer row "Interference" (whole solid body selected), greyed with its reason below two bodies.
+    ...(p?.kind === 'body' ? [design.bodies.length >= 2
+      ? { label: 'Interference', icon: 'i-lucide-boxes', onSelect: () => { void checkInterference().catch((e: unknown) => toast.error(String((e as Error)?.message ?? e))); } }
+      : { label: 'Interference needs at least two bodies', icon: 'i-lucide-boxes', disabled: true }] : []),
   ], '');
   const src = p ? design.bodies[p.body]?.source_feature : undefined;
   family('Modify', 'i-lucide-pencil', p ? [

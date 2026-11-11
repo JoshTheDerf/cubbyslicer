@@ -26,7 +26,6 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 ### Design tab (experimental)
 - **Sketcher:** live measurement labels; snapping to body edges while drawing; per-entity free / constrained colouring; live expressions on constraint values.
 - **Features:** surface features, coordinate systems, mates, pattern along a curve, extruding one chosen region of a sketch with several, text / SVG on faces.
-- **View and analysis:** section view, mass properties, interference check; Shift+click multi-select outside a feature card.
 - **Primitive bodies** (box, cylinder, cone, sphere, torus) are fixed-size, not parametric.
 - **Closed hollow shell** (no open face) is refused: Orca's own result for it is not a hollow body.
 - **Internal threads** follow Orca's behaviour, including its failure when the bore equals the thread's minor diameter.

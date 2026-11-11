@@ -13,6 +13,8 @@ export interface DesignViewportHandle {
   screenPoint(p: readonly [number, number, number]): [number, number] | null;
   /** Sketch mode: look straight at the plane, framing the entities (null: leave, restore the camera). */
   sketchView?(plane: import('./kernel/types').PlaneFrame | null, entities: readonly import('./sketch/model').SkEntity[], around?: { min: readonly number[]; max: readonly number[] }): void;
+  /** The model's mid-height, bed mm (where Orca's section view starts). */
+  modelMidZ(): number;
   /** A PNG of the current view. */
   capture(width: number, height: number): Promise<Blob>;
 }

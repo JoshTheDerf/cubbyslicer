@@ -18,6 +18,7 @@ export async function createFlow({ page, D, check, shot, settled, run, lap, out 
   await settled((d) => d.bodies.length === 1, 'box');
   await D(() => window.__cubbyDesign.designViewport().fitAll());
   await page.waitForTimeout(600);
+  await analysisChecks({ page, D, check, shot, settled, run, screen, topo });
   // ---- fillet card from the toolbar menu
   await page.click('[data-testid="design-add-feature"]');
   await page.waitForTimeout(300);
@@ -690,4 +691,109 @@ export async function bridgeDesignFlow({ call, check, log, out }) {
   check(conv.ok === true || conv.ok === false, `design_convert_object (a plain mesh object → mesh body): ${conv.ok ? 'ok' : conv.error}`);
   const cn = await D('cancel');
   check(cn.cancelled === false, 'design_cancel with nothing running');
+}
+
+// Orca's "View and analysis" on the 40 × 30 × 20 box (DesignPanel.cpp): Volume and area from the
+// offer, Section View (X, F, PageUp, the toolbar buttons), the Shift / Ctrl+click edge set into
+// Fillet / Chamfer, and Check interference from the feature tree's header.
+async function analysisChecks({ page, D, check, shot, settled, run, screen, topo }) {
+  const status = () => D(() => window.__cubbyDesign.design.status?.text ?? '');
+  // Open an offer family's submenu (hover can miss while the menu settles): retry until `item` shows.
+  const submenu = async (family, item) => {
+    for (let i = 0; i < 6; i++) {
+      await page.getByRole('menuitem', { name: family }).hover();
+      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); return; } catch { await page.mouse.move(5, 5); }
+    }
+  };
+  const bb = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.design.bodies[0].bbox)));
+  const mid = [0, 1, 2].map((k) => (bb.min[k] + bb.max[k]) / 2);
+  // ---- Volume and area (offer ▸ Reference), with Interference greyed for one body
+  const [cx, cy] = await screen(mid);
+  await page.mouse.click(cx, cy); await page.waitForTimeout(300);
+  check((await D(() => window.__cubbyDesign.designUi.pick?.kind)) === 'body', 'box picked (whole body)');
+  await page.mouse.click(cx, cy, { button: 'right' });
+  await page.waitForSelector('[role="menu"]');
+  await submenu(/^Reference/, /^Volume and area/);
+  const refText = (await page.locator('[role="menu"]').allInnerTexts()).join('\n');
+  check(/Interference needs at least two bodies/.test(refText), 'offer: Interference greyed with Orca’s reason (one body)');
+  await page.getByRole('menuitem', { name: /^Volume and area/ }).click();
+  await page.waitForFunction(() => /: volume /.test(window.__cubbyDesign.design.status?.text ?? ''));
+  let s = await status();
+  check(/: volume 24000\.00 mm³, area 5200\.00 mm²$/.test(s), `Volume and area: ${s}`);
+  await page.waitForTimeout(300);
+  await shot('00a-volume-area');
+  await page.keyboard.press('Escape');
+  // ---- Section view: X on at mid-height keeping the lower half; a click goes through the hidden half
+  await page.keyboard.press('x');
+  let sec = await D(() => window.__cubbyDesign.designUi.section && { ...window.__cubbyDesign.designUi.section });
+  check(!!sec && Math.abs(sec.z - mid[2]) < 0.01 && !sec.upper, `X: section on at the model's mid-height ${JSON.stringify(sec)}`);
+  check((await status()).startsWith('Section view on — hides half the model'), `status: ${await status()}`);
+  await page.waitForTimeout(500);
+  await shot('00b-section-lower');
+  let t = await topo(0);
+  const topFace = t.faces.filter((f) => f.normal[2] > 0.99).sort((a, b) => b.centroid[2] - a.centroid[2])[0];
+  const [tx, ty] = await screen(topFace.centroid);
+  await page.mouse.click(tx, ty); await page.waitForTimeout(200);
+  await page.mouse.click(tx, ty); await page.waitForTimeout(300);
+  const through = await D(() => { const p = window.__cubbyDesign.designUi.pick; return p && { ...p }; });
+  check(through?.kind === 'face' && through.face !== topFace.id, `the hidden top face can't be picked; the click lands on face ${through?.face} below the cut`);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('f');
+  check((await D(() => window.__cubbyDesign.designUi.section?.upper)) === true && (await status()) === 'Section view — showing the upper half', `F flips: ${await status()}`);
+  await page.keyboard.press('PageUp');
+  sec = await D(() => ({ ...window.__cubbyDesign.designUi.section }));
+  check(Math.abs(sec.z - (mid[2] + 2)) < 0.01, `PageUp moves the plane 2 mm (${sec.z})`);
+  await page.waitForTimeout(500);
+  await shot('00c-section-upper');
+  await page.click('[data-testid="design-section-flip"]');
+  check((await status()) === 'Section view — showing the lower half', `Flip button: ${await status()}`);
+  await page.click('[data-testid="design-section"]');
+  check(!(await D(() => window.__cubbyDesign.designUi.section)) && (await status()) === 'Section view off', `Section View button turns it off: ${await status()}`);
+  // ---- edge set: one top edge picked, Shift+click and Ctrl+click two more, Shift+click one off again
+  t = await topo(0);
+  const tops = t.edges.filter((e) => e.kind === 'line' && Math.abs(e.p0[2] - bb.max[2]) < 0.01 && Math.abs(e.p1[2] - bb.max[2]) < 0.01);
+  check(tops.length === 4, `4 top edges (${tops.length})`);
+  const at = async (e) => screen([0, 1, 2].map((k) => (e.p0[k] + e.p1[k]) / 2));
+  await D((id) => { const W = window.__cubbyDesign; W.designUi.pick = { kind: 'edge', body: 0, edge: id, generation: W.design.generation }; }, tops[0].id);
+  for (const [e, mod] of [[tops[1], 'Shift'], [tops[2], 'Control']]) {
+    const [x, y] = await at(e);
+    await page.keyboard.down(mod); await page.mouse.click(x, y); await page.keyboard.up(mod);
+    await page.waitForTimeout(300);
+  }
+  const set = () => D(() => { const p = window.__cubbyDesign.designUi.pick; return p?.kind === 'edge' ? [...(p.more ?? []), p.edge] : []; });
+  let ids = await set();
+  check(ids.join() === [tops[0].id, tops[1].id, tops[2].id].join(), `Shift / Ctrl+click build the edge set (${ids})`);
+  s = await status();
+  check(/3 edges selected — Shift\+click adds or removes one, Fillet\/Chamfer dresses them all/.test(s), `status: ${s}`);
+  await shot('00d-edge-set');
+  { const [x, y] = await at(tops[1]); await page.keyboard.down('Shift'); await page.mouse.click(x, y); await page.keyboard.up('Shift'); await page.waitForTimeout(300); }
+  ids = await set();
+  check(ids.join() === [tops[0].id, tops[2].id].join(), `Shift+click on one in the set removes it (${ids})`);
+  { const [x, y] = await at(tops[2]); await page.mouse.click(x, y, { button: 'right' }); }
+  await page.waitForSelector('[role="menu"]');
+  const head = (await page.locator('[role="menu"]').innerText()).split('\n')[0];
+  check(/^2 edges of /.test(head), `offer header names the set: ${head}`);
+  await submenu(/^Fillet \/ chamfer \/ draft/, /^Chamfer/);
+  await page.getByRole('menuitem', { name: /^Fillet(?! \/)/ }).click();
+  await page.waitForSelector('[data-testid="design-card"][data-tool="fillet"]');
+  const c = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.card.draft.edges)));
+  check(c?.ids?.join() === [tops[0].id, tops[2].id].join(), `offer ▸ Fillet: the card takes the whole set (${c?.ids})`);
+  await page.waitForTimeout(800);
+  await shot('00e-fillet-from-set');
+  await D(() => window.__cubbyDesign.cancelCard());
+  await D(() => { window.__cubbyDesign.designUi.pick = null; });
+  // ---- interference: a peg through the box, checked from the feature tree's header, then undone
+  await D(async (mid) => { await window.__cubbyDesign.addPrimitiveBody('cylinder', { position: [mid[0], mid[1], -5], params: { radius: 5, height: 30 } }); }, mid);
+  await settled((d) => d.bodies.length === 2, 'peg through the box');
+  await page.click('[data-testid="design-interference"]');
+  await page.waitForFunction(() => /overlapping pair|No interference/.test(window.__cubbyDesign.design.status?.text ?? ''));
+  s = await status();
+  const v = Number(/ ([\d.]+) mm³$/.exec(s)?.[1]);
+  check(/^1 overlapping pair: .+ ↔ .+ [\d.]+ mm³$/.test(s) && v > 0 && v <= Math.PI * 25 * 20 + 1, `Check interference: ${s}`);
+  await page.waitForTimeout(300);
+  await shot('00f-interference');
+  await run('edit.undo');
+  await settled((d) => d.bodies.length === 1, 'peg undone');
+  await page.click('[data-testid="design-interference"]');
+  check((await status()) === 'Interference needs at least two bodies', `one body: ${await status()}`);
 }

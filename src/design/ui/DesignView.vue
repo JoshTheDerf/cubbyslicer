@@ -119,6 +119,15 @@ const statusIcon = computed(() => ({ info: 'i-lucide-info', ok: 'i-lucide-circle
           <UButton icon="i-lucide-grid-2x2" color="neutral" :variant="designUi.showBed ? 'soft' : 'ghost'" size="sm" aria-label="Bed" :aria-pressed="designUi.showBed"
                    @click="run('design.toggle-bed')" />
         </UTooltip>
+        <!-- Orca's Section View and Flip Section (flip only usable while the section is on). -->
+        <UTooltip text="Section View — hide part of the model to see inside. PageUp/PageDown move the plane." :kbds="bindingTokensOf('design.section')">
+          <UButton icon="i-lucide-square-split-vertical" :color="designUi.section ? 'primary' : 'neutral'" :variant="designUi.section ? 'soft' : 'ghost'" size="sm" aria-label="Section view"
+                   :aria-pressed="!!designUi.section" :disabled="design.phase !== 'open'" data-testid="design-section" @click="run('design.section')" />
+        </UTooltip>
+        <UTooltip text="Flip Section — show the opposite half" :kbds="bindingTokensOf('design.section.flip')">
+          <UButton icon="i-lucide-flip-vertical-2" color="neutral" variant="ghost" size="sm" aria-label="Flip section" :disabled="!designUi.section"
+                   data-testid="design-section-flip" @click="run('design.section.flip')" />
+        </UTooltip>
         <USeparator orientation="vertical" class="h-5 mx-1" />
         <UTooltip text="New sketch — on the picked flat face, or choose a plane" :kbds="bindingTokensOf('design.sketch.new')">
           <UButton icon="i-lucide-pen-tool" color="neutral" :variant="sk.choosing ? 'soft' : 'ghost'" size="sm" :label="phone ? undefined : 'Sketch'" aria-label="New sketch"

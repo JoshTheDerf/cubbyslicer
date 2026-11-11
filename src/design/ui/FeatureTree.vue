@@ -14,6 +14,7 @@ import { design, editBlocker } from '../session';
 import { beginSketch } from '../sketch/session';
 import { designUi } from '../state';
 import { toast } from '../../ui';
+import { run } from '../../app/shell/useActions';
 
 const editable = computed(() => !editBlocker());
 const selected = computed(() => new Set(designUi.selected));
@@ -107,6 +108,12 @@ watch(() => designUi.selected.at(-1), async (i) => {
           <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-arrow-down" aria-label="Move down" :disabled="!editable || multi[0] === design.features.length - 1" @click="report(moveFeature(multi[0], 1))" />
         </UTooltip>
       </template>
+      <!-- Orca: the interference check sits after a rule — it reports, it does not edit the recipe. -->
+      <USeparator orientation="vertical" class="h-4 mx-1" />
+      <UTooltip text="Check interference — find overlapping bodies">
+        <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-boxes" aria-label="Check interference" :disabled="design.phase !== 'open'"
+                 data-testid="design-interference" @click="run('design.interference')" />
+      </UTooltip>
     </header>
 
     <ul ref="listEl" class="ft__list" role="listbox" aria-multiselectable="true" aria-label="Features">
