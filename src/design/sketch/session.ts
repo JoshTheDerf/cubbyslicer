@@ -37,6 +37,7 @@ import {
   type Plan, type SelItem,
 } from './constraints';
 import type { DrawToolId } from './shapes';
+import { QUOTE_TITLE, quoteEdit, type LiveQuote } from './quotes';
 
 export type EditToolId = 'select' | 'dimension' | 'trim' | 'extend' | 'fillet' | 'chamfer' | 'offset' | 'mirror' | 'move' | 'rotate' | 'scale' | 'array' | 'polar' | 'use-edges';
 export type SketchToolId = DrawToolId | EditToolId;
@@ -103,6 +104,11 @@ export const sk = reactive({
   finished: null as null | { index: number; name: string },
   /** Text / SVG regions waiting for Finish (rigid outlines; written onto the Sketch feature). */
   regions: null as null | { regions: V2[][][]; offset: V2; scale: V2; label: string; text?: { string: string; font: string; height: number } },
+  /**
+   * Text / SVG started on a picked face (Orca's `import_on_face`): the body it engraves and the
+   * face's centre on the sketch plane, where the outlines are centred.
+   */
+  onFace: null as null | { body: number; centre: V2 },
 });
 
 let sessionDoc: number | null = null;
@@ -232,7 +238,7 @@ export async function beginSketch(t: SketchTarget): Promise<boolean> {
     sk.plane = r.plane;
     sk.planeLabel = 'feature' in t ? sk.name : 'face' in t ? `Face ${t.face.face} of Body ${t.face.body + 1}` : typeof t.plane === 'string' ? PLANE_LABEL[t.plane] : t.label ?? 'Plane';
     sk.entities = markRaw([]); sk.constraints = markRaw([]);
-    sk.sel = []; sk.selCons = []; sk.undo = []; sk.redo = []; sk.conflict = null; sk.value = null; sk.regions = null; sk.finished = null;
+    sk.sel = []; sk.selCons = []; sk.undo = []; sk.redo = []; sk.conflict = null; sk.value = null; sk.regions = null; sk.onFace = null; sk.finished = null;
     sk.tool = 'select';
     applyState(r);
     designUi.pick = null;
@@ -254,7 +260,7 @@ export async function beginSketch(t: SketchTarget): Promise<boolean> {
 function closeLocal(): void {
   sk.open = false; sk.choosing = false; sk.feature = -1; sk.plane = null;
   sk.entities = markRaw([]); sk.constraints = markRaw([]); sk.sel = []; sk.selCons = []; sk.undo = []; sk.redo = [];
-  sk.conflict = null; sk.value = null; sk.regions = null; sk.loops = null; sk.dof = -1; sk.bad = []; sk.tool = 'select';
+  sk.conflict = null; sk.value = null; sk.regions = null; sk.onFace = null; sk.loops = null; sk.dof = -1; sk.bad = []; sk.tool = 'select';
   sessionDoc = null; gesture = null;
   designViewport()?.sketchView?.(null, []);
 }
@@ -274,13 +280,15 @@ export async function finishSketch(): Promise<{ ok: boolean; error: string; inde
   if (!sk.open || sk.committing) return { ok: false, error: 'No sketch is open.' };
   if (sk.value) sk.value = null;
   sk.committing = true;
-  const editing = sk.feature, regions = sk.regions;
+  const editing = sk.feature, regions = sk.regions, onFace = sk.onFace;
   const label = editing >= 0 ? `Edit ${sk.name}` : regions ? regions.label : 'Sketch';
   try {
     const out = await runEdit(label, async (c, doc) => {
       await ensureSession(c);
       const fields: Record<string, unknown> | null = regions ? { imported_regions: regions.regions, import_offset: regions.offset, import_scale_x: regions.scale[0], import_scale_y: regions.scale[1] } : null;
       if (fields && regions?.text) Object.assign(fields, { text_string: regions.text.string, text_font: regions.text.font, text_height: regions.text.height });
+      // Orca's import_on_face: the art remembers its host body, and its Extrude defaults to an inward Cut of it.
+      if (fields && onFace && editing < 0) Object.assign(fields, { import_on_face: true, import_face_body: onFace.body });
       // Kernel v1.2 takes the regions with the commit (one rebuild; it refuses an entity-less session
       // without them); older kernels ignore `fields`, so they get the set_feature below.
       const r = (await c.call<MutationResult & { sketch_index?: number; fields_applied?: boolean }>('sketch_commit', { doc, ...(regions && editing < 0 ? { name: `${regions.label} ${design.features.length + 1}` } : {}), ...(fields ? { fields } : {}) })).result;
@@ -723,6 +731,50 @@ export async function useEdges(body: number, edges: number[], generation: number
   return null;
 }
 
+// ---- live measurement labels (Orca's render_live_quotes) -------------------------------------------
+
+/**
+ * A click on a live quote (Orca): a Length or Radius becomes a driving dimension at its current
+ * value and its editor opens (`place_dimension`); a line's angle, an arc's sweep and an ellipse's
+ * axes open an editor that changes the geometry (a typed line angle drops its H / V first, as
+ * Orca's `set_line_angle` does). `screen` places the editor over the label.
+ */
+export async function promoteQuote(q: LiveQuote, screen?: [number, number]): Promise<void> {
+  if (!sk.entities[q.e]) return;
+  const at = { at: null, ...(screen ? { screen } : {}) };
+  if (q.kind === 'length' || q.kind === 'radius') {
+    const c = q.kind === 'length' ? cons('distance', q.e, 'p0', q.e, 'p1', q.value) : cons('radius', q.e, 'center', -1, 'p0', q.value);
+    if (await addConstraints([c])) return;
+    const i = duplicateOf(c, sk.constraints);
+    if (i < 0) return;
+    requestValue({ label: QUOTE_TITLE[q.kind], value: +q.value.toFixed(4), unit: 'mm', ...at, submit: (v) => setConstraintValue(i, v) });
+    return;
+  }
+  const deg = q.kind === 'angle' || q.kind === 'sweep';
+  requestValue({
+    label: QUOTE_TITLE[q.kind], value: +q.value.toFixed(4), unit: deg ? '°' : 'mm', ...at,
+    submit: async (v) => {
+      const e = sk.entities[q.e];
+      const n = e ? quoteEdit(e, q.kind, v) : 'That entity is gone';
+      if (typeof n === 'string') return n;
+      beginGesture('Edit value');
+      try {
+        if (q.kind === 'angle') {
+          const hv = sk.constraints.map((c, i) => ({ c, i })).filter(({ c }) => (c.type === 'horizontal' || c.type === 'vertical') && c.ea === q.e && c.eb === q.e).map(({ i }) => i);
+          if (hv.length) await deleteConstraints(hv);
+        }
+        const out = await edit('Edit value', async (c, doc) => {
+          const s = await step<StateResult>(c, 'sketch_set_entity', { doc, index: q.e, entity: n });
+          return { steps: s.steps, error: s.r.ok === false ? s.r.error ?? 'refused' : '' };
+        });
+        if (out.error) return `${QUOTE_TITLE[q.kind]} ${v} can’t be set (${out.error})`;
+      } finally { await endGesture(); }
+      setStatus('ok', `${QUOTE_TITLE[q.kind].replace(' (°)', '')} set to ${v}${deg ? '°' : ' mm'} — ${dofText()}.`);
+      return null;
+    },
+  });
+}
+
 // ---- text / SVG outlines ----------------------------------------------------------------------------
 
 /**
@@ -734,9 +786,32 @@ export function placeRegions(regions: V2[][][], label: 'Text' | 'SVG', o: { offs
   if (!sk.open) return 'No sketch is open';
   if (sk.entities.some((e) => !e.construction)) return `${label} goes in a sketch of its own — finish this one first, then start a new sketch for it`;
   if (!regions.length) return `The ${label.toLowerCase()} has no outline`;
-  sk.regions = { regions, offset: o.offset ?? sk.regions?.offset ?? [0, 0], scale: [1, 1], label, ...(o.text ? { text: o.text } : {}) };
+  // On a picked face the outlines (centred on their box) go to the face's centre, as in Orca.
+  sk.regions = { regions, offset: o.offset ?? sk.regions?.offset ?? sk.onFace?.centre ?? [0, 0], scale: [1, 1], label, ...(o.text ? { text: o.text } : {}) };
   setStatus('ok', `${label}: ${regions.length} outline region${regions.length === 1 ? '' : 's'} placed — drag a corner to scale, the centre to move; Finish writes them into the sketch (they extrude as they are).`);
   return null;
+}
+/**
+ * Orca's Text / SVG outside a sketch (`open_text_dialog` / `add_imported_sketch`): with a flat
+ * face picked the art goes on that face, centred on it, and remembers the face's body
+ * (`import_on_face`: its Extrude defaults to an inward Cut of that body); otherwise on the Top
+ * plane (Orca's reference plane). Opens the sketch the outlines live in; true when it is open.
+ */
+export async function beginArt(): Promise<boolean> {
+  if (sk.open) return true;
+  const p = designUi.pick;
+  if (p?.kind === 'face') {
+    const doc = currentDoc();
+    const info = doc === null ? null : await designKernel().run('Reading the face', async (c) => (await c.call<{ centroid?: [number, number, number]; plane?: PlaneFrame }>('face_info', { doc, body: p.body, face: p.face, generation: p.generation })).result, { quiet: true }).catch(() => null);
+    if (info?.plane && info.centroid) {
+      if (!(await beginSketch({ face: { body: p.body, face: p.face }, generation: p.generation }))) return false;
+      const o = sk.plane!.origin, c = info.centroid, d = [c[0] - o[0], c[1] - o[1], c[2] - o[2]];
+      const x = sk.plane!.x_axis, y = sk.plane!.y_axis;
+      sk.onFace = { body: p.body, centre: [d[0] * x[0] + d[1] * x[1] + d[2] * x[2], d[0] * y[0] + d[1] * y[1] + d[2] * y[2]] };
+      return true;
+    }
+  }
+  return beginSketch({ plane: 'XY' });
 }
 export function moveRegions(offset: V2): void { if (sk.regions) sk.regions = { ...sk.regions, offset }; }
 export function clearRegions(): void { sk.regions = null; }

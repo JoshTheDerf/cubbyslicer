@@ -708,7 +708,7 @@ async function analysisChecks({ page, D, check, shot, settled, run, screen, topo
     for (let i = 0; i < 6; i++) {
       const f = page.getByRole('menuitem', { name: family });
       if (i % 2) { await f.focus(); await page.keyboard.press('ArrowRight'); } else await f.hover();
-      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); return; } catch { await page.mouse.move(5, 5); }
+      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); if (await page.getByRole('menuitem', { name: item }).first().isVisible()) return; } catch { /* retry */ } await page.mouse.move(5, 5);
     }
   };
   const bb = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.design.bodies[0].bbox)));
@@ -825,7 +825,7 @@ export async function assemblySurfaceFlow({ page, D, check, shot, settled }) {
     for (let i = 0; i < 6; i++) {
       const f = page.getByRole('menuitem', { name: family });
       if (i % 2) { await f.focus(); await page.keyboard.press('ArrowRight'); } else await f.hover();
-      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); return; } catch { await page.mouse.move(5, 5); }
+      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); if (await page.getByRole('menuitem', { name: item }).first().isVisible()) return; } catch { /* retry */ } await page.mouse.move(5, 5);
     }
   };
   const ok = async (what, pred) => { await page.click('[data-testid="design-card-ok"]'); await settled(pred, what); return D(() => ({ card: !!window.__cubbyDesign.card.tool, error: window.__cubbyDesign.card.error, ok: window.__cubbyDesign.design.ok })); };
@@ -899,6 +899,29 @@ export async function assemblySurfaceFlow({ page, D, check, shot, settled }) {
   const mc = await D(() => window.__cubbyDesign.design.mateConflicts.length);
   check(mc === 0, `no mate conflicts (${mc})`);
   await fit(); await shot('05-mated');
+  // ---- datums drawn as Orca draws them: the two connectors (B driven, joined by the mate), a datum plane; its base pick
+  const cs = await page.$$eval('[data-testid="design-coordsys"]', (g) => g.map((x) => x.classList.contains('is-driven')));
+  check(cs.length === 2 && cs.filter(Boolean).length === 1 && (await page.locator('[data-testid="design-mate-link"]').count()) === 1, `coordinate systems drawn: ${cs.length}, driven ${cs.filter(Boolean).length}, mate link`);
+  await D(async () => { const W = window.__cubbyDesign; await W.runEdit('Add Plane', async (c, doc) => (await c.call('add_feature', { doc, type: 'Plane', fields: { plane_type: 'Offset', plane_base: 0, plane_offset: 45, plane_u_size: 70, plane_v_size: 50 } })).result); });
+  await settled((d) => d.features.some((f) => f.type === 'Plane'), 'datum plane');
+  await page.waitForSelector('[data-testid="design-datum-plane"]');
+  await fit(); await page.waitForTimeout(400);
+  check((await page.locator('[data-testid="design-datum-plane"]').count()) === 1, 'the datum plane is drawn');
+  await shot('05b-datums');
+  await D(() => window.__cubbyDesign.openCard('plane', { pick: null }));
+  await page.waitForSelector('[data-testid="design-card"][data-tool="plane"]');
+  const plFrame = await D(async () => { const W = window.__cubbyDesign; return W.readDesign(async (c, doc) => (await c.call('datums', { doc })).result.planes[0].plane); });
+  let based = false;
+  for (const [u, v] of [[30, 20], [-30, 20], [30, -20], [-30, -20], [0, 22], [32, 0]]) {
+    const w = [0, 1, 2].map((k) => plFrame.origin[k] + plFrame.x_axis[k] * u + plFrame.y_axis[k] * v);
+    const [x, y] = await screen(w);
+    await page.mouse.click(x, y); await page.waitForTimeout(300);
+    if ((await D(() => window.__cubbyDesign.card.draft.plane_base)) === 3) { based = true; break; }
+  }
+  check(based, 'a click on the datum plane (no body under it) makes it the Plane card’s base (Orca’s base pick)');
+  await D(() => window.__cubbyDesign.cancelCard());
+  await D(async () => { const W = window.__cubbyDesign; const i = W.design.features.find((f) => f.type === 'Plane').index; await W.runEdit('Delete Plane', async (c, doc) => (await c.call('delete_feature', { doc, index: i })).result); });
+  await settled((d) => !d.features.some((f) => f.type === 'Plane'), 'datum plane removed');
   // ---- Surfaces on a rectangle sketch beside the boxes
   await D(async () => {
     const W = window.__cubbyDesign;

@@ -5,6 +5,7 @@
  * construction dashed; selected / hovered highlighted), closed regions shaded, vertices, the
  * sketch axes, the rubber band and snap hints of the active tool, constraint badges and
  * dimensions (click a dimension to edit it, a badge to delete its constraint — Shift+click selects it),
+ * Orca's live measurement labels on the dragged / lone selected entity (click one: it becomes a dimension),
  * the outlines' move / scale handles (Text / SVG), and the inline
  * value editor (Orca's SketchInlineEditor: Enter applies, Tab applies and moves on, Esc keeps
  * the geometry as drawn; numbers or expressions over the design's variables).
@@ -21,7 +22,8 @@ import {
   type SkConstraint, type SkEntity, type V2,
 } from '../sketch/model';
 import { CONSTRAINT_BY_TYPE, constraintEntities, describeConstraint, dimensionText, fromWire } from '../sketch/constraints';
-import { sk, setConstraintValue, requestValue, deleteConstraints, toggleConstruction, deleteSelection, finishSketch, cancelSketch, applyConstraint, badgeClick, regionCorners, dragRegionHandle, regionPoint } from '../sketch/session';
+import { sk, setConstraintValue, requestValue, deleteConstraints, toggleConstruction, deleteSelection, finishSketch, cancelSketch, applyConstraint, badgeClick, regionCorners, dragRegionHandle, regionPoint, promoteQuote } from '../sketch/session';
+import { liveQuotes, quotedEntity, type LiveQuote } from '../sketch/quotes';
 import { live, pointerContext, pointerDbl, pointerDown, pointerMove, pointerUp, setTool, type PointerCtx } from '../sketch/driver';
 import { evalValue } from '../sketch/expr';
 import { SNAP_LABEL } from '../sketch/infer';
@@ -260,6 +262,21 @@ function centroid(): V2 | null {
   return ctrCache.c;
 }
 
+// ---- live measurement labels (Orca's render_live_quotes) ----------------------------------------------
+interface QuoteDraw { key: string; q: LiveQuote; lines: string; x: number; y: number }
+const quotes = computed<QuoteDraw[]>(() => {
+  void tick.value;
+  const ei = quotedEntity(sk.sel, sk.tool);
+  if (ei < 0) return [];
+  // Orca's label height, 15 px, in plane mm: it sets the offsets and wedge radii.
+  return liveQuotes(sk.entities, sk.constraints, ei, 15 * mmPerPx.value).map((q) => {
+    const [x, y] = P(q.label);
+    return { key: `${q.e}${q.kind}`, q, lines: q.lines.map((l) => path(l)).join(''), x, y };
+  });
+});
+function clickQuote(d: QuoteDraw) { void promoteQuote(d.q, [d.x, d.y]); }
+const quoteTitle = (q: LiveQuote) => (q.kind === 'length' || q.kind === 'radius' ? `${q.text} — click to make it a dimension` : `${q.text} — click to type a value`);
+
 // ---- constraint badges -------------------------------------------------------------------------------
 interface Badge { key: string; i: number; x: number; y: number; glyph: string; bad: boolean; sel: boolean; title: string }
 const badges = computed<Badge[]>(() => {
@@ -426,6 +443,9 @@ const menuItems = computed(() => {
           <path :d="d.arrows" class="sko__dimarrow" />
         </g>
       </g>
+      <g class="sko__quotes">
+        <path v-for="d in quotes" :key="`q${d.key}`" :d="d.lines" class="sko__quoteline" />
+      </g>
       <template v-for="v in vertices" :key="v.key">
         <circle v-if="v.kind !== 'center'" :cx="v.x" :cy="v.y" :r="v.kind === 'point' ? 3.6 : 2.8" class="sko__vtx" :class="[`is-${v.cls}`, { 'is-point': v.kind === 'point' }]" />
         <path v-else :d="`M${v.x - 4} ${v.y}H${v.x + 4}M${v.x} ${v.y - 4}V${v.y + 4}`" class="sko__ctr" :class="`is-${v.cls}`" />
@@ -461,6 +481,9 @@ const menuItems = computed(() => {
 
     <button v-for="d in dims" :key="`l${d.i}`" type="button" class="sko__dimlabel" :class="{ 'is-bad': d.bad, 'is-sel': d.sel }"
             :style="{ left: `${d.x}px`, top: `${d.y}px` }" :title="`${d.title} — click to edit`" data-testid="sketch-dimension" @click.stop="editDim(d.i)">{{ d.text }}</button>
+
+    <button v-for="d in quotes" :key="`ql${d.key}`" type="button" class="sko__dimlabel sko__quote" :style="{ left: `${d.x}px`, top: `${d.y}px` }"
+            :title="quoteTitle(d.q)" :data-kind="d.q.kind" data-testid="sketch-quote" @click.stop="clickQuote(d)">{{ d.q.text }}</button>
 
     <form v-if="sk.value && valuePos" class="sko__val" :style="{ left: `${valuePos.x}px`, top: `${valuePos.y}px` }" data-testid="sketch-value" @submit.prevent="submitValue">
       <label class="sko__vallabel" for="sko-value">{{ sk.value.label }}</label>
@@ -543,6 +566,9 @@ const menuItems = computed(() => {
   background: var(--vp-sketch-glyph-bg); border: 1px solid color-mix(in srgb, var(--vp-sketch-dim) 40%, transparent); border-radius: 4px;
 }
 .sko__dimlabel:hover { border-color: var(--vp-sketch-dim); }
+.sko__quoteline { fill: none; stroke: var(--vp-sketch-quote); stroke-width: 1; opacity: 0.9; }
+.sko__quote { color: var(--vp-sketch-quote); border-color: color-mix(in srgb, var(--vp-sketch-quote) 40%, transparent); }
+.sko__quote:hover { border-color: var(--vp-sketch-quote); }
 .sko__dimlabel.is-sel { border-color: var(--vp-sketch-sel); color: var(--vp-sketch-sel); }
 .sko__dimlabel.is-bad { border-color: var(--vp-sketch-bad); color: var(--vp-sketch-bad); }
 .sko__val {

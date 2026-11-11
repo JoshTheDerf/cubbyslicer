@@ -20,6 +20,7 @@ import { evalValue } from './expr';
 import * as K from './session';
 import { sk } from './session';
 import { getActionScope, setActionScope } from '../../app/actions/dispatch';
+import { liveQuotes, quoteEdit, quotedEntity, quoteText } from './quotes';
 
 const close = (a: V2, b: V2, eps = 1e-9) => Math.abs(a[0] - b[0]) < eps && Math.abs(a[1] - b[1]) < eps;
 const opts = (o: Partial<BuildOpts> = {}): BuildOpts => ({ base: 0, entities: [], snaps: [], axes: [], construction: false, polygonSides: 6, polygonCircumscribed: false, final: true, ...o });
@@ -180,6 +181,46 @@ describe('inline values', () => {
   });
 });
 
+describe('live measurement labels (Orca’s render_live_quotes)', () => {
+  const ents = [line([0, 0], [30, 40]), entity('circle', { center: [0, 0], radius: 5 }), arc([0, 0], 10, 0, Math.PI / 2), entity('ellipse_arc', { center: [0, 0], radius: 8, rminor: 3, rotation: 0, start_angle: 0, end_angle: Math.PI })];
+  it('formats like Orca’s dim_text', () => {
+    expect(quoteText('length', 50)).toBe('50 mm');
+    expect(quoteText('length', 12.345)).toBe('12.35 mm');
+    expect(quoteText('radius', 5.1)).toBe('R5.1 mm');
+    expect(quoteText('angle', 53.130102)).toBe('53.13°');
+    expect(quoteText('sweep', -0.001)).toBe('0°');
+  });
+  it('a line shows its Length and Angle; a circle its Radius; an arc Radius and sweep; an ellipse arc its axes and sweep', () => {
+    const k = (i: number) => liveQuotes(ents, [], i, 2).map((q) => `${q.kind}:${q.text}`);
+    expect(k(0)).toEqual(['length:50 mm', 'angle:53.13°']);
+    expect(k(1)).toEqual(['radius:R5 mm']);
+    expect(k(2)).toEqual(['radius:R10 mm', 'sweep:90°']);
+    expect(k(3)).toEqual(['major:8 mm', 'minor:3 mm', 'sweep:180°']);
+    expect(liveQuotes([line([0, 0], [-10, 0])], [], 0, 2)[1].text).toBe('180°');
+  });
+  it('skips what a dimension already drives', () => {
+    const q = liveQuotes(ents, [cons('distance', 0, 'p0', 0, 'p1', 50), cons('radius', 2, 'center', -1, 'p0', 10)], 0, 2);
+    expect(q.map((x) => x.kind)).toEqual(['angle']);
+    expect(liveQuotes(ents, [cons('radius', 2, 'center', -1, 'p0', 10)], 2, 2).map((x) => x.kind)).toEqual(['sweep']);
+  });
+  it('is for a lone selected (or dragged) entity, and not under the edit / transform tools', () => {
+    expect(quotedEntity([{ e: 2 }], 'select')).toBe(2);
+    expect(quotedEntity([{ e: 2, role: 'p0' } as { e: number }, { e: 2 }], 'select')).toBe(2);
+    expect(quotedEntity([{ e: 1 }, { e: 2 }], 'select')).toBe(-1);
+    expect(quotedEntity([{ e: 2 }], 'fillet')).toBe(-1);
+    expect(quotedEntity([{ e: 2 }], 'move')).toBe(-1);
+  });
+  it('typed values edit the geometry as Orca does (and refuse what Orca refuses)', () => {
+    const l = quoteEdit(ents[0], 'angle', 90) as typeof ents[0];
+    expect(l.p1[0]).toBeCloseTo(0); expect(l.p1[1]).toBeCloseTo(50);
+    const a = quoteEdit(ents[2], 'sweep', 45) as typeof ents[0];
+    expect(a.end_angle).toBeCloseTo(Math.PI / 4); expect(a.p1[0]).toBeCloseTo(10 * Math.SQRT1_2);
+    expect(quoteEdit(ents[2], 'sweep', 360)).toBe('The angle must be between 0° and 360°');
+    expect(quoteEdit(ents[3], 'minor', 9)).toBe('The semi-major axis cannot be shorter than the semi-minor axis');
+    expect((quoteEdit(ents[3], 'major', 10) as typeof ents[0]).p1[0]).toBeCloseTo(-10);
+  });
+});
+
 // ---- the session on the fake kernel ---------------------------------------------------------------
 
 let fake: FakeKernel;
@@ -333,6 +374,30 @@ describe('sketch session', () => {
     const f = (await designKernel().run('read', async (k) => (await k.call<{ feature: Record<string, unknown> }>('get_feature', { doc, index: r.index })).result, { quiet: true })).feature;
     expect(f).toMatchObject({ import_scale_x: 2, import_scale_y: 2 });
     expect(f.import_offset).toEqual([15, 22]);
+  });
+
+  it('a click on a live quote: Length / Radius become driving dimensions with their editor; a line angle rotates it (its H dropped)', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    await K.addEntities([line([0, 0], [20, 0]), entity('circle', { center: [40, 0], radius: 4 })], [cons('horizontal', 0, 'p0', 0, 'p1')]);
+    const [len, ang] = liveQuotes(sk.entities, sk.constraints, 0, 2);
+    await K.promoteQuote(len);
+    expect(sk.constraints.at(-1)).toMatchObject({ type: 'distance', ea: 0, ra: 'p0', eb: 0, rb: 'p1', value: 20 });
+    expect(sk.value).toMatchObject({ label: 'Length', value: 20, unit: 'mm' });
+    expect(await sk.value!.submit(25)).toBeNull();
+    expect(sk.constraints.at(-1)!.value).toBe(25);
+    sk.value = null;
+    expect(liveQuotes(sk.entities, sk.constraints, 0, 2).map((q) => q.kind)).toEqual(['angle']);
+    await K.promoteQuote(liveQuotes(sk.entities, sk.constraints, 1, 2)[0]);
+    expect(sk.constraints.at(-1)).toMatchObject({ type: 'radius', ea: 1, value: 4 });
+    expect(sk.value).toMatchObject({ label: 'Radius' });
+    sk.value = null;
+    const undo0 = sk.undo.length, L = Math.hypot(sk.entities[0].p1[0] - sk.entities[0].p0[0], sk.entities[0].p1[1] - sk.entities[0].p0[1]);
+    await K.promoteQuote(ang);
+    expect(sk.value).toMatchObject({ label: 'Angle (°)', unit: '°' });
+    expect(await sk.value!.submit(90)).toBeNull();
+    expect(sk.constraints.some((c) => c.type === 'horizontal')).toBe(false);
+    expect(sk.entities[0].p1[0]).toBeCloseTo(sk.entities[0].p0[0]); expect(sk.entities[0].p1[1]).toBeCloseTo(sk.entities[0].p0[1] + L);
+    expect(sk.undo.length).toBe(undo0 + 1); // one sketch undo entry: H dropped + the line turned
   });
 
   it('cancel leaves the design unchanged; trim drops the constraints on the moved end first', async () => {

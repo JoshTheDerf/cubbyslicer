@@ -16,7 +16,9 @@ import { card, ghost, setCardValue } from '../create';
 import OfferMenu from './OfferMenu.vue';
 import SketchOverlay from './SketchOverlay.vue';
 import SketchesLayer from './SketchesLayer.vue';
+import DatumsLayer from './DatumsLayer.vue';
 import { cardSketchRows, hitSketch } from '../sketch/committed';
+import { datumDrawing } from '../datums';
 import { beginSketch, sk } from '../sketch/session';
 import { bounds, regionAt, regionLoops, toWorld } from '../sketch/model';
 import type { FaceInfo } from '../kernel/types';
@@ -228,8 +230,25 @@ function extendEdgeSet(at: { clientX: number; clientY: number }): boolean {
   return true;
 }
 
+/**
+ * Orca's base pick for the Plane card (Offset / Angle on a base plane): a click that hits no body,
+ * inside a datum plane's rectangle, makes that plane the base.
+ */
+const datumsLayer = ref<{ planeAt(x: number, y: number): number | null } | null>(null);
+function datumBaseClick(at: { clientX: number; clientY: number }): boolean {
+  const d = card.draft;
+  if (card.tool?.id !== 'plane' || (d.plane_type !== 'Offset' && d.plane_type !== 'Angle') || (d.faceA as PickValue | null)?.ids?.length) return false;
+  const r = host.value!.getBoundingClientRect();
+  const i = datumsLayer.value?.planeAt(at.clientX - r.left, at.clientY - r.top) ?? null;
+  if (i === null) return false;
+  void setCardValue('plane_base', 3 + i);
+  setStatus('info', `Base: ${datumDrawing.value.planes.find((p) => p.ordinal === i)?.name ?? `Plane ${i + 1}`}`);
+  return true;
+}
+
 function onClick(hit: DesignHit | null, mods: { shift: boolean; ctrl: boolean; clientX: number; clientY: number }) {
   if (sk.choosing) { chooseSketchFace(hit); return; }
+  if (!hit && datumBaseClick(mods)) return;
   if (picking.spec) { onPickClick(hit, mods); return; }
   if ((mods.shift || mods.ctrl) && !card.tool && extendEdgeSet(mods)) return;
   // Orca: a click inside a finished sketch's region (or on its stroke) picks the sketch —
@@ -370,6 +389,7 @@ watch([scene, () => design.modelingOrigin, () => designUi.showOrigin], ([s, o, s
       <strong>3D view unavailable</strong>
       <span>{{ failed }}. Enable hardware acceleration in your browser to use the Design tab.</span>
     </div>
+    <DatumsLayer ref="datumsLayer" :scene="scene" />
     <SketchesLayer ref="layer" :scene="scene" />
     <SketchOverlay :scene="scene" />
     <slot />

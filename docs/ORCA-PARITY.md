@@ -24,9 +24,8 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Mixed filaments:** Orca's lab-measured colours come from the engine; before the engine has loaded, swatches use the computed pigment blend.
 
 ### Design tab (experimental)
-- **Sketcher:** live measurement labels (Orca's non-driving quotes on the dragged or selected entity, click one to make it a dimension).
-- **Features:** text / SVG placed on a picked face (centred on it, the Extrude then defaulting to an inward Cut of that body).
-- **Datum planes, axes and coordinate systems** are not drawn in the Design view (they are listed in the feature tree and offered in the cards).
+- **Sketcher:** the live measurement labels of Orca's grouped shapes (rectangle Width / Height, slot length / width / angle, polygon side / orientation, rounded-rectangle and arc-slot sizes): this sketcher keeps a shape as plain entities and constraints, so a member line shows its own Length / Angle.
+- **Coordinate systems** are drawn as Orca's conventional disc, not its default "face" glyph (preference *Draw mate connectors as a face*), and over the model rather than hidden behind it.
 - **Primitive bodies** (box, cylinder, cone, sphere, torus) are fixed-size, not parametric.
 - **Closed hollow shell** (no open face) is refused: Orca's own result for it is not a hollow body.
 - **Internal threads** follow Orca's behaviour, including its failure when the bore equals the thread's minor diameter.
@@ -43,6 +42,7 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Filament renumbering:** two desktop slips are not copied (a part's renumbered support filament written onto its object; a stray custom G-code entry on replace).
 - **Section view and focus mode** controls sit in CubbySlicer's own toolbars.
 - **Extruding one region of a sketch** (Orca's loop pick) happens only when the sketch has more than one closed region; with a single profile the Extrude keeps following the sketch (Orca copies the loop into the Extrude whenever one was clicked).
+- **Text / SVG on a face** are in the offer of a picked flat face (and the command palette); Orca lists its Text / SVG verbs only in sketch mode, where they land on the sketch's plane, which here is still the case inside an open sketch.
 - **Coordinate system card:** Orca's "Body" filter (others go see-through while picking) is not there; the card refuses Face + direction without a face (Orca adds it and reports "face not found").
 
 ## Verification debts

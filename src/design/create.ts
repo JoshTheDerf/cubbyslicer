@@ -337,7 +337,12 @@ export function offerItems(p: DesignPick | null, info: { surface?: string; curve
   // Orca: the offer starts with the sketch the pick allows (on this flat face, else a new one).
   const selSketch = designUi.selected.length === 1 && design.features[designUi.selected[0]]?.type === 'Sketch' ? designUi.selected[0] : -1;
   const sketchRow: OfferItem[] = [];
-  if (flat) sketchRow.push({ label: 'Sketch on this face', icon: 'i-lucide-pen-tool', kbds: ['shift', 's'], onSelect: () => { void beginSketch({ face: { body: p!.body, face: (p as { face: number }).face }, generation: p!.generation as number }); } });
+  if (flat) {
+    sketchRow.push({ label: 'Sketch on this face', icon: 'i-lucide-pen-tool', kbds: ['shift', 's'], onSelect: () => { void beginSketch({ face: { body: p!.body, face: (p as { face: number }).face }, generation: p!.generation as number }); } });
+    // Orca's Text / SVG verbs on a face (import_on_face): centred on it, the Extrude then an inward Cut.
+    sketchRow.push({ label: 'Text', icon: 'i-lucide-type', onSelect: () => { void import('./sketch/actions').then((m) => m.startText()); } },
+      { label: 'SVG', icon: 'i-lucide-file-image', onSelect: () => { void import('./sketch/actions').then((m) => m.startSvg()); } });
+  }
   else if (!p && selSketch < 0) sketchRow.push({ label: 'New sketch…', icon: 'i-lucide-pen-tool', kbds: ['shift', 's'], onSelect: () => { const e = startSketch(); if (e) toast.warn(e); } });
   if (selSketch >= 0 && !p) {
     const name = design.features[selSketch].name;

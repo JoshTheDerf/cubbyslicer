@@ -6,7 +6,8 @@
 //    cut through; the first sketch's dimension edited and the solid following; save → reopen → re-edit.
 // 2. on XZ: fillet a rectangle corner, offset the loop, trim, extend, tangent arc, slot, polygon, spline,
 //    ellipse, point, a drag; the bridge's design_sketch_* tools (add, constrain + conflict, the guard
-//    against a radius on a line, plan, angle in degrees, commit), a text sketch extruded, an SVG.
+//    against a radius on a line, plan, angle in degrees, commit), a text sketch extruded, an SVG;
+//    text on a picked face (offer ▸ Text: centred on it; its Extrude an inward Cut of that body).
 function sketchHelpers(page, D) {
   const plane = () => D(() => window.__cubbyDesign.sketch.sk.plane);
   const P = async (x, y) => { const p = await plane(); return D(([p, x, y]) => window.__cubbyDesign.designViewport().screenPoint([p.origin[0] + x * p.x_axis[0] + y * p.y_axis[0], p.origin[1] + x * p.x_axis[1] + y * p.y_axis[1], p.origin[2] + x * p.x_axis[2] + y * p.y_axis[2]]), [p, x, y]); };
@@ -348,5 +349,121 @@ export async function sketchFlow({ page, D, check, shot, settled, run, lap, out 
   check(cm3.ok, 'SVG sketch committed');
   const fsv = await D(async (i) => { const W = window.__cubbyDesign; return W.designKernel().run('read', async (c) => (await c.call('get_feature', { doc: W.currentDoc(), index: i })).result.feature, { quiet: true }); }, cm3.sketch_index);
   check(Math.abs(fsv.import_scale_x - rg.scale[0]) < 1e-9 && Math.abs(fsv.import_offset[0] - rg.offset[0]) < 1e-9, `the placement is written to the sketch (scale ${fsv.import_scale_x?.toFixed?.(3)}, offset ${JSON.stringify(fsv.import_offset)})`);
+  await liveQuotesFlow({ page, D, check, shot, settled, run, lap, out });
+  await textOnFaceFlow({ page, D, check, shot, settled, run, lap, out });
   void t;
+}
+
+/** Text on a picked face (Orca's import_on_face): offer ▸ Text, centred on the face; its Extrude an inward Cut of that body. */
+export async function textOnFaceFlow({ page, D, check, shot, settled, lap }) {
+  const h = sketchHelpers(page, D);
+  const tool = (name, args = {}) => D(async ([name, args]) => { const m = await import('/slicer/src/bridge/groups/design.ts'); const tl = m.designTools().find((x) => x.name === name); try { return (await tl.run(args)).data; } catch (e) { return { thrown: String(e.message ?? e) }; } }, [name, args]);
+  console.log('sketch: text on a face');
+  const org2 = await D(() => window.__cubbyDesign.design.modelingOrigin);
+  const pb = await tool('design_add_primitive', { shape: 'box', params: { width: 50, depth: 30, height: 10 }, position: [org2[0] + 20, org2[1] + 70, 0] });
+  check(pb.ok, `a box to engrave (body ${pb.body})`);
+  await settled(null, 'box added');
+  await D(() => window.__cubbyDesign.designViewport().fitAll());
+  await page.waitForTimeout(500);
+  const bt = await D(async (b) => { const W = window.__cubbyDesign; return W.readDesign(async (c, doc) => (await c.call('query_topology', { doc, body: b })).result); }, pb.body);
+  const topF = bt.faces.filter((f) => f.normal[2] > 0.99).sort((a, b) => b.centroid[2] - a.centroid[2])[0];
+  const [fx, fy] = await D((p) => window.__cubbyDesign.designViewport().screenPoint(p), topF.centroid);
+  await page.mouse.click(fx, fy); await page.waitForTimeout(250);
+  await page.mouse.click(fx, fy); await page.waitForTimeout(400);
+  check((await D(() => window.__cubbyDesign.designUi.pick?.kind)) === 'face', 'the box’s top face picked');
+  await page.mouse.click(fx, fy, { button: 'right' });
+  await page.waitForSelector('[role="menu"]');
+  await page.waitForTimeout(300);
+  await shot('09-offer-text-on-face');
+  await page.getByRole('menuitem', { name: /^Text$/ }).click();
+  await page.waitForSelector('[data-testid="sketch-text-form"]');
+  const of = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.sketch.sk.onFace)));
+  const fpl = await h.plane();
+  const want = [0, 1].map((k) => { const ax = k ? fpl.y_axis : fpl.x_axis; return [0, 1, 2].reduce((a, i) => a + (topF.centroid[i] - fpl.origin[i]) * ax[i], 0); });
+  check(of && of.body === pb.body && Math.abs(of.centre[0] - want[0]) < 1e-6 && Math.abs(of.centre[1] - want[1]) < 1e-6, `text sketch on the face, centre (${of?.centre?.map((v) => v.toFixed(2))})`);
+  await page.locator('[data-testid="sketch-text-form"] textarea').fill('OK');
+  await page.click('[data-testid="sketch-text-place"]');
+  await page.waitForSelector('[data-testid="sketch-regions"]');
+  const rg = await D(() => window.__cubbyDesign.sketch.sk.regions);
+  check(Math.abs(rg.offset[0] - want[0]) < 1e-6 && Math.abs(rg.offset[1] - want[1]) < 1e-6, 'the text is centred on the face');
+  await page.waitForTimeout(400);
+  await shot('10-text-on-face');
+  const nf = await D(() => window.__cubbyDesign.design.features.length);
+  await page.click('[data-testid="sketch-finish"]');
+  await settled((d) => !d.status || /^Added /.test(d.status.text), 'text sketch committed');
+  check(await D(() => window.__cubbyDesign.design.features.length) === nf + 1, 'the text is one Sketch feature');
+  const tf = await D(async (i) => { const W = window.__cubbyDesign; return W.designKernel().run('read', async (c) => (await c.call('get_feature', { doc: W.currentDoc(), index: i })).result.feature, { quiet: true }); }, nf);
+  check(tf.import_on_face === true && tf.import_face_body === pb.body, `the sketch remembers its face's body (import_on_face ${tf.import_on_face}, body ${tf.import_face_body})`);
+  await page.click('[data-testid="sketch-offer-extrude"]');
+  await page.waitForFunction(() => window.__cubbyDesign.card.tool?.id === 'extrude' && !window.__cubbyDesign.card.resolving);
+  await page.waitForTimeout(300);
+  const ed = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.card.draft)));
+  check(ed.mode === 'Cut' && ed.flip === true && ed.target_body === pb.body, `Extrude defaults to an inward Cut of the box (${ed.mode}, flip ${ed.flip}, body ${ed.target_body})`);
+  const bvol = () => D(async (b) => { const W = window.__cubbyDesign; return W.readDesign(async (c, doc) => (await c.call('mass_properties', { doc, body: b })).result.volume); }, pb.body);
+  const v0 = await bvol();
+  await D(() => window.__cubbyDesign.setCardValue('distance', 1));
+  await page.waitForFunction(() => ['ok', 'invalid'].includes(window.__cubbyDesign.card.preview.state), null, { timeout: 120000 });
+  await D(() => window.__cubbyDesign.confirmCard());
+  await settled(null, 'engraved');
+  check(await D(() => window.__cubbyDesign.design.features.length) === nf + 2, 'the engraving is one Extrude feature');
+  const v1 = await bvol();
+  const bb = await D((b) => window.__cubbyDesign.design.bodies[b].bbox, pb.body);
+  check(v1 < v0 - 5 && Math.abs(bb.max[2] - 10) < 1e-6, `engraved 1 mm into the top (volume ${v0.toFixed(1)} → ${v1.toFixed(1)}, top z ${bb.max[2]})`);
+  await page.waitForTimeout(500);
+  await shot('11-engraved');
+}
+
+/** Orca's live measurement labels: a selected line shows Length / Angle, an arc Radius / sweep; a click makes a dimension or types the value. */
+export async function liveQuotesFlow({ page, D, check, shot, run }) {
+  const h = sketchHelpers(page, D);
+  const tool = (name, args = {}) => D(async ([name, args]) => { const m = await import('/slicer/src/bridge/groups/design.ts'); const tl = m.designTools().find((x) => x.name === name); try { return (await tl.run(args)).data; } catch (e) { return { thrown: String(e.message ?? e) }; } }, [name, args]);
+  console.log('sketch: live measurement labels');
+  check((await tool('design_sketch_begin', { plane: 'XY' })).open, 'a sketch on XY');
+  await tool('design_sketch_add', { entities: [{ type: 'line', p0: [0, 0], p1: [30, 20] }, { type: 'arc', center: [60, 0], radius: 12, start_angle: 0, end_angle: 1.5707963267948966 }] });
+  await run('design.sketch.fit');
+  await page.waitForTimeout(500);
+  const quotes = () => page.$$eval('[data-testid="sketch-quote"]', (b) => b.map((x) => `${x.dataset.kind}:${x.textContent.trim()}`));
+  check((await quotes()).length === 0, 'nothing selected: no live labels');
+  // the line (the view may still be turning to the plane: hover, click, until it is selected)
+  for (let i = 0; i < 4 && !(await quotes()).length; i++) { await h.hover(15, 10); await h.click(15, 10); await page.waitForTimeout(300); }
+  let q = await quotes();
+  if (!q.length) console.log(`  selection: ${JSON.stringify(await D(() => window.__cubbyDesign.sketch.sk.sel))}, tool ${await D(() => window.__cubbyDesign.sketch.sk.tool)}`);
+  check(q.join() === 'length:36.06 mm,angle:33.69°', `a selected line shows its Length and Angle (${q})`);
+  await shot('12-live-quotes-line');
+  await page.locator('[data-testid="sketch-quote"][data-kind="length"]').click();
+  await page.waitForSelector('[data-testid="sketch-value"] input');
+  let s = await h.state();
+  check(s.types.at(-1) === 'distance', `the Length label became a dimension (${s.types.at(-1)})`);
+  await h.typeValue(40);
+  let ln = (await D(() => window.__cubbyDesign.sketch.sk.entities[0]));
+  check(Math.abs(Math.hypot(ln.p1[0] - ln.p0[0], ln.p1[1] - ln.p0[1]) - 40) < 1e-6, 'typed 40: the line is 40 long');
+  q = await quotes();
+  check(q.join() === 'angle:33.69°', `the driven Length is a dimension now, not a live label (${q})`);
+  await page.locator('[data-testid="sketch-quote"][data-kind="angle"]').click();
+  await h.typeValue(45);
+  ln = (await D(() => window.__cubbyDesign.sketch.sk.entities[0]));
+  const a = Math.atan2(ln.p1[1] - ln.p0[1], ln.p1[0] - ln.p0[0]) * 180 / Math.PI;
+  check(Math.abs(a - 45) < 1e-4 && Math.abs(Math.hypot(ln.p1[0] - ln.p0[0], ln.p1[1] - ln.p0[1]) - 40) < 1e-4, `typed 45°: the line turned about its start, still 40 (${a.toFixed(3)}°)`);
+  await shot('13-live-quotes-typed');
+  // the arc: Radius and sweep; while it is dragged the labels follow it
+  await h.click(60 + 12 * Math.SQRT1_2, 12 * Math.SQRT1_2);
+  q = await quotes();
+  check(q.join() === 'radius:R12 mm,sweep:90°', `a selected arc shows its Radius and sweep (${q})`);
+  const [cx, cy] = await h.P(60, 0);
+  const [tx, ty] = await h.P(70, 5);
+  await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move((cx + tx) / 2, (cy + ty) / 2, { steps: 5 }); await page.mouse.move(tx, ty, { steps: 5 });
+  await page.waitForTimeout(300); await h.idle();
+  q = await quotes();
+  check(q.length === 2, `labels shown during the drag (${q})`);
+  await shot('14-live-quotes-drag');
+  await page.mouse.up(); await h.idle();
+  await page.locator('[data-testid="sketch-quote"][data-kind="sweep"]').click();
+  await h.typeValue(120);
+  const arc = await D(() => window.__cubbyDesign.sketch.sk.entities[1]);
+  check(Math.abs(Math.abs(arc.end_angle - arc.start_angle) * 180 / Math.PI - 120) < 1e-3, `typed 120°: the arc sweeps 120° (${((arc.end_angle - arc.start_angle) * 180 / Math.PI).toFixed(3)})`);
+  await page.locator('[data-testid="sketch-quote"][data-kind="radius"]').click();
+  await h.typeValue(15);
+  const arc2 = await D(() => window.__cubbyDesign.sketch.sk.entities[1]);
+  check(Math.abs(arc2.radius - 15) < 1e-6, `Radius label → dimension 15 (${arc2.radius})`);
+  await tool('design_sketch_cancel');
 }

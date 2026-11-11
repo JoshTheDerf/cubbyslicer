@@ -17,7 +17,7 @@ import { CONSTRAINTS } from './constraints';
 import { DRAW_TOOLS } from './shapes';
 import {
   applyConstraint, cancelSketch, deleteConstraints, deleteSelection, finishSketch, sk, startSketch, stopChoosing, toggleConstruction, beginSketch,
-  requestValue, setConstraintValue, anchorOf, type SketchToolId, fromWire, placeRegions,
+  requestValue, setConstraintValue, anchorOf, type SketchToolId, fromWire, placeRegions, beginArt,
 } from './session';
 import { enterKey, escapeKey, setTool } from './driver';
 import { planLocal } from './constraints';
@@ -28,10 +28,22 @@ import { designUi } from '../state';
 /** Toolbar popovers the keys open (K: the constraint menu). */
 export const sketchUi = reactive({ constrainOpen: false, modifyOpen: false, textOpen: false });
 
+/**
+ * Orca's Text outside a sketch (`open_text_dialog`): the sketch opens on the picked flat face
+ * (the text centred on it, its Extrude then an inward Cut of that body) or the Top plane, and
+ * the text form opens in it.
+ */
+export async function startText(): Promise<void> {
+  if (await beginArt()) sketchUi.textOpen = true;
+}
+export { importSvg as startSvg };
+
 async function importSvg(): Promise<void> {
   const { pickFiles } = await import('../../app/shell/download');
   const [f] = await pickFiles('.svg,image/svg+xml', false);
   if (!f) return;
+  // Outside a sketch (Orca's add_imported_sketch): on the picked face, centred, else the Top plane.
+  if (!sk.open && !(await beginArt())) return;
   try {
     const { svgRegions } = await import('./outline');
     const err = placeRegions(svgRegions(await f.text()), 'SVG');
@@ -79,6 +91,12 @@ export function sketchActions(): Action[] {
     { id: 'design.sketch.new', title: 'New sketch…', icon: 'i-lucide-pen-tool', category: 'Design', aliases: ['sketch', 'draw', 'profile', '2d', 'sketch on face'],
       description: 'Sketch on the picked flat face, or choose a plane (Orca’s Sketch).', binding: { key: 's', shift: true, scope: 'design' },
       when: () => activeView.value === 'design' && design.phase === 'open' && !sk.open && !editBlocker(), run: () => { const e = startSketch(); if (e) setStatus('warn', e); } },
+    { id: 'design.text', title: 'Text…', icon: 'i-lucide-type', category: 'Design', aliases: ['emboss', 'engrave', 'lettering', 'label', 'text on face'],
+      description: 'Text as a profile — on the picked flat face, centred, ready to engrave (Orca’s Text).',
+      when: () => activeView.value === 'design' && design.phase === 'open' && !sk.open && !editBlocker(), run: () => { void startText(); } },
+    { id: 'design.svg', title: 'Import SVG…', icon: 'i-lucide-file-image', category: 'Design', aliases: ['vector', 'logo', 'outline', 'svg on face', 'engrave'],
+      description: 'An SVG outline as a profile — on the picked flat face, centred, ready to engrave (Orca’s SVG).',
+      when: () => activeView.value === 'design' && design.phase === 'open' && !sk.open && !editBlocker(), run: () => { void importSvg(); } },
     { id: 'design.sketch.plane-cancel', title: 'Stop choosing a sketch plane', icon: 'i-lucide-x', category: 'Design', paletteHidden: true,
       binding: { key: 'escape', scope: 'design', passThroughWhenUnavailable: true }, when: () => activeView.value === 'design' && sk.choosing, run: () => stopChoosing() },
     { id: 'design.sketch.edit', title: 'Edit sketch', icon: 'i-lucide-pencil', category: 'Design', aliases: ['open sketch', 'modify sketch'],

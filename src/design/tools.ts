@@ -277,6 +277,13 @@ export const CREATE_TOOLS: CreateTool[] = [
     type: () => 'Extrude',
     changed: async (key, d, k) => {
       if (key !== 'sketch_ref' || num(d.sketch_ref, -1) < 0) return;
+      // Orca: text / SVG placed on a face engraves it — Cut, inward (the face normal points out), its body.
+      const art = await k.call<{ feature: { import_on_face?: boolean; import_face_body?: number } }>('get_feature', { index: d.sketch_ref }).catch(() => null);
+      if (art?.feature.import_on_face) {
+        d.mode = 'Cut'; d.flip = true;
+        if (num(art.feature.import_face_body, -1) >= 0) d.target_body = art.feature.import_face_body;
+        return;
+      }
       // Orca: Join when the profile touches a body, otherwise a new body.
       const r = await k.call<{ body: number }>('body_touching_sketch', { sketch: d.sketch_ref }).catch(() => ({ body: -1 }));
       if (r.body >= 0) { d.mode = 'Add'; d.target_body = r.body; } else d.mode = 'New';

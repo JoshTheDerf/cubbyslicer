@@ -66,11 +66,18 @@
   --vp-sketch-hover: #9fd3ff;
   --vp-sketch-preview: #f2a33a;     /* rubber band, snap hints */
   --vp-sketch-dim: #f7d27a;         /* dimensions */
+  --vp-sketch-quote: #4de0a8;       /* live measurement labels (Orca's live quotes) */
   --vp-sketch-region: rgba(95, 184, 255, 0.10);
   --vp-sketch-glyph-bg: rgba(16, 19, 24, 0.92);
   --vp-sketch-axis-x: #e0605e;
   --vp-sketch-axis-y: #5cc46e;
   --vp-sketch-committed: #7fb2e6;   /* finished sketches in the 3D view */
+  --vp-datum-plane: rgba(179, 153, 255, 0.85);      /* datum planes (Orca render_datum_planes) */
+  --vp-datum-plane-fill: rgba(158, 133, 242, 0.10);
+  --vp-connector: #6b7585;          /* coordinate systems (Orca's mate connectors) */
+  --vp-connector-driven: #2e70ed;   /* the one a Mate moves */
+  --vp-connector-roll: #eda817;     /* its +X / +Y quadrant */
+  --vp-connector-warn: #b88c38;     /* roll not derived */
   --vp-warn: #f5b041;
   --vp-axis-x: #ef5b5b;
   --vp-axis-y: #19c37d;

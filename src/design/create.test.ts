@@ -21,6 +21,9 @@ import { importStepToDesign, meshBlob } from './io';
 import { CREATE_TOOLS, flipFrame, frameFromAxis, inFrame, nearestThread } from './tools';
 import { entity, line, loopEntityIndices, regionAt, regionLoops } from './sketch/model';
 import type { Mat4 } from '../project/math';
+import * as K from './sketch/session';
+import { sk } from './sketch/session';
+import { datumDrawing, refreshDatumDrawing } from './datums';
 
 let fake: FakeKernel;
 async function settle(): Promise<void> { for (let i = 0; i < 4; i++) { await nextTick(); await designReady(); } }
@@ -364,6 +367,66 @@ describe('extruding one region of a sketch (Orca’s loop pick)', () => {
     designUi.region = null;
     await openCard('extrude');
     expect(card.draft).toMatchObject({ loop: null, loopOnly: false });
+  });
+});
+
+describe('datums drawn in the view (Orca’s render_datum_planes / render_mate_connectors)', () => {
+  it('planes at their size (80 mm when unset), connectors that resolve, the mated one driven; suppressed ones and axes not drawn', async () => {
+    await openProject(FakeKernel.recipe([
+      { type: 'Sketch', name: 'Sketch 1' }, { ...box(), name: 'Base' },
+      { type: 'Plane', name: 'Plane 3', plane_u_size: 50, plane_v_size: 30 } as never,
+      { type: 'Plane', name: 'Plane 4' } as never,
+      { type: 'Plane', name: 'Plane 5', enabled: false } as never,
+      { type: 'Axis', name: 'Axis 6' } as never,
+      { type: 'CoordSys', name: 'CS A', coordsys_type: 'PointWorld', coordsys_point: [1, 2, 3] } as never,
+      { type: 'CoordSys', name: 'CS B', coordsys_type: 'FaceAndDirection', coordsys_edge: -1, coordsys_point: [4, 5, 6] } as never,
+      { type: 'Mate', name: 'Mate 9', mate_cs_a: 6, mate_cs_b: 7 } as never,
+    ]));
+    await refreshDatumDrawing();
+    const d = datumDrawing.value;
+    expect(d.planes.map((p) => [p.name, p.u, p.v, p.ordinal])).toEqual([['Plane 3', 50, 30, 0], ['Plane 4', 80, 80, 1]]);
+    expect(d.connectors.map((c) => [c.feature, c.origin, c.driven, c.rollUndefined])).toEqual([[6, [1, 2, 3], false, false], [7, [4, 5, 6], true, true]]);
+    expect(d.mates).toEqual([[6, 7]]);
+  });
+});
+
+describe('text / SVG on a picked face (Orca’s import_on_face)', () => {
+  const noop = { renameBody: () => {}, colorBody: () => {}, deleteBody: () => {}, zoom: () => {}, editFeature: () => {} };
+  const art: [number, number][] = [[-6, -2], [6, -2], [6, 2], [-6, 2]];
+  it('centres the art on the face, marks the sketch on-face, and its Extrude defaults to an inward Cut of that body', async () => {
+    await openProject(twoBodies());
+    const face = { kind: 'face' as const, body: 0, face: 1, generation: design.generation };
+    const labels = offerItems(face, { surface: 'plane' }, noop).flat().map((i) => i.label);
+    expect(labels).toEqual(expect.arrayContaining(['Sketch on this face', 'Text', 'SVG']));
+    designUi.pick = face;
+    expect(await K.beginArt()).toBe(true);
+    // The fake's top face: centroid (10, 5, 10); its sketch plane's origin (0, 0, 10).
+    expect(sk.onFace).toEqual({ body: 0, centre: [10, 5] });
+    expect(designUi.pick).toBeNull();
+    expect(K.placeRegions([[art]], 'Text', { text: { string: 'Hi', font: 'noto-sans', height: 4 } })).toBeNull();
+    expect(sk.regions!.offset).toEqual([10, 5]);
+    const r = await K.finishSketch();
+    expect(r.ok).toBe(true);
+    const f = [...fake.docs.values()][0].features[r.index!];
+    expect(f).toMatchObject({ type: 'Sketch', import_on_face: true, import_face_body: 0, import_offset: [10, 5], text_string: 'Hi' });
+    expect(await openCard('extrude', { prefill: { sketch_ref: r.index } })).toBeNull();
+    expect(card.draft).toMatchObject({ mode: 'Cut', flip: true, target_body: 0 });
+    expect((await confirmCard()).ok).toBe(true);
+    expect([...fake.docs.values()][0].features.at(-1)).toMatchObject({ type: 'Extrude', mode: 'Cut', flip: true, target_body: 0, sketch_ref: r.index });
+  });
+
+  it('without a face the art goes on the Top plane at its origin, free (New body by default)', async () => {
+    await openProject(twoBodies());
+    designUi.pick = { kind: 'body', body: 1 };
+    expect(await K.beginArt()).toBe(true);
+    expect(sk.onFace).toBeNull();
+    expect(sk.planeLabel).toBe('Top plane (XY)');
+    K.placeRegions([[art]], 'SVG');
+    expect(sk.regions!.offset).toEqual([0, 0]);
+    const r = await K.finishSketch();
+    expect([...fake.docs.values()][0].features[r.index!].import_on_face).toBeUndefined();
+    await openCard('extrude', { prefill: { sketch_ref: r.index } });
+    expect(card.draft).toMatchObject({ mode: 'New', flip: false });
   });
 });
 
