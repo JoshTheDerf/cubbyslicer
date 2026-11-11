@@ -282,7 +282,16 @@ describe('Creality Print', () => {
     await crealityprint.upload(ctx({ apiKey: 'T' }), job({ print: true, filename: 'my part.gcode' }), { ...env, ws: (u) => (ws = env.ws(u) as FakeWs) });
     expect(calls[1]).toMatchObject({ method: 'POST', url: 'http://192.168.1.5/upload/my_part.gcode', headers: { Authorization: 'Bearer T' } });
     expect(ws!.url).toBe('ws://192.168.1.5:9999/');
-    expect(ws!.sent[0]).toEqual({ method: 'set', params: { opGcodeFile: 'printprt:/usr/data/printer_data/gcodes/my_part.gcode' } });
+    // Orca 2.5: the K1 family is CFS-capable (K1C_CFS-C …), so a plain start carries enableSelfTest and no path field.
+    expect(form(calls[1].body).get('path')).toBeNull();
+    expect(ws!.sent[0]).toEqual({ method: 'set', params: { opGcodeFile: 'printprt:/usr/data/printer_data/gcodes/my_part.gcode', enableSelfTest: 0 } });
+  });
+  it('a model without CFS support sends the folder and a bare start', async () => {
+    const { env, calls } = fakeEnv((r) => (r.url.endsWith('/info') ? { body: { model: 'CR-10 SE' } } : { body: {} }), (url) => new FakeWs(url, (ws) => ws.close()));
+    let ws: FakeWs | undefined;
+    await crealityprint.upload(ctx(), job({ print: true }), { ...env, ws: (u) => (ws = env.ws(u) as FakeWs) });
+    expect(form(calls[1].body).has('path')).toBe(true);
+    expect(ws!.sent[0]).toEqual({ method: 'set', params: { opGcodeFile: 'printprt:/mnt/UDISK/printer_data/gcodes/cube.gcode' } });
   });
   it('K2 uses /mnt/UDISK and no path field', async () => {
     const { env, calls } = fakeEnv((r) => (r.url.endsWith('/info') ? { body: { model: 'F008' } } : { body: {} }), (url) => new FakeWs(url, (ws) => ws.push({ ok: 1 })));

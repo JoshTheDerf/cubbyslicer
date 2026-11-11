@@ -388,6 +388,34 @@ describe('sketch session', () => {
     expect(sk.constraints.slice(-2).map((c) => [c.type, c.value])).toEqual([['distance', 25], ['diameter', 8]]);
   });
 
+  it('a scripted tool add with inference (bridge design_sketch_add) keeps the tool’s constraints, joins exact ends once, and never takes the conflict-search path', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    const tool = (id: string) => DRAW_TOOL_BY_ID.get(id as never)!;
+    const add = (id: string, pts: V2[], o: { sides?: number } = {}) => K.addShape(tool(id), pts, { infer: true, ...o });
+    fake.sketches.conflictSearches = 0;
+    const calls0 = fake.calls.length;
+    expect(await add('rect', [[0, 0], [40, 20]])).toMatchObject({ first: 0, added: 4, dropped: [] });
+    // A rectangle sharing the first one's right edge: its first click lands on a corner (Coincident),
+    // and its other corner on that edge is joined too (once, not once per line meeting there).
+    const r2 = await add('rect', [[40, 0], [70, 20]]);
+    expect(r2?.first).toBe(4);
+    expect(await add('rect-3pt', [[100, 0], [130, 10], [100, 20]])).toMatchObject({ first: 8, dropped: [] });
+    expect(await add('slot', [[0, 50], [30, 50], [10, 54]])).toMatchObject({ first: 12, dropped: [] });
+    expect(await add('polygon', [[0, 100], [10, 100]], { sides: 5 })).toMatchObject({ first: 17, dropped: [] });
+    // The kernel's own inference is not asked for (it would duplicate the tool's joins and H / V) …
+    expect(fake.calls.slice(calls0).filter((m) => m === 'sketch_add')).toHaveLength(5);
+    // … no duplicate constraint is in the sketch, and no refusal ran the kernel's conflict search.
+    expect(sk.constraints.filter((c, i) => duplicateOf(c, sk.constraints.slice(0, i)) >= 0)).toEqual([]);
+    expect(fake.sketches.conflictSearches).toBe(0);
+    // Every shape is recognised, so it gets the same labels as a mouse-drawn one.
+    expect(shapeGroups(sk.entities, sk.constraints).map((g) => `${g.kind} ${g.begin}`)).toEqual(['rect 0', 'rect 4', 'rect 8', 'slot 12', 'polygon 17']);
+    expect(sk.constraints).toContainEqual(cons('coincident', 4, 'p0', 0, 'p1'));
+    // A raw entity add with inference still uses the kernel's; a constraint it already inferred is not added twice.
+    await K.addEntities([line([0, -10], [10, -10])], [cons('horizontal', 23, 'p0', 23, 'p1')], 'Add', { infer: true });
+    expect(sk.constraints.filter((c) => c.type === 'horizontal' && c.ea === 23)).toHaveLength(1);
+    expect(fake.sketches.conflictSearches).toBe(0);
+  });
+
   it('a plain click on a constraint badge deletes it (Select tool); Shift+click or another tool selects it', async () => {
     await K.beginSketch({ plane: 'XY' });
     await K.addEntities([line([0, 0], [10, 0]), line([10, 0], [10, 5])], [cons('coincident', 0, 'p1', 1, 'p0'), cons('horizontal', 0, 'p0', 0, 'p1'), cons('vertical', 1, 'p0', 1, 'p1')]);

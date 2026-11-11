@@ -7,7 +7,7 @@ import { dismissToast, toast } from '../ui';
 import { hostMeta } from './registry';
 import { hostContext, openPhysicalPrinterDialog, physicalPrinter, printerChoices, printhostUi, rememberDevice } from './store';
 import { browserEnv } from './transport';
-import { HostError, type PhysicalPrinterConfig, type TestResult } from './types';
+import { HostError, type PhysicalPrinterConfig, type TestResult, type UploadJob } from './types';
 import { webUiUrl } from './url';
 import { gcodeForOutput } from '../plugins/gcode';
 
@@ -48,6 +48,8 @@ export interface SendOptions {
   print: boolean;
   /** Qidi Box: Box slot per filament (see UploadJob.slotMapping). */
   slotMapping?: number[];
+  /** Creality CFS mapping (see UploadJob.cfs). */
+  cfs?: UploadJob['cfs'];
 }
 
 export async function sendToPrinter(opts: SendOptions): Promise<boolean> {
@@ -95,7 +97,7 @@ export async function sendToPrinterDetailed(opts: SendOptions): Promise<SendOutc
   });
   show();
   try {
-    const res = await meta.driver.upload(ctx, { file, filename: opts.filename, folder: opts.folder, print, slotMapping: opts.slotMapping }, browserEnv(), {
+    const res = await meta.driver.upload(ctx, { file, filename: opts.filename, folder: opts.folder, print, slotMapping: opts.slotMapping, cfs: opts.cfs }, browserEnv(), {
       signal: abort.signal,
       onStatus: (s) => { printhostUi.status = s; show(); },
       onProgress: (loaded, total) => {

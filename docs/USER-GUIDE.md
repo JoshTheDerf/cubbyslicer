@@ -198,7 +198,11 @@ Each physical printer has a name and the printer presets it prints. Several prin
 
 ### Sync filaments from printer
 
-On a Moonraker printer with a filament changer that publishes its lanes (AFC, recent Happy Hare), "Sync filaments from printer" (command palette, or Sync filaments in the Physical printer dialog) sets the filament slots from the printer: one slot per lane, the lane's colour, and the preset with the lane's filament ID, else the generic preset for its material. The toast lists what each lane got; a lane with no matching preset keeps only its colour.
+On a Moonraker printer with a filament changer, "Sync filaments from printer" (command palette, or Sync filaments in the Physical printer dialog) sets the filament slots from the printer: one slot per lane, the lane's colour, and the preset with the lane's filament ID, else the generic preset for its material. As in OrcaSlicer, the lanes come from the first of these that reports any: the lanes AFC and recent Happy Hare publish in Moonraker, an older Happy Hare MMU's gates, or the Creality CFS of a Creality Hi. On a Qidi printer it reads the Qidi Box instead: each loaded slot's material, colour and the matching Qidi filament preset. The toast lists what each lane got; a lane with no matching preset keeps only its colour.
+
+### Qidi Box and Creality CFS when printing
+
+On a Qidi printer with a Box, Upload & Print lets you pick the Box slot each filament loads from; the list shows what each slot holds (material and colour), read from the printer when the dialog opens. On a Creality K-series printer that can take a CFS (K1 / K2 family), the send dialog reads the printer's slots and offers a filament mapping, prefilled as OrcaSlicer does (same material and colour on the CFS first, then same material, then the external spool), plus an Enable self-test option. Mapping a filament to the external spool prints the whole job from it. With no CFS connected, or no answer, the print uses the external spool.
 
 ## Several tabs
 

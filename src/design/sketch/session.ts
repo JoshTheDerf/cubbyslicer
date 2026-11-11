@@ -36,7 +36,7 @@ import {
   constraintEntities, constraintLabel, describeConstraint, duplicateOf, fromWire, guard, planLocal, refsPoint, rejectText, toWire,
   type Plan, type SelItem,
 } from './constraints';
-import type { DrawToolId } from './shapes';
+import { anchorConstraints, exactClickInference, exactJoins, type DrawTool, type DrawToolId } from './shapes';
 import { QUOTE_TITLE, quoteEdit, type LiveQuote } from './quotes';
 
 export type EditToolId = 'select' | 'dimension' | 'trim' | 'extend' | 'fillet' | 'chamfer' | 'offset' | 'mirror' | 'move' | 'rotate' | 'scale' | 'array' | 'polar' | 'use-edges';
@@ -408,26 +408,64 @@ async function pumpDrag(): Promise<void> {
  */
 export async function addEntities(entities: SkEntity[], constraints: SkConstraint[], label = 'Draw', o: { infer?: boolean } = {}): Promise<{ first: number; dropped: SkConstraint[] }> {
   const ents = entities.map((e) => ({ ...e, construction: e.construction }));
+  const base = sk.entities.length;
   const out = await edit(label, async (c, doc) => {
     const a = await step<{ ok: boolean; first_index: number }>(c, 'sketch_add', { doc, entities: ents, infer: !!o.infer });
     let steps = a.steps;
     const dropped: SkConstraint[] = [];
-    const list = constraints.filter((x) => !guard(x, [...sk.entities, ...ents]));
-    if (list.length) {
-      const all = await step<{ ok: boolean }>(c, 'sketch_constrain', { doc, constraints: list });
-      steps += all.steps;
-      if (!all.r.ok) {
-        for (const x of list) {
-          const one = await step<{ ok: boolean }>(c, 'sketch_constrain', { doc, constraint: x });
-          steps += one.steps;
-          if (!one.r.ok) dropped.push(x);
-        }
-      }
+    let list = constraints.filter((x) => !guard(x, [...sk.entities, ...ents]));
+    // What the sketch already holds (the kernel's inference included) is not added a second time:
+    // a duplicate makes the system redundant, which the solver refuses.
+    const have = list.length && o.infer ? (await c.call<SketchDescribe>('sketch_describe', { doc })).result.constraints : sk.constraints;
+    list = list.filter((x, i) => duplicateOf(x, have) < 0 && duplicateOf(x, list.slice(0, i)) < 0);
+    // Try a set: added if the sketch still solves, else rolled back. Not `sketch_constrain`'s
+    // refusal path, which searches for the conflicting constraints (a failing solve per constraint
+    // in the sketch, each of which runs SolveSpace's own failed-constraint search) — dozens of
+    // seconds once a sketch holds a few shapes.
+    const tryAdd = async (xs: SkConstraint[]): Promise<boolean> => {
+      const r = (await c.call<{ ok?: boolean; solve_ok?: boolean }>('sketch_constrain', { doc, constraints: xs, force: true })).result;
+      if (r.ok === false) return false;
+      if (r.solve_ok === false) { await c.call('sketch_undo', { doc }); return false; }
+      steps++;
+      return true;
+    };
+    const tryEach = async (xs: SkConstraint[]) => {
+      if (!xs.length || await tryAdd(xs)) return;
+      if (xs.length === 1) { dropped.push(xs[0]); return; }
+      for (const x of xs) if (!(await tryAdd([x]))) dropped.push(x);
+    };
+    if (list.length && !(await tryAdd(list))) {
+      // The shape's own constraints (new entities only) are consistent by construction; what
+      // fails is a join to the existing sketch. Keep the shape whole and try the joins one by one.
+      const own = list.filter((x) => [x.ea, x.eb, x.ec].every((i) => i === -1 || i >= base));
+      await tryEach(own);
+      await tryEach(list.filter((x) => !own.includes(x)));
     }
     return { steps, first: a.r.first_index, dropped };
   });
   if (out.dropped.length) setStatus('warn', `Added — ${out.dropped.length} inferred constraint${out.dropped.length > 1 ? 's' : ''} would over-constrain the sketch and ${out.dropped.length > 1 ? 'were' : 'was'} left out (${out.dropped.map((x) => constraintLabel(x.type)).join(', ')}).`);
   return { first: out.first, dropped: out.dropped };
+}
+
+/**
+ * A drawing tool's shape from given clicks (the MCP bridge's `design_sketch_add` with `tool` /
+ * `rect`): the entities and the tool's own constraints, as a mouse draw makes them, so the shape is
+ * the same group with the same labels. `infer` is the scripted add's zero-tolerance inference done
+ * the drawing tool's way — a click exactly on an existing end / centre or the origin joins it, an
+ * exactly level / plumb line segment is H / V, and any other new end exactly on an existing end is
+ * joined. The kernel's own `infer` is not used for a tool: it would add a second set of the
+ * corner joins and H / V the tool already gives (plus relations among them), which the solver
+ * refuses as redundant. Null when the clicks don't make the shape.
+ */
+export async function addShape(t: DrawTool, pts: V2[], o: { infer?: boolean; construction?: boolean; sides?: number; constraints?: SkConstraint[] } = {}): Promise<{ first: number; added: number; dropped: SkConstraint[] } | null> {
+  const base = sk.entities.length;
+  const inf = o.infer ? exactClickInference(t, pts, sk.entities) : { snaps: [], axes: [] };
+  const b = t.build(pts, { base, entities: sk.entities, snaps: inf.snaps, axes: inf.axes, construction: !!o.construction, polygonSides: o.sides ?? 6, polygonCircumscribed: false, final: true });
+  if (!b) return null;
+  const anchors = o.infer ? anchorConstraints(b, inf.snaps, sk.entities) : [];
+  const joins = o.infer ? exactJoins(b, base, anchors, sk.entities) : [];
+  const r = await addEntities(b.entities, [...b.constraints, ...anchors, ...joins, ...(o.constraints ?? [])], 'Add');
+  return { ...r, added: b.entities.length };
 }
 
 // ---- constraints ----------------------------------------------------------------------------------

@@ -164,25 +164,28 @@ function sketchTools(): BridgeTool[] {
     { name: 'design_sketch_describe', description: 'The open sketch: entities, constraints (angles in degrees), degrees of freedom, conflicts (`bad`), closed loops / open ends (Orca sketch_describe).', inputSchema: obj({}), async run() { return st(); } },
     {
       name: 'design_sketch_add',
-      description: 'Add entities (Orca sketch_add): `entities:[…]`, or `rect:[x0,y0,x1,y1]` (a constrained rectangle), or a drawing tool by `tool` + `points` (the clicks: line, rect, rect-center, rect-3pt, rect-rounded, circle, circle-2pt, circle-3pt, arc-3pt, arc-center, slot, arc-slot (centre, start, end, width), polygon (+ `sides`), ellipse, ellipse-arc, spline, point) which also adds the shape’s constraints. `constraints` are added with them (indices absolute). `infer` (default true) joins exactly coincident ends and makes exactly level / plumb lines H / V, as the kernel’s scripted add. One sketch undo step.',
+      description: 'Add entities (Orca sketch_add): `entities:[…]`, or `rect:[x0,y0,x1,y1]` (a constrained rectangle), or a drawing tool by `tool` + `points` (the clicks: line, rect, rect-center, rect-3pt, rect-rounded, circle, circle-2pt, circle-3pt, arc-3pt, arc-center, slot, arc-slot (centre, start, end, width), polygon (+ `sides`), ellipse, ellipse-arc, spline, point) which also adds the shape’s constraints, as the mouse tool does (same shape labels). `constraints` are added with them (indices absolute). `infer` (default true), at zero tolerance: joins new ends that lie exactly on existing ends (a tool’s clicks also on a centre or the origin) and makes exactly level / plumb lines H / V; for `entities` it is the kernel’s scripted add, which also pins exactly-true relations (parallel, equal …) within the batch. A constraint that would over-constrain the sketch is left out and listed in `dropped_constraints`. One sketch undo step.',
       timeoutMs: 300_000,
       inputSchema: obj({ entities: { type: 'array', items: ENTITY_SCHEMA }, rect: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 }, tool: str('A drawing tool id (see above).'), points: { type: 'array', items: { type: 'array', items: { type: 'number' } }, description: 'The tool’s clicks, plane mm.' }, sides: num('Polygon sides (default 6).'), construction: bool('Make the new entities construction geometry.'), constraints: { type: 'array', items: CONSTRAINT_SCHEMA }, infer: bool('Infer exact Coincident / H / V (default true).') }),
       async run(args) {
         needSketch();
-        const base = SK.sk.entities.length;
-        let ents: SkEntity[] = [], cons: SkConstraint[] = ((args.constraints as Record<string, unknown>[] | undefined) ?? []).map(constraintArg);
+        const cons: SkConstraint[] = ((args.constraints as Record<string, unknown>[] | undefined) ?? []).map(constraintArg);
+        const infer = args.infer !== false;
         const tool = args.rect ? 'rect' : args.tool ? String(args.tool) : '';
+        let r: { first: number; added: number; dropped: SkConstraint[] };
         if (tool) {
           const t = DRAW_TOOL_BY_ID.get(tool as never);
           if (!t) throw new Error(`Unknown tool "${tool}".`);
           const pts = (args.rect ? [[Number((args.rect as number[])[0]), Number((args.rect as number[])[1])], [Number((args.rect as number[])[2]), Number((args.rect as number[])[3])]] : ((args.points as number[][] | undefined) ?? []).map((q) => [Number(q[0]), Number(q[1])])) as V2[];
-          const b = t.build(pts, { base, entities: SK.sk.entities, snaps: [], axes: [], construction: !!args.construction, polygonSides: Number(args.sides ?? 6), polygonCircumscribed: false, final: true });
-          if (!b) throw new Error(`${t.title}: those points don’t make a shape (${t.prompts.join(' → ')}).`);
-          ents = b.entities; cons = [...b.constraints, ...cons];
-        } else ents = ((args.entities as Record<string, unknown>[] | undefined) ?? []).map((e) => ({ ...entityArg(e), construction: !!e.construction || !!args.construction }));
-        if (!ents.length) throw new Error('Nothing to add: give `entities`, `rect` or `tool` + `points`.');
-        const r = await SK.addEntities(ents, cons, 'Add', { infer: args.infer !== false });
-        return { data: { first_index: r.first, added: ents.length, dropped_constraints: r.dropped.length ? r.dropped : undefined, ...sketchState() } };
+          const s = await SK.addShape(t, pts, { infer, construction: !!args.construction, sides: Number(args.sides ?? 6), constraints: cons });
+          if (!s) throw new Error(`${t.title}: those points don’t make a shape (${t.prompts.join(' → ')}).`);
+          r = s;
+        } else {
+          const ents: SkEntity[] = ((args.entities as Record<string, unknown>[] | undefined) ?? []).map((e) => ({ ...entityArg(e), construction: !!e.construction || !!args.construction }));
+          if (!ents.length) throw new Error('Nothing to add: give `entities`, `rect` or `tool` + `points`.');
+          r = { ...(await SK.addEntities(ents, cons, 'Add', { infer })), added: ents.length };
+        }
+        return { data: { first_index: r.first, added: r.added, dropped_constraints: r.dropped.length ? r.dropped : undefined, ...sketchState() } };
       },
     },
     {

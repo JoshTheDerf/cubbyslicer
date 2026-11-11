@@ -11,11 +11,11 @@
  * rectangle Width then Height, line Length, circle Diameter …).
  */
 import {
-  add, angleOf, arc, arcThrough, circle, circleThrough, cons, cross, dist, dot, endTangent, entity, line, mid, norm, onEllipse, perp,
-  point, scale, sub, tangentArc,
+  add, angleOf, arc, arcThrough, circle, circleThrough, cons, cross, dist, dot, endTangent, ends, entity, line, mid, norm, onEllipse, perp,
+  point, rolePoint, scale, sub, tangentArc,
   type Role, type SkConstraint, type SkEntity, type V2,
 } from './model';
-import type { Snap } from './infer';
+import { snapPoint, type Snap } from './infer';
 
 export type DrawToolId =
   | 'line' | 'polyline' | 'rect' | 'rect-center' | 'rect-3pt' | 'rect-rounded' | 'circle' | 'circle-2pt' | 'circle-3pt'
@@ -379,6 +379,59 @@ export const DRAW_TOOLS: DrawTool[] = [
   },
 ];
 export const DRAW_TOOL_BY_ID = new Map(DRAW_TOOLS.map((t) => [t.id, t]));
+
+/** "Exactly" for a scripted add: equal up to float noise (an arc's ends come from cos / sin). */
+const EXACT = 1e-9;
+
+/**
+ * A scripted draw's inference (the MCP bridge's `design_sketch_add` with a tool and `infer`): what
+ * the mouse would have recorded had each click landed exactly on what it touches, at zero
+ * tolerance as Orca's scripted add — an existing end / centre or the origin (snapping clicks only),
+ * and an exactly level / plumb segment for the line tools.
+ */
+export function exactClickInference(t: DrawTool, pts: readonly V2[], entities: readonly SkEntity[]): { snaps: Array<Snap | null>; axes: Array<'horizontal' | 'vertical' | null> } {
+  const snaps = pts.map((p, i) => {
+    if (t.snapClick && !t.snapClick(i)) return null;
+    const s = snapPoint(entities, p, EXACT, { edges: false });
+    return s.kind === 'end' || s.kind === 'center' || s.kind === 'origin' ? s : null;
+  });
+  const lineish = t.id === 'line' || t.id === 'polyline';
+  const axes = pts.map((p, i): 'horizontal' | 'vertical' | null => {
+    if (!lineish || i === 0) return null;
+    const a = pts[i - 1];
+    if (Math.abs(p[1] - a[1]) <= EXACT && Math.abs(p[0] - a[0]) > EXACT) return 'horizontal';
+    if (Math.abs(p[0] - a[0]) <= EXACT && Math.abs(p[1] - a[1]) > EXACT) return 'vertical';
+    return null;
+  });
+  return { snaps, axes };
+}
+
+/**
+ * The rest of Orca's scripted-add joins: a Coincident for each other end of the new shape that lies
+ * exactly on an existing end. One join per location — a corner the shape already joins internally,
+ * or one a click anchor (`anchored`) already pinned, is not joined twice (that would be redundant
+ * and the solver refuses redundant systems).
+ */
+export function exactJoins(b: Built, base: number, anchored: readonly SkConstraint[], entities: readonly SkEntity[]): SkConstraint[] {
+  const out: SkConstraint[] = [];
+  const done: V2[] = [];
+  const near = (p: V2, q: V2) => Math.abs(p[0] - q[0]) <= EXACT && Math.abs(p[1] - q[1]) <= EXACT;
+  for (const c of anchored) {
+    const e = b.entities[c.ea - base];
+    if (e && c.ea >= base) done.push(rolePoint(e, c.ra));
+  }
+  b.entities.forEach((e, k) => {
+    for (const end of ends(e)) {
+      if (done.some((p) => near(p, end.p))) continue;
+      let hit = -1, role: Role = 'p0';
+      entities.forEach((o, j) => { if (hit < 0) for (const oe of ends(o)) if (hit < 0 && near(oe.p, end.p)) { hit = j; role = oe.role; } });
+      if (hit < 0) continue;
+      out.push(cons('coincident', base + k, end.role, hit, role));
+      done.push(end.p);
+    }
+  });
+  return out;
+}
 
 /** Constraints the clicks' snaps make on the built shape (anchors → Coincident / Midpoint / Point on object). */
 export function anchorConstraints(b: Built, snaps: ReadonlyArray<Snap | null>, entities: readonly SkEntity[]): SkConstraint[] {

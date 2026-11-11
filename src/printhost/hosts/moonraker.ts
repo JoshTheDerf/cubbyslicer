@@ -7,7 +7,9 @@
  *   print:  only when Moonraker neither started nor queued it:
  *           POST printer/print/start   { filename: <item.path> }
  *   Qidi Box: POST printer/gcode/script { script: SAVE_VARIABLE value_t<n>='slot<k>' … } before the start
- *   lanes:  GET  server/database/item?namespace=lane_data (filament sync, see filamentSync.ts)
+ *   lanes:  GET  server/database/item?namespace=lane_data, else printer/objects/query?mmu (Happy Hare),
+ *           else printer/objects/query?box (Creality CFS); Qidi: the Box query + its filament
+ *           dictionary (filament sync, see filamentSync.ts)
  */
 import { HostError, type PrintHostDriver, type HostContext, type HostEnv } from '../types';
 import { client, expectOk, formFile, throwIfAborted, tryJson, headerIf } from '../util';
@@ -46,6 +48,16 @@ export async function fetchLaneData(ctx: HostContext, env: HostEnv, signal?: Abo
   const r = await c.send({ method: 'GET', url: c.url('server/database/item?namespace=lane_data'), timeoutMs: 10_000 }, { signal });
   if (r.status === 404) return null;
   return tryJson(expectOk(r, 'Reading the printer’s filament lanes failed').text);
+}
+
+/**
+ * A GET whose failure (any non-2xx) means "not there" for the filament-sync fallbacks, as Orca's
+ * agent treats it: Klipper objects (`printer/objects/query?…`), Moonraker's `server/info`, a config file.
+ */
+export async function moonrakerGet(ctx: HostContext, env: HostEnv, path: string, signal?: AbortSignal): Promise<string | null> {
+  const c = mk(ctx, env);
+  const r = await c.send({ method: 'GET', url: c.url(path), timeoutMs: 10_000 }, { signal });
+  return r.status >= 200 && r.status < 300 ? r.text : null;
 }
 
 export const moonraker: PrintHostDriver = {

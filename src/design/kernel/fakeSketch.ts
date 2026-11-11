@@ -3,7 +3,7 @@
  * solver. Geometry is never moved by constraints (except `sketch_drag` / `set_entity`, which
  * move what they're told); the DOF count is natural DOF minus one per constraint (−1 with no
  * constraints, as the kernel). Conflicts: two valued constraints of one type on the same refs
- * with different values, or anything marked `value: -999`. Loops: a set of non-construction
+ * with different values, an exact duplicate (redundant), or anything marked `value: -999`. Loops: a set of non-construction
  * entities whose ends all pair up is one closed loop; circles are loops. Undo / redo snapshot
  * the session (one step per successful mutating call, as the real kernel).
  */
@@ -39,6 +39,9 @@ function solve(s: FakeSession) {
   const bad: number[] = [...s.forcedBad.filter((i) => i < s.constraints.length)];
   s.constraints.forEach((c, i) => {
     if (VALUED.has(c.type) && s.constraints.some((o, j) => j < i && o.type === c.type && o.ea === c.ea && o.eb === c.eb && o.ra === c.ra && o.rb === c.rb && o.value !== c.value)) bad.push(i);
+    // A second copy of a constraint is redundant, which SolveSpace refuses (both orders of a pair).
+    else if (s.constraints.some((o, j) => j < i && o.type === c.type && o.ec === c.ec && o.value === c.value
+      && ((o.ea === c.ea && o.ra === c.ra && o.eb === c.eb && o.rb === c.rb) || (o.ea === c.eb && o.ra === c.rb && o.eb === c.ea && o.rb === c.ra)))) bad.push(i);
   });
   const nat = s.entities.reduce((n, e) => n + (e.type === 'spline' ? 2 * e.ctrl.length : NAT[e.type] ?? 2), 0);
   const dof = s.constraints.length ? Math.max(0, nat - s.constraints.length * 2 + s.constraints.filter((c) => c.type !== 'coincident' && c.type !== 'fix').length) : -1;
@@ -58,6 +61,8 @@ function loops(s: FakeSession) {
 
 export class FakeSketches {
   sessions = new Map<number, FakeSession>();
+  /** Refused `sketch_constrain` calls: the real kernel runs its conflict search (a failing solve per constraint) on each. */
+  conflictSearches = 0;
 
   private s(doc: number): FakeSession {
     const s = this.sessions.get(doc);
@@ -119,6 +124,7 @@ export class FakeSketches {
         if (!r.solve_ok || list.some((c) => c.value === -999)) {
           if (p.force) { s.forcedBad = [...s.forcedBad, ...list.map((_, k) => at + k)]; s.undo.push(before); s.redo = []; return { ...this.state(s), added: list.length, index: at }; }
           s.constraints.length = at;
+          this.conflictSearches++;
           return { ok: false, error: 'the constraint conflicts with the sketch (over-constrained) or cannot be satisfied', bad: [at], dof: r.dof, result: 1, skipped: [], solve_ok: false };
         }
         s.undo.push(before); s.redo = [];

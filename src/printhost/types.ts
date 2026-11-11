@@ -68,7 +68,15 @@ export interface UploadJob {
    * loads from, by 0-based filament index; negative = the printer's own choice.
    */
   slotMapping?: number[];
+  /**
+   * Creality K-series with a CFS (CrealityPrint::start_print_commands): the slot each filament
+   * prints from, by 0-based filament index (Orca's colorMatch list), and the self-test flag.
+   */
+  cfs?: { mapping: CfsSlot[]; selfTest: boolean };
 }
+
+/** A Creality material slot as `boxsInfo` reports it (box 0 is the external spool holder). */
+export interface CfsSlot { toolId: string; type: string; colour: string; boxId: number; materialId: number }
 
 export interface UploadCallbacks {
   /** Bytes sent / total. `total` 0 = indeterminate. */
