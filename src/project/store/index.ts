@@ -49,7 +49,7 @@ export {
 } from './state';
 
 // ---- undo ----
-export { mutate, endGesture, undo, redo, historyState, registerSnapshotSlot, type SnapshotSlot } from './history';
+export { mutate, endGesture, undo, redo, historyState, registerSnapshotSlot, setPendingEditGuard, type SnapshotSlot } from './history';
 
 // ---- derived ----
 export {

@@ -7,7 +7,7 @@ import { computed, reactive, watch } from 'vue';
 import { toast } from '../ui';
 import {
   activePlate, addCadObjects, endGesture, getObject, groupObjects, objects, planGroup, planUngroup, plateBedOf, plateOf, primarySelection,
-  removeObjects, select, selectedIds, setCadNode, ungroupObject,
+  removeObjects, select, selectedIds, setCadNode, setPendingEditGuard, ungroupObject,
 } from '../project/store';
 import type { ProjectObject } from '../project/types';
 import type { Vec3 } from '../project/math';
@@ -85,10 +85,11 @@ export async function attemptAsync<T>(what: string, fn: () => Promise<T>): Promi
 /**
  * Build a new tree from an object's current one, evaluate it off the main
  * thread, then commit it as one undo step. When the tree changed meanwhile
- * (undo, another edit) the new tree is rebuilt from the current one.
+ * (undo, another edit) the new tree is rebuilt from the current one, unless
+ * `alive()` says the edit was cancelled meanwhile.
  * `build` returns null for "nothing to change". Returns whether it committed.
  */
-async function commitTree(objectId: string, build: (o: ProjectObject) => CadNode | null, opts: { label: string; mergeKey?: string }): Promise<boolean> {
+async function commitTree(objectId: string, build: (o: ProjectObject) => CadNode | null, opts: { label: string; mergeKey?: string; alive?: () => boolean }): Promise<boolean> {
   for (let i = 0; i < 4; i++) {
     const o = getObject(objectId);
     if (!o?.cad) throw new CadEditError('That object is not a CubbyCAD shape.');
@@ -96,6 +97,7 @@ async function commitTree(objectId: string, build: (o: ProjectObject) => CadNode
     const next = build(o);
     if (!next) return false;
     await warmCadMesh(next);
+    if (opts.alive && !opts.alive()) return false;
     if (getObject(objectId)?.cad?.node !== base) continue;
     setCadNode(objectId, next, opts);
     return true;
@@ -223,11 +225,11 @@ export async function editNode(objectId: string, args: NodeSettingsArgs, label =
   return (await attemptAsync(label, () => editNodeOrThrow(objectId, args, label, mergeKey))) ?? false;
 }
 
-export async function editNodeOrThrow(objectId: string, args: NodeSettingsArgs, label = 'Edit shape', mergeKey?: string): Promise<boolean> {
+export async function editNodeOrThrow(objectId: string, args: NodeSettingsArgs, label = 'Edit shape', mergeKey?: string, alive?: () => boolean): Promise<boolean> {
   return commitTree(objectId, (o) => {
     const r = applyNodeSettings(o.cad!.node, args, cadSupportOf(o));
     return r.changed ? r.root : null;
-  }, { label, mergeKey });
+  }, { label, mergeKey, alive });
 }
 
 function assertEditable(o: ProjectObject, nodeId: string): CadNode {
@@ -277,7 +279,12 @@ const queue: PendingParams[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
 let draining = false;
 let closeGesture = false;
+/** Bumps when undo / a project load cancels the queued and in-flight edits (their commits are dropped). */
+let paramGen = 0;
+/** The open drag already has its (coalescing) step in the history. */
+let gestureRecorded = false;
 const PARAM_DEBOUNCE_MS = 45;
+const PARAM_LABEL = 'Change shape';
 
 /** Commit queued parameter edits one at a time (a slow tree just skips intermediate values). */
 async function drain(): Promise<void> {
@@ -286,12 +293,14 @@ async function drain(): Promise<void> {
   draining = true;
   try {
     while (queue.length) {
-      const p = queue.shift()!;
-      await editNode(p.objectId, { id: p.nodeId, params: p.params }, 'Change shape', `cad:params:${p.nodeId}:${p.key}`);
+      const p = queue.shift()!, gen = paramGen;
+      const alive = () => gen === paramGen;
+      const ok = await attemptAsync(PARAM_LABEL, () => editNodeOrThrow(p.objectId, { id: p.nodeId, params: p.params }, PARAM_LABEL, `cad:params:${p.nodeId}:${p.key}`, alive));
+      if (ok && alive()) gestureRecorded = true;
     }
   } finally {
     draining = false;
-    if (closeGesture && !queue.length) { closeGesture = false; endGesture(); }
+    if (closeGesture && !queue.length) { closeGesture = false; gestureRecorded = false; endGesture(); }
   }
 }
 
@@ -311,5 +320,27 @@ export function queueParam(objectId: string, nodeId: string, key: string, value:
 /** Drag released: commit what is queued and close the undo step. */
 export function commitParams(): void { closeGesture = true; void drain(); }
 
-/** No parameter edit queued or being evaluated (tests: an undo right after a drag waits for this). */
+/** No parameter edit queued or being evaluated. */
 export function paramsIdle(): boolean { return !draining && !queue.length && !timer; }
+
+/**
+ * Undo / redo / a project load while a drag's value is still queued or evaluating (Ctrl+Z a
+ * moment after releasing a slider) settles it first, so the late commit can't land after the
+ * undo or make it take back the step before the drag:
+ * - undo cancels it; when the drag has no step in the history yet, cancelling it is the undo,
+ *   else the undo goes on and takes back the drag's step (the pre-drag shape either way);
+ * - redo is refused and the edit lands (a new edit clears the redo list anyway);
+ * - a project load cancels it.
+ */
+setPendingEditGuard((kind) => {
+  const recorded = gestureRecorded;
+  if (kind !== 'redo') gestureRecorded = false;
+  if (paramsIdle()) return undefined;
+  if (kind === 'redo') return null;
+  paramGen++;
+  queue.length = 0;
+  if (timer) { clearTimeout(timer); timer = null; }
+  closeGesture = false;
+  endGesture();
+  return kind === 'undo' && !recorded ? PARAM_LABEL : undefined;
+});

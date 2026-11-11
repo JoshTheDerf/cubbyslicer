@@ -161,10 +161,22 @@ function restore(s: Snapshot): void {
   changed(true);
 }
 
+/**
+ * Edits still evaluating off-thread when history moves (a CubbyCAD slider released just before
+ * Ctrl+Z, src/cad/commands.ts) settle first: the guard cancels or keeps them, then returns
+ * undefined to go on, or the navigation's result itself — the label of what it took back (an
+ * edit not recorded yet is undone by dropping it) or null (refused).
+ */
+export type PendingEditGuard = (kind: 'undo' | 'redo' | 'reset') => string | null | undefined;
+let pendingEdits: PendingEditGuard | null = null;
+export function setPendingEditGuard(g: PendingEditGuard | null): void { pendingEdits = g; }
+
 /** Gesture boundary (drag end, dialog close): the next edit starts a new undo entry. */
 export function endGesture(): void { history.finalizeActiveTransform(); }
 
 export function undo(): string | null {
+  const settled = pendingEdits?.('undo');
+  if (settled !== undefined) return settled;
   const label = history.getLastOperationDescription();
   if (!history.undo()) return null;
   collectMeshes();
@@ -173,6 +185,8 @@ export function undo(): string | null {
 }
 
 export function redo(): string | null {
+  const settled = pendingEdits?.('redo');
+  if (settled !== undefined) return settled;
   const label = history.getRedoDescription();
   if (!history.redo()) return null;
   collectMeshes();
@@ -182,6 +196,7 @@ export function redo(): string | null {
 
 /** Forget every undo step (a whole project was loaded). */
 export function clearHistory(): void {
+  pendingEdits?.('reset');
   history.clear();
   refreshHistoryState();
 }
