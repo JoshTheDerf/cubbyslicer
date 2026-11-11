@@ -205,7 +205,12 @@ export class FakeSketches {
           this.snap(s);
           const first = s.entities.length;
           if (op === 'array') for (let k = 1; k < Number(p.count); k++) for (const i of list) s.entities.push({ ...s.entities[i] });
-          else { const m = (p.move as V2) ?? [0, 0]; for (const i of list) { const e = s.entities[i]; e.p0 = [e.p0[0] + m[0], e.p0[1] + m[1]]; e.p1 = [e.p1[0] + m[0], e.p1[1] + m[1]]; e.center = [e.center[0] + m[0], e.center[1] + m[1]]; } }
+          else {
+            // Rotate by `angle` (radians) about `pivot`, then move (the kernel's order; no scale here).
+            const m = (p.move as V2) ?? [0, 0], a = Number(p.angle ?? 0), pv = (p.pivot as V2) ?? [0, 0], ca = Math.cos(a), sa = Math.sin(a);
+            const tf = (q: V2): V2 => { const x = q[0] - pv[0], y = q[1] - pv[1]; return [pv[0] + x * ca - y * sa + m[0], pv[1] + x * sa + y * ca + m[1]]; };
+            for (const i of list) { const e = s.entities[i]; e.p0 = tf(e.p0); e.p1 = tf(e.p1); e.center = tf(e.center); if (e.type === 'arc') { e.start_angle += a; e.end_angle += a; } }
+          }
           return { ...this.state(s), first_index: first, added: s.entities.length - first };
         }
         throw new Fail(-32602, `unknown op ${op}`);

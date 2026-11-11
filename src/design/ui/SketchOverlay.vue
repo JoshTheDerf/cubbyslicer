@@ -23,7 +23,7 @@ import {
 } from '../sketch/model';
 import { CONSTRAINT_BY_TYPE, constraintEntities, describeConstraint, dimensionText, fromWire } from '../sketch/constraints';
 import { sk, setConstraintValue, requestValue, deleteConstraints, toggleConstruction, deleteSelection, finishSketch, cancelSketch, applyConstraint, badgeClick, regionCorners, dragRegionHandle, regionPoint, promoteQuote } from '../sketch/session';
-import { liveQuotes, quotedEntity, type LiveQuote } from '../sketch/quotes';
+import { liveQuotes, quotedEntity, shapeGroups, type LiveQuote, type ShapeGroup } from '../sketch/quotes';
 import { live, pointerContext, pointerDbl, pointerDown, pointerMove, pointerUp, setTool, type PointerCtx } from '../sketch/driver';
 import { evalValue } from '../sketch/expr';
 import { SNAP_LABEL } from '../sketch/infer';
@@ -264,18 +264,24 @@ function centroid(): V2 | null {
 
 // ---- live measurement labels (Orca's render_live_quotes) ----------------------------------------------
 interface QuoteDraw { key: string; q: LiveQuote; lines: string; x: number; y: number }
+// Grouped shapes (rectangles, slots, polygons…), recognised once per entity / constraint list.
+let groupCache: { ents: SkEntity[]; cons: unknown; g: ShapeGroup[] } | null = null;
+function groups(): ShapeGroup[] {
+  if (groupCache?.ents !== sk.entities || groupCache.cons !== sk.constraints) groupCache = { ents: sk.entities, cons: sk.constraints, g: shapeGroups(sk.entities, sk.constraints) };
+  return groupCache.g;
+}
 const quotes = computed<QuoteDraw[]>(() => {
   void tick.value;
-  const ei = quotedEntity(sk.sel, sk.tool);
+  const ei = quotedEntity(sk.sel, sk.tool, groups());
   if (ei < 0) return [];
   // Orca's label height, 15 px, in plane mm: it sets the offsets and wedge radii.
-  return liveQuotes(sk.entities, sk.constraints, ei, 15 * mmPerPx.value).map((q) => {
+  return liveQuotes(sk.entities, sk.constraints, ei, 15 * mmPerPx.value, groups()).map((q) => {
     const [x, y] = P(q.label);
-    return { key: `${q.e}${q.kind}`, q, lines: q.lines.map((l) => path(l)).join(''), x, y };
+    return { key: `${q.e}${q.kind}${q.title ?? ''}`, q, lines: q.lines.map((l) => path(l)).join(''), x, y };
   });
 });
 function clickQuote(d: QuoteDraw) { void promoteQuote(d.q, [d.x, d.y]); }
-const quoteTitle = (q: LiveQuote) => (q.kind === 'length' || q.kind === 'radius' ? `${q.text} — click to make it a dimension` : `${q.text} — click to type a value`);
+const quoteTitle = (q: LiveQuote) => `${q.title ? `${q.title.replace(' (°)', '')} ` : ''}${q.dim || (!q.rotate && (q.kind === 'length' || q.kind === 'radius')) ? `${q.text} — click to make it a dimension` : `${q.text} — click to type a value`}`;
 
 // ---- constraint badges -------------------------------------------------------------------------------
 interface Badge { key: string; i: number; x: number; y: number; glyph: string; bad: boolean; sel: boolean; title: string }

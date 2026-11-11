@@ -33,7 +33,11 @@ export function shieldOpenSubmenuTrigger(e: { target: unknown; preventDefault():
   if (isOnOpenSubmenuTrigger(e.target)) e.preventDefault();
 }
 
-/** Installs the guard on `doc` while a menu is mounted; returns the uninstaller. */
+/**
+ * Installs the guard on `doc`; returns the uninstaller. The app installs it once at start (main.ts) for
+ * every Nuxt UI dropdown / context menu: it only ever acts on a move whose target is inside the trigger of
+ * a submenu that is open, so menus without submenus, sliders, the viewports and drags never see it.
+ */
 export function guardOpenSubmenus(doc: Pick<Document, 'addEventListener' | 'removeEventListener'> = document): () => void {
   doc.addEventListener('pointermove', shieldOpenSubmenuTrigger as EventListener, true);
   return () => doc.removeEventListener('pointermove', shieldOpenSubmenuTrigger as EventListener, true);

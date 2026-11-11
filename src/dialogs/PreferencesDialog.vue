@@ -19,10 +19,10 @@ import { dialogs } from './state';
 
 type Key = keyof Preferences;
 interface Item { value: string | number; label: string }
-type Row =
+type Row = { show?: () => boolean } & (
   | { key: Key; label: string; help: string; kind: 'select'; items: Item[] }
   | { key: Key; label: string; help: string; kind: 'switch' }
-  | { key: Key; label: string; help: string; kind: 'slider'; min: number; max: number; step: number; fmt: (v: number) => string };
+  | { key: Key; label: string; help: string; kind: 'slider'; min: number; max: number; step: number; fmt: (v: number) => string });
 
 const engineItems: Item[] = [{ value: 'last', label: 'Last used' }, ...ENGINES.map((e) => ({ value: e, label: ENGINE_LABELS[e] }))];
 
@@ -41,6 +41,9 @@ const SECTIONS: Array<{ id: string; title: string; rows: Row[] }> = [
       items: [{ value: 'all', label: 'Filaments or colours' }, { value: 'color', label: 'Colours only' }, { value: 'off', label: 'Disabled' }] },
     { key: 'askPrimitiveSize', label: 'Show options when adding a primitive', help: 'Adding a box, cylinder, sphere or slab part asks for its size first.', kind: 'switch' },
     { key: 'designTab', label: 'CAD feature (experimental)', help: 'Show the Design tab, where models from OrcaSlicer 2.5’s Design tab can be edited parametrically. Still under development.', kind: 'switch' },
+    // Orca shows it only while the CAD feature is on.
+    { key: 'designConnectorFace', label: 'Draw mate connectors as a face', kind: 'switch', show: () => preferences.designTab,
+      help: 'In the Design tab, draw a coordinate system (mate connector) as a small face instead of the conventional disc with a roll quadrant. A face shows its orientation at a glance. Turn this off for the conventional CAD representation.' },
   ] },
   { id: 'camera', title: 'Camera', rows: [
     { key: 'zoomToCursor', label: 'Zoom to mouse position', help: 'Zoom towards the pointer instead of the view centre.', kind: 'switch' },
@@ -103,7 +106,7 @@ const shown = (id: string) => !mobileDialog.value || section.value === id;
       <UTabs v-if="mobileDialog" v-model="section" :items="tabs" :content="false" size="sm" class="w-full" />
       <section v-for="s in SECTIONS" v-show="shown(s.id)" :key="s.id" class="pf">
         <h4>{{ s.title }}</h4>
-        <div v-for="r in s.rows" :key="r.key" class="pf__row">
+        <div v-for="r in s.rows.filter((x) => !x.show || x.show())" :key="r.key" class="pf__row">
           <div class="pf__lbl">
             <span>{{ r.label }}</span><small>{{ r.help }}</small>
           </div>

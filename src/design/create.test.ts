@@ -23,7 +23,9 @@ import { entity, line, loopEntityIndices, regionAt, regionLoops } from './sketch
 import type { Mat4 } from '../project/math';
 import * as K from './sketch/session';
 import { sk } from './sketch/session';
-import { datumDrawing, refreshDatumDrawing } from './datums';
+import { datumDrawing, faceGlyph, refreshDatumDrawing } from './datums';
+import { DEFAULT_PREFERENCES, sanitizePreferences } from '../app/preferences';
+import type { Vec3 } from '../project/math';
 
 let fake: FakeKernel;
 async function settle(): Promise<void> { for (let i = 0; i < 4; i++) { await nextTick(); await designReady(); } }
@@ -371,6 +373,22 @@ describe('extruding one region of a sketch (Orca’s loop pick)', () => {
 });
 
 describe('datums drawn in the view (Orca’s render_datum_planes / render_mate_connectors)', () => {
+  it('Orca’s face glyph: plate (12 sides + top), eyes, cheek dot, chin, 4-facet muzzle along +Z; far to near; preference on by default', () => {
+    const cam = { right: [1, 0, 0] as Vec3, up: [0, 0, 1] as Vec3, fwd: [0, 1, 0] as Vec3 }; // looking along +Y
+    const f = faceGlyph([10, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], 5, cam);
+    expect(f.length).toBe(12 + 1 + 3 + 1 + 4);
+    expect(f.filter((x) => x.tone === 'accent')).toHaveLength(4);
+    expect(f.filter((x) => x.tone === 'mark')).toHaveLength(4);
+    for (let i = 1; i < f.length; i++) expect(f[i - 1].depth).toBeGreaterThanOrEqual(f[i].depth);
+    // Scaled by the disc's diameter (2R = 10 mm): the outline spans ~1.0 of it in X, the muzzle crest stands 0.2073·10 along +Z.
+    const xs = f.flatMap((x) => x.pts.map((p) => p[0]));
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(9.893, 2);
+    expect(Math.max(...f.flatMap((x) => x.pts.map((p) => p[2])))).toBeCloseTo(2.073, 3);
+    for (const x of f) expect(x.k).toBeGreaterThanOrEqual(0.42);
+    expect(DEFAULT_PREFERENCES.designConnectorFace).toBe(true);
+    expect(sanitizePreferences({ designConnectorFace: false }).designConnectorFace).toBe(false);
+    expect(sanitizePreferences({ designConnectorFace: 'no' }).designConnectorFace).toBe(true);
+  });
   it('planes at their size (80 mm when unset), connectors that resolve, the mated one driven; suppressed ones and axes not drawn', async () => {
     await openProject(FakeKernel.recipe([
       { type: 'Sketch', name: 'Sketch 1' }, { ...box(), name: 'Base' },

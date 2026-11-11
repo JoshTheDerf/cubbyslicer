@@ -29,6 +29,9 @@ import { SectionView, clipBy } from '../../viewport/viewEffects';
 import type { ViewPreset } from '../../viewport/controller';
 import type { DisplayBody } from '../kernel/mesh';
 
+/** A polyline drawn with the depth test (`setDepthStrokes`): world points and a CSS colour token. */
+export interface DepthStroke { pts: Vec3[]; color: string }
+
 export interface DesignHit { body: number; face: number; point: Vector3; clientX: number; clientY: number }
 
 export interface DesignSceneCallbacks {
@@ -139,6 +142,8 @@ export class DesignScene {
   private colRef: Color;
   /** Orca's Design section view: Prepare's clipping plane, held horizontal at `sectionCut.z` (no cap: Orca's only hides). */
   private section = new SectionView();
+  /** Strokes drawn with the depth test (Orca's connector disc), rebuilt before every frame. */
+  private depthStrokes: { fn: () => DepthStroke[]; obj: LineSegments<BufferGeometry, LineBasicMaterial> } | null = null;
   private sectionCut: { z: number; upper: boolean } | null = null;
 
   constructor(private container: HTMLElement, private cb: DesignSceneCallbacks) {
@@ -271,6 +276,7 @@ export class DesignScene {
   }
 
   dispose(): void {
+    this.setDepthStrokes(null);
     this.disposed = true;
     cancelAnimationFrame(this.frame);
     this.ro.disconnect();
@@ -331,6 +337,7 @@ export class DesignScene {
     if (visible) {
       if (!this.wasVisible) { this.viewCube?.update({ rebuild: true }); this.resize(); }
       this.updateCameraPlanes();
+      if (this.depthStrokes) { this.camera.updateMatrixWorld(); this.buildDepthStrokes(); }
       this.renderer.render(this.scene, this.camera);
       this.viewCube?.render();
       for (const fn of this.viewListeners) fn();
@@ -680,6 +687,41 @@ export class DesignScene {
       if (e !== null) return { body: b, edge: e };
     }
     return null;
+  }
+
+  /**
+   * World-space polylines drawn WITH the depth test, so the model hides them (Orca's mate-connector
+   * disc and quadrant, `render_mate_connectors`). `fn` runs before every frame with the camera of
+   * that frame, so screen-constant sizes follow it; null removes them.
+   */
+  setDepthStrokes(fn: (() => DepthStroke[]) | null): void {
+    if (this.depthStrokes) { this.scene.remove(this.depthStrokes.obj); this.depthStrokes.obj.geometry.dispose(); this.depthStrokes.obj.material.dispose(); this.depthStrokes = null; }
+    if (fn) {
+      const obj = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ vertexColors: true, depthTest: true, depthWrite: false }));
+      obj.frustumCulled = false;
+      obj.renderOrder = 2;
+      this.scene.add(obj);
+      this.depthStrokes = { fn, obj };
+    }
+    this.requestRender();
+  }
+
+  private buildDepthStrokes(): void {
+    const d = this.depthStrokes!;
+    const pos: number[] = [], col: number[] = [];
+    const colors = new Map<string, Color>();
+    for (const st of d.fn()) {
+      let c = colors.get(st.color);
+      if (!c) { c = tokenColor(st.color); colors.set(st.color, c); }
+      for (let i = 0; i + 1 < st.pts.length; i++) {
+        pos.push(...st.pts[i], ...st.pts[i + 1]);
+        col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      }
+    }
+    const g = d.obj.geometry;
+    g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new Float32BufferAttribute(col, 3));
+    g.computeBoundingSphere();
   }
 
   /** Where a design point is on screen (client px), or null when behind the camera. */

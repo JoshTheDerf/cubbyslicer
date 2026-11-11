@@ -742,17 +742,43 @@ export async function useEdges(body: number, edges: number[], generation: number
 export async function promoteQuote(q: LiveQuote, screen?: [number, number]): Promise<void> {
   if (!sk.entities[q.e]) return;
   const at = { at: null, ...(screen ? { screen } : {}) };
-  if (q.kind === 'length' || q.kind === 'radius') {
-    const c = q.kind === 'length' ? cons('distance', q.e, 'p0', q.e, 'p1', q.value) : cons('radius', q.e, 'center', -1, 'p0', q.value);
+  const title = q.title ?? QUOTE_TITLE[q.kind];
+  if (q.dim || (!q.rotate && (q.kind === 'length' || q.kind === 'radius'))) {
+    // A shape's size label: the driving dimension the drawing tool's own size field uses (quotes.ts).
+    const c = q.dim ?? (q.kind === 'length' ? cons('distance', q.e, 'p0', q.e, 'p1', q.value) : cons('radius', q.e, 'center', -1, 'p0', q.value));
     if (await addConstraints([c])) return;
     const i = duplicateOf(c, sk.constraints);
     if (i < 0) return;
-    requestValue({ label: QUOTE_TITLE[q.kind], value: +q.value.toFixed(4), unit: 'mm', ...at, submit: (v) => setConstraintValue(i, v) });
+    requestValue({ label: title, value: +q.value.toFixed(4), unit: 'mm', ...at, submit: (v) => setConstraintValue(i, v) });
+    return;
+  }
+  if (q.rotate) {
+    // A shape's angle (Orca's set_rect_angle / set_slot_angle / set_polygon_angle): turn it, with its
+    // construction geometry, about Orca's pivot; the members' H / V go first (drop_orientation_constraints).
+    const r = q.rotate;
+    requestValue({
+      label: title, value: +q.value.toFixed(4), unit: '°', ...at,
+      submit: async (v) => {
+        if (!Number.isFinite(v)) return 'Type an angle';
+        if (r.ents.some((e) => !sk.entities[e])) return 'That shape is gone';
+        const da = v - q.value;
+        if (Math.abs(da) < 1e-9) return null;
+        beginGesture('Edit value');
+        try {
+          const hv = sk.constraints.map((c, i) => ({ c, i })).filter(({ c }) => (c.type === 'horizontal' || c.type === 'vertical') && r.ents.includes(c.ea) && (c.eb === c.ea || c.eb < 0)).map(({ i }) => i);
+          if (hv.length) await deleteConstraints(hv);
+          const err = await transformEntities(r.ents, { angle: da, pivot: r.pivot });
+          if (err) return `${title.replace(' (°)', '')} ${v}° can’t be set (${err})`;
+        } finally { await endGesture(); }
+        setStatus('ok', `Angle set to ${v}° — ${dofText()}.`);
+        return null;
+      },
+    });
     return;
   }
   const deg = q.kind === 'angle' || q.kind === 'sweep';
   requestValue({
-    label: QUOTE_TITLE[q.kind], value: +q.value.toFixed(4), unit: deg ? '°' : 'mm', ...at,
+    label: title, value: +q.value.toFixed(4), unit: deg ? '°' : 'mm', ...at,
     submit: async (v) => {
       const e = sk.entities[q.e];
       const n = e ? quoteEdit(e, q.kind, v) : 'That entity is gone';

@@ -24,8 +24,6 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Mixed filaments:** Orca's lab-measured colours come from the engine; before the engine has loaded, swatches use the computed pigment blend.
 
 ### Design tab (experimental)
-- **Sketcher:** the live measurement labels of Orca's grouped shapes (rectangle Width / Height, slot length / width / angle, polygon side / orientation, rounded-rectangle and arc-slot sizes): this sketcher keeps a shape as plain entities and constraints, so a member line shows its own Length / Angle.
-- **Coordinate systems** are drawn as Orca's conventional disc, not its default "face" glyph (preference *Draw mate connectors as a face*), and over the model rather than hidden behind it.
 - **Primitive bodies** (box, cylinder, cone, sphere, torus) are fixed-size, not parametric.
 - **Closed hollow shell** (no open face) is refused: Orca's own result for it is not a hollow body.
 - **Internal threads** follow Orca's behaviour, including its failure when the bore equals the thread's minor diameter.
@@ -43,6 +41,7 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Section view and focus mode** controls sit in CubbySlicer's own toolbars.
 - **Extruding one region of a sketch** (Orca's loop pick) happens only when the sketch has more than one closed region; with a single profile the Extrude keeps following the sketch (Orca copies the loop into the Extrude whenever one was clicked).
 - **Text / SVG on a face** are in the offer of a picked flat face (and the command palette); Orca lists its Text / SVG verbs only in sketch mode, where they land on the sketch's plane, which here is still the case inside an open sketch.
+- **Sketch shape labels:** Orca records each drawn shape as a group while drawing and edits its sizes geometrically (`set_slot`, `set_rounded_rect`…). This sketcher keeps shapes as entities and constraints, so it recognises them as Orca does for a re-opened sketch (`rebuild_features_from_entities`) and also requires the constraints the drawing tool gave the shape; a size label becomes the driving dimension the tool's own size fields use, and an angle label turns the shape with its construction geometry. An oblique rectangle's angle label is clickable (Orca reaches it only through the draw-then-edit fields).
 - **Coordinate system card:** Orca's "Body" filter (others go see-through while picking) is not there; the card refuses Face + direction without a face (Orca adds it and reports "face not found").
 
 ## Verification debts

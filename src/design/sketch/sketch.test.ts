@@ -20,7 +20,7 @@ import { evalValue } from './expr';
 import * as K from './session';
 import { sk } from './session';
 import { getActionScope, setActionScope } from '../../app/actions/dispatch';
-import { liveQuotes, quoteEdit, quotedEntity, quoteText } from './quotes';
+import { liveQuotes, quoteEdit, quotedEntity, quoteText, shapeGroups } from './quotes';
 
 const close = (a: V2, b: V2, eps = 1e-9) => Math.abs(a[0] - b[0]) < eps && Math.abs(a[1] - b[1]) < eps;
 const opts = (o: Partial<BuildOpts> = {}): BuildOpts => ({ base: 0, entities: [], snaps: [], axes: [], construction: false, polygonSides: 6, polygonCircumscribed: false, final: true, ...o });
@@ -210,6 +210,59 @@ describe('live measurement labels (Orca’s render_live_quotes)', () => {
     expect(quotedEntity([{ e: 2 }], 'fillet')).toBe(-1);
     expect(quotedEntity([{ e: 2 }], 'move')).toBe(-1);
   });
+  describe('grouped shapes (Orca’s Feature spans)', () => {
+    const build = (id: string, pts: V2[], o: Partial<BuildOpts> = {}) => {
+      const lead = line([-50, -50], [-40, -50]); // an entity before the shape: indices are absolute
+      const b = DRAW_TOOL_BY_ID.get(id as never)!.build(pts, opts({ base: 1, ...o }))!;
+      return { ents: [lead, ...b.entities], cons: b.constraints };
+    };
+    const labels = (x: ReturnType<typeof build>, ei: number) => liveQuotes(x.ents, x.cons, ei, 2).map((q) => `${q.title}:${q.text}`);
+    it('recognises each drawing tool’s shape from its chain and constraints', () => {
+      const kinds = (x: ReturnType<typeof build>) => shapeGroups(x.ents, x.cons).map((g) => `${g.kind} ${g.begin}-${g.end} [${g.helpers}]`);
+      expect(kinds(build('rect', [[0, 0], [40, 20]]))).toEqual(['rect 1-5 []']);
+      expect(kinds(build('rect-center', [[0, 0], [20, 10]]))).toEqual(['rect 1-5 [5,6]']);
+      expect(kinds(build('rect-3pt', [[0, 0], [30, 10], [0, 20]]))).toEqual(['rect 1-5 []']);
+      expect(kinds(build('slot', [[0, 0], [30, 0], [10, 4]]))).toEqual(['slot 1-5 [5]']);
+      expect(kinds(build('polygon', [[0, 0], [10, 0]], { polygonSides: 5 }))).toEqual(['polygon 1-6 [6]']);
+      expect(kinds(build('rect-rounded', [[0, 0], [40, 20], [3, 0]]))).toEqual(['rounded-rect 1-9 []']);
+      expect(kinds(build('arc-slot', [[0, 0], [20, 0], [0, 20], [23, 0]]))).toEqual(['arc-slot 1-5 []']);
+      expect(kinds(build('line', [[0, 0], [10, 0]]))).toEqual([]);
+    });
+    it('a chain that only looks like a shape (no shape constraints) stays plain lines', () => {
+      const r = build('rect', [[0, 0], [40, 20]]);
+      expect(shapeGroups(r.ents, r.cons.filter((c) => c.type !== 'horizontal' && c.type !== 'vertical'))).toEqual([]);
+      expect(shapeGroups(r.ents, r.cons.filter((c) => c.type !== 'coincident'))).toEqual([]);
+      const p = build('polygon', [[0, 0], [10, 0]], { polygonSides: 6 });
+      expect(shapeGroups(p.ents, p.cons.filter((c) => c.type !== 'equal_length'))).toEqual([]);
+    });
+    it('shows Orca’s shape labels from any member', () => {
+      const r = build('rect', [[0, 0], [40, 20]]);
+      expect(labels(r, 3)).toEqual(['Width:40 mm', 'Height:20 mm']);
+      const [w, h] = liveQuotes(r.ents, r.cons, 1, 2);
+      expect(w.label[1]).toBeGreaterThan(0); expect(h.label[0]).toBeGreaterThan(40); // opposite sides (Orca: +1 / −1)
+      expect(labels(build('rect-3pt', [[0, 0], [30, 30], [0, 20]]), 1)).toEqual(['Width:42.43 mm', 'Height:14.14 mm', 'Angle (°):45°']);
+      expect(labels(build('slot', [[0, 0], [30, 0], [10, 4]]), 2)).toEqual(['Length:30 mm', 'Width:8 mm', 'Angle (°):0°']);
+      expect(labels(build('polygon', [[0, 0], [10, 0]], { polygonSides: 4 }), 3)).toEqual(['Side:14.14 mm', 'Angle (°):0°']);
+      expect(labels(build('rect-rounded', [[0, 0], [40, 20], [3, 0]]), 5)).toEqual(['Width:40 mm', 'Height:20 mm', 'Radius:R3 mm']);
+      expect(labels(build('arc-slot', [[0, 0], [20, 0], [0, 20], [23, 0]]), 4)).toEqual(['Radius:R20 mm', 'Width:6 mm']);
+    });
+    it('the click adds the tool’s own size dimension; a driven size is not shown', () => {
+      const s = build('slot', [[0, 0], [30, 0], [10, 4]]);
+      const [len, wid, ang] = liveQuotes(s.ents, s.cons, 1, 2);
+      expect(len.dim).toMatchObject({ type: 'distance', ea: 5, ra: 'p0', eb: 5, rb: 'p1', value: 30 });
+      expect(wid.dim).toMatchObject({ type: 'diameter', ea: 2, value: 8 });
+      expect(ang.rotate).toEqual({ ents: [1, 2, 3, 4, 5], pivot: [0, 0] });
+      expect(labels({ ents: s.ents, cons: [...s.cons, len.dim!] }, 1)).toEqual(['Width:8 mm', 'Angle (°):0°']);
+      const rr = build('rect-rounded', [[0, 0], [40, 20], [3, 0]]);
+      expect(labels({ ents: rr.ents, cons: [...rr.cons, cons('radius', 4, 'center', -1, 'p0', 3)] }, 1)).toEqual(['Width:40 mm', 'Height:20 mm']);
+    });
+    it('a selection that is all one shape is quoted (any member speaks for it)', () => {
+      const r = build('rect', [[0, 0], [40, 20]]);
+      const g = shapeGroups(r.ents, r.cons);
+      expect(quotedEntity([{ e: 1 }, { e: 2 }, { e: 3 }, { e: 4 }], 'select', g)).toBe(1);
+      expect(quotedEntity([{ e: 0 }, { e: 2 }], 'select', g)).toBe(-1);
+    });
+  });
   it('typed values edit the geometry as Orca does (and refuse what Orca refuses)', () => {
     const l = quoteEdit(ents[0], 'angle', 90) as typeof ents[0];
     expect(l.p1[0]).toBeCloseTo(0); expect(l.p1[1]).toBeCloseTo(50);
@@ -398,6 +451,29 @@ describe('sketch session', () => {
     expect(sk.constraints.some((c) => c.type === 'horizontal')).toBe(false);
     expect(sk.entities[0].p1[0]).toBeCloseTo(sk.entities[0].p0[0]); expect(sk.entities[0].p1[1]).toBeCloseTo(sk.entities[0].p0[1] + L);
     expect(sk.undo.length).toBe(undo0 + 1); // one sketch undo entry: H dropped + the line turned
+  });
+
+  it('a shape label: a rectangle’s Width becomes its dimension; a slot’s Angle turns it with its centre line (one undo entry)', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    const r = DRAW_TOOL_BY_ID.get('rect')!.build([[0, 0], [40, 20]], opts())!;
+    await K.addEntities(r.entities, r.constraints);
+    const [w, h] = liveQuotes(sk.entities, sk.constraints, 2, 2);
+    expect([w.title, h.title]).toEqual(['Width', 'Height']);
+    await K.promoteQuote(h);
+    expect(sk.constraints.at(-1)).toMatchObject({ type: 'distance', ea: 1, ra: 'p0', eb: 1, rb: 'p1', value: 20 });
+    expect(sk.value).toMatchObject({ label: 'Height', value: 20, unit: 'mm' });
+    sk.value = null;
+    const s = DRAW_TOOL_BY_ID.get('slot')!.build([[100, 0], [130, 0], [110, 4]], opts({ base: 4 }))!;
+    await K.addEntities(s.entities, s.constraints);
+    const ang = liveQuotes(sk.entities, sk.constraints, 5, 2).find((q) => q.rotate)!;
+    const undo0 = sk.undo.length;
+    await K.promoteQuote(ang);
+    expect(sk.value).toMatchObject({ label: 'Angle (°)', unit: '°', value: 0 });
+    expect(await sk.value!.submit(90)).toBeNull();
+    sk.value = null;
+    expect(sk.entities[8].p0[0]).toBeCloseTo(100); expect(sk.entities[8].p1[0]).toBeCloseTo(100); expect(sk.entities[8].p1[1]).toBeCloseTo(30); // the centre line turned about the start cap
+    expect(liveQuotes(sk.entities, sk.constraints, 5, 2).find((q) => q.rotate)!.value).toBeCloseTo(90);
+    expect(sk.undo.length).toBe(undo0 + 1);
   });
 
   it('cancel leaves the design unchanged; trim drops the constraints on the moved end first', async () => {

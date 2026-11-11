@@ -45,12 +45,20 @@ describe('submenu guard (Reka closes an open submenu on a move over its own trig
     expect(calls).toEqual(['add pointermove true', 'remove pointermove true true']);
   });
 
-  it('the offer menu keeps the guard while the installed Reka still has the comparison', () => {
+  it('the app installs the guard once at start while the installed Reka still has the comparison', () => {
     const reka = readFileSync(resolve(process.cwd(), 'node_modules/reka-ui/dist/Menu/MenuContentImpl.js'), 'utf8');
-    const offer = readFileSync(resolve(process.cwd(), 'src/design/ui/OfferMenu.vue'), 'utf8');
+    const main = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
     if (reka.includes('el !== activeSubmenuContext.value.trigger.value')) {
-      expect(offer).toMatch(/guardOpenSubmenus\(\)/);
-      expect(offer).toMatch(/unguard\(\)/);
+      expect(main).toMatch(/import \{ guardOpenSubmenus \} from '\.\/ui\/submenuGuard'/);
+      expect(main).toMatch(/^guardOpenSubmenus\(\);$/m); // top level: once, for the app's lifetime
     }
+    // MenuItemImpl must still skip a pointermove whose default is prevented, or the guard does nothing.
+    const item = readFileSync(resolve(process.cwd(), 'node_modules/reka-ui/dist/Menu/MenuItemImpl.js'), 'utf8');
+    expect(item).toMatch(/defaultPrevented/);
+  });
+
+  it('no component installs its own copy (one app-wide listener)', () => {
+    const offer = readFileSync(resolve(process.cwd(), 'src/design/ui/OfferMenu.vue'), 'utf8');
+    expect(offer).not.toMatch(/guardOpenSubmenus/);
   });
 });

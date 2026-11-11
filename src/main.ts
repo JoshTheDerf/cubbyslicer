@@ -7,10 +7,13 @@ import * as presetStore from './presets/store';
 import * as cadCommands from './cad/commands';
 import * as designDebug from './design/debug';
 import { installViewportVars } from './ui/mobileDialog';
+import { guardOpenSubmenus } from './ui/submenuGuard';
 import './ui/theme.css';
 import './style.css';
 
 installViewportVars();
+// Every dropdown / context menu: an open submenu must not close on a move over its own trigger (Reka bug).
+guardOpenSubmenus();
 createApp(App).use(ui).mount('#app');
 
 // Debug handle for browser automation (dev, or ?cubby-debug in a build).
