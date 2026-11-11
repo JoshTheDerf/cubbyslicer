@@ -6,7 +6,7 @@
  */
 import { shallowRef } from 'vue';
 import type { CapabilityId, FromRuntime, HostMethod, PluginPermissions, ScriptCompletion, ToRuntime } from '../types';
-import { createHostChannel, HostChannelServer, type ReplyPayload } from './hostChannel';
+import { CallbackChannelServer, createCallbackChannel, createHostChannel, HostChannelServer, type ReplyPayload } from './hostChannel';
 import { HOOK, createHookChannel } from './hookChannel';
 
 export const PYODIDE_VERSION = '0.27.8';
@@ -37,6 +37,7 @@ let hooks: RuntimeHooks | null = null;
 let worker: Worker | null = null;
 let port: MessagePort | null = null;
 let server: HostChannelServer | null = null;
+let callbacks: CallbackChannelServer | null = null;
 let booting: Promise<void> | null = null;
 let reqSeq = 0;
 const waiting = new Map<number, { resolve: (m: FromRuntime) => void }>();
@@ -57,6 +58,8 @@ export function ensureRuntime(): Promise<void> {
     const interrupt = isolated ? new SharedArrayBuffer(4) : null;
     interruptBuffer = interrupt ? new Int32Array(interrupt) : null;
     server = hostChannel ? new HostChannelServer(hostChannel) : null;
+    const callbackChannel = isolated ? createCallbackChannel() : null;
+    callbacks = callbackChannel ? new CallbackChannelServer(callbackChannel, () => port?.postMessage({ t: 'callbacks' }), (m) => port?.postMessage(m)) : null;
     worker = new Worker(new URL('./worker/prw.worker.ts', import.meta.url), { type: 'module', name: 'cubby-plugins' });
     const ch = new MessageChannel();
     port = ch.port1;
@@ -67,7 +70,7 @@ export function ensureRuntime(): Promise<void> {
       reject(new Error(error));
     };
     worker.postMessage({
-      t: 'init', pyodideBase: pyodideBase(), hostChannel, hookChannel: null, interrupt, appInfo: hooks.appInfo(),
+      t: 'init', pyodideBase: pyodideBase(), hostChannel, hookChannel: null, interrupt, callbackChannel, appInfo: hooks.appInfo(),
     } satisfies ToRuntime, [ch.port2]);
   });
   booting.catch(() => { /* surfaced through runtimeState */ });
@@ -103,6 +106,7 @@ function onMessage(m: FromRuntime, resolve: () => void, reject: (e: Error) => vo
         .then((r) => server?.reply(m.callId, r));
       return;
     case 'hostChunk': server?.nextChunk(m.callId); return;
+    case 'callbacksTaken': callbacks?.flush(); return;
     case 'hostPost':
       try { hooks!.hostPost(m.method, m.pluginKey, m.capability, m.args); } catch (e) { hooks!.log('warn', `${m.method}: ${(e as Error).message}`, m.pluginKey); }
       return;
@@ -128,13 +132,15 @@ function onMessage(m: FromRuntime, resolve: () => void, reject: (e: Error) => vo
 }
 
 /** Fields that carry buffers (transferred / shared) and are never reactive. */
-const BINARY_FIELDS = new Set(['gcode', 'files', 'hostChannel', 'hookChannel', 'interrupt', 'sab', 'port']);
+const BINARY_FIELDS = new Set(['gcode', 'files', 'hostChannel', 'hookChannel', 'interrupt', 'callbackChannel', 'sab', 'port']);
 
 export function send(msg: ToRuntime, transfer: Transferable[] = []): void {
   // Ids, grants and capability lists often come straight from reactive state; Vue proxies
   // can't be structured-cloned, so plain-JSON every other field.
   const plain: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(msg)) plain[k] = v && typeof v === 'object' && !BINARY_FIELDS.has(k) ? JSON.parse(JSON.stringify(v)) : v;
+  // UI callbacks go through the CallbackChannel, so they also reach a plugin blocked in a wait.
+  if (callbacks && port && (msg.t === 'uiEvent' || msg.t === 'pageMessage')) { callbacks.push(plain); return; }
   port?.postMessage(plain, transfer);
 }
 
@@ -159,7 +165,7 @@ export async function runScript(id: CapabilityId): Promise<ScriptCompletion> {
 /** Stop the runtime (tests / a fatal error). Loaded plugins are gone; the next use boots again. */
 export function stopRuntime(): void {
   worker?.terminate();
-  worker = null; port = null; server = null; booting = null;
+  worker = null; port = null; server = null; callbacks = null; booting = null;
   for (const w of scriptWaiters.values()) w({ cancelled: true });
   scriptWaiters.clear();
   runtimeState.value = { phase: 'off', isolated: false };

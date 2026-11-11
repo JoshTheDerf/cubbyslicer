@@ -17,6 +17,8 @@ vi.setConfig({ testTimeout: 120_000 });
 let py: any;
 const posts: Array<[string, unknown]> = [];
 const logs: string[] = [];
+/** UI callbacks waiting in the stand-in CallbackChannel (delivered by waitCallbacks). */
+const pendingCallbacks: unknown[] = [];
 /** A stand-in for cs_hook_query in tests that exercise the graph proxies. */
 let fakeEngine: (req: { batch: Array<Record<string, unknown>> }, blob: Uint8Array) => { json: string; blob?: Uint8Array } = () => ({ json: '{"ok":false,"error":"no engine"}' });
 const ROOT = join(__dirname, 'python');
@@ -46,6 +48,7 @@ beforeAll(async () => {
     setTrusted: () => {},
     hookQuery: (json: string, blob: any) => fakeEngine(JSON.parse(json), blob ? new Uint8Array(blob.toJs ? blob.toJs() : blob) : new Uint8Array()),
     hookCancelled: () => false,
+    waitCallbacks: () => (pendingCallbacks.length ? JSON.stringify(pendingCallbacks.splice(0)) : ''),
   });
   py.runPython("import sys; sys.path.insert(0, '/orca/runtime'); import orca, _cubby_runtime; _cubby_runtime.install()");
 }, 180_000);
@@ -264,6 +267,49 @@ res`).toJs();
       'PermissionError: Plugin attempted audited operation "open" without permission: /etc/passwd',
       'ok',
     ]);
+  });
+});
+
+describe('blocking waits run pending UI callbacks (CallbackChannel)', () => {
+  it('queue.Queue.get / Event.wait / time.sleep deliver window callbacks while they wait', () => {
+    const out = py.runPython(`
+import queue, threading, time, orca
+q = queue.Queue()
+ev = threading.Event()
+seen = []
+w = orca.host.ui.create_window("<p>x</p>", on_message=lambda d: q.put(d), on_close=lambda: ev.set())
+w2 = orca.host.ui.create_window("<p>y</p>", on_message=lambda d: seen.append(d))
+w.id, w2.id`).toJs();
+    const [h1, h2] = out;
+    pendingCallbacks.push({ t: 'uiEvent', handle: String(h1), kind: 'message', data: { command: 'apply', v: 1 } });
+    expect(py.runPython('q.get(timeout=5)').toJs({ dict_converter: Object.fromEntries })).toEqual({ command: 'apply', v: 1 });
+    pendingCallbacks.push({ t: 'uiEvent', handle: String(h1), kind: 'close' });
+    expect(py.runPython('ev.wait(5)')).toBe(true);
+    pendingCallbacks.push({ t: 'uiEvent', handle: String(h2), kind: 'message', data: 7 });
+    expect(py.runPython('t = time.monotonic(); time.sleep(0.2); (time.monotonic() - t >= 0.19, seen)').toJs()).toEqual([true, [7]]);
+    // a timeout with nothing delivered still times out
+    expect(py.runPython('import queue as _q\ntry:\n    q.get(timeout=0.15); r = "got"\nexcept _q.Empty:\n    r = "empty"\nr')).toBe('empty');
+ 
+  });
+
+  it('without cross-origin isolation a wait without a timeout fails clearly instead of hanging', () => {
+    const out = py.runPython(`
+import queue, _cubby_wait
+_cubby_wait._isolated = False
+try:
+    try:
+        queue.Queue().get()
+        r = "returned"
+    except RuntimeError as e:
+        r = str(e)
+    try:
+        queue.Queue().get(timeout=0.05)
+    except queue.Empty:
+        r += " | timed wait still times out"
+finally:
+    _cubby_wait._isolated = True
+r`);
+    expect(out).toMatch(/needs CubbySlicer to run cross-origin isolated .* \| timed wait still times out$/);
   });
 });
 

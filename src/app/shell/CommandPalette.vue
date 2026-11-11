@@ -493,7 +493,8 @@ function onKey(e: KeyboardEvent): void {
             <button type="button" class="sd-fav" :class="{ sel: sel.zone === 'fav' && sel.i === i }" data-own-menu tabindex="-1"
                     :title="favTitle(snap.byId.get(id))" :aria-label="snap.labels.get(id)"
                     @click="onFavClick(i)" @contextmenu="sel = { zone: 'fav', i }" @mousemove="setHover(id, $event)">
-              <UIcon :name="iconOf(snap.byId.get(id))" class="sd-ic" />
+              <img v-if="snap.byId.get(id)?.iconSrc" :src="snap.byId.get(id)!.iconSrc" alt="" class="sd-ic sd-img">
+              <UIcon v-else :name="iconOf(snap.byId.get(id))" class="sd-ic" />
               <span v-if="pinnedSlot(i)" class="sd-slot" :title="slotTitle(i)">{{ pinnedSlot(i) }}</span>
             </button>
           </UContextMenu>
@@ -528,7 +529,7 @@ function onKey(e: KeyboardEvent): void {
               <div v-else class="sd-row" :class="{ sel: sel.zone === 'list' && sel.i === r.i }" role="option" :data-idx="r.i"
                    :aria-selected="sel.zone === 'list' && sel.i === r.i" :aria-label="snap.labels.get(r.item.id)"
                    @click="onRowClick(r.i, r.item)" @mousemove="setHover(r.item.id, $event)">
-                <span class="sd-tile"><UIcon :name="iconOf(r.item)" class="sd-ic" /></span>
+                <span class="sd-tile"><img v-if="r.item.iconSrc" :src="r.item.iconSrc" alt="" class="sd-ic sd-img"><UIcon v-else :name="iconOf(r.item)" class="sd-ic" /></span>
                 <span class="sd-left">
                   <span class="sd-eyebrow"><template v-for="(s, k) in markSegments(rowEyebrow(r.item, r.i).text, rowEyebrow(r.item, r.i).ranges)" :key="k"><mark v-if="s.m">{{ s.t }}</mark><template v-else>{{ s.t }}</template></template></span>
                   <span class="sd-line">
@@ -576,6 +577,7 @@ function onKey(e: KeyboardEvent): void {
 .sd-slot { position: absolute; top: 1px; left: 1px; min-width: 11px; height: 11px; padding: 0 2px; border-radius: 3px; font-size: 8px; font-weight: 600; line-height: 11px; text-align: center;
   color: var(--ui-text-muted); background: rgb(127 127 127 / .22); }
 .sd-ic { width: 16px; height: 16px; color: var(--ui-text-muted); }
+.sd-img { object-fit: contain; }
 .sd-head { flex: none; padding: 8px; }
 .sd-search { display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 8px; border: 1px solid var(--ui-border); border-radius: 7px; background: var(--ui-bg); }
 .sd-search:focus-within { border-color: var(--ui-primary); box-shadow: 0 0 0 2px color-mix(in oklab, var(--ui-primary) 25%, transparent); }

@@ -13,7 +13,11 @@
 //    Configuration group edits the process preset's override;
 //  - a .whl plugin (built here) installs and runs; plugin.storage() survives a page
 //    reload; lifecycle events reach on_lifecycle_event; a progress dialog's Cancel
-//    makes update() return False.
+//    makes update() return False;
+//  - blocking waits: Orca's UNMODIFIED "Preset Update Demo" parks execute() in
+//    queue.Queue.get() while its window's on_message / on_close callbacks feed it
+//    (CallbackChannel): browse, apply a change, close;
+//  - a page's get_icon() SVG shows on its tab and its palette entry.
 //
 //   node scripts/dev/e2e-plugins-phase3.mjs [baseUrl] [out-dir]
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -91,11 +95,19 @@ PAGE = """<h2>Hello page</h2>
 orca.onMessage(function (m) { document.getElementById('out').textContent = 'pong ' + m.n + ' from ' + m.who; });
 </script>"""
 
+ICON = """<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="#009688"/></svg>"""
+
 class HelloPage(orca.pages.PagesPluginCapabilityBase):
     def get_name(self):
         return "Hello Page"
     def get_ui(self):
         return PAGE
+    def get_icon(self):
+        # Orca strips ".svg" / ".png" and tries the SVG first: the ".png" name finds hello.svg.
+        path = orca.host.plugin.storage() + "/hello.svg"
+        with open(path, "w") as fh:
+            fh.write(ICON)
+        return path[:-4] + ".png"
     def on_message(self, data):
         self.post_message({"n": data["n"] + 1, "who": orca.host.app_info()["build"]})
 
@@ -275,6 +287,8 @@ check('plater().export_3mf_copy() writes a project 3MF', /^Success: \d{4,} bytes
 const tab = page.getByRole('tab', { name: 'Hello Page' });
 await tab.waitFor();
 check('a Pages capability gets a tab beside Prepare / Preview', true);
+const tabIcon = await tab.locator('img[data-testid="plugin-page-icon"]').getAttribute('src').catch(() => null);
+check('the tab shows the page\'s get_icon() SVG', /^data:image\/svg\+xml;base64,/.test(tabIcon ?? '') && /circle/.test(Buffer.from((tabIcon ?? '').split(',')[1] ?? '', 'base64').toString()), (tabIcon ?? 'no icon').slice(0, 40));
 await tab.click();
 const pf = page.frameLocator('iframe[title="Hello Page"]');
 await pf.locator('#ping').click();
@@ -285,6 +299,8 @@ await page.getByRole('tab', { name: 'Prepare' }).click();
 await page.keyboard.press('Control+k');
 await page.keyboard.type('Hello Page');
 await page.getByRole('option', { name: /Hello Page/ }).first().waitFor();
+const paletteIcon = await page.getByRole('option', { name: /Hello Page/ }).first().locator('img').getAttribute('src').catch(() => null);
+check('the palette entry shows the same icon', !!paletteIcon && paletteIcon === tabIcon);
 await page.keyboard.press('Enter');
 await confirmPluginRun();
 await page.getByTestId('plugin-page-Hello Page').waitFor();
@@ -294,6 +310,35 @@ const tabSel = await page.getByRole('tab', { name: 'Hello Page' }).getAttribute(
 check('the palette opens the page', /Hello Page$/.test(shownPage ?? '') && tabSel === 'true', `active=${JSON.stringify(shownPage)} tab aria-selected=${tabSel}`);
 await page.getByRole('tab', { name: 'Prepare' }).click();
 lap('pages / presets / 3mf done');
+
+// ---- blocking waits: Orca's Preset Update Demo, unmodified (queue.Queue.get() fed by UI callbacks) ----
+const upd = readFileSync(join(FIX, 'orca_preset_update_demo.py'));
+check('Preset Update Demo installs', (await install('orca_preset_update_demo.py', upd)).startsWith('loaded:script/Preset editor demo'));
+await page.evaluate(async () => (await import('/slicer/src/presets/store.ts')).currentPresets.value.revertAll('process'));
+const updRun = page.evaluate(async () => {
+  const st = await import('/slicer/src/plugins/manager/store.ts');
+  const c = await st.runScriptCapability({ pluginKey: 'orca_preset_update_demo', type: 'script', name: 'Preset editor demo' });
+  return c.error ? `ERROR ${c.error}` : `${c.result?.status}: ${c.result?.message}`;
+});
+const ed = page.frameLocator('iframe[title="Preset editor"]');
+// on_message('state') runs while execute() waits in commands.get(): the list fills
+await ed.locator('#rows [data-key="wall_loops"]').waitFor({ timeout: 60000 });
+check('the editor window lists the process preset (on_message while execute() blocks in Queue.get)', true);
+await ed.locator('#search').fill('wall_loops');
+await ed.locator('#rows [data-key="wall_loops"]').click();
+await ed.locator('#value').fill('5');
+await ed.locator('#apply').click();
+await ed.locator('#status').getByText(/^Set wall_loops on .+\. Changes remain unsaved\./).waitFor({ timeout: 60000 });
+const wl = await page.evaluate(async () => (await import('/slicer/src/presets/store.ts')).currentPresets.value.value('process', 'wall_loops'));
+const listed = await ed.locator('#rows [data-key="wall_loops"] .val').innerText();
+check('Apply → the blocked execute() gets the command, commits through begin_update(), posts the result', wl === '5' && listed === '5', `wall_loops=${wl}, listed ${listed}`);
+await shot('2b-preset-editor');
+await ed.locator('#close').click();
+const updOut = await Promise.race([updRun, new Promise((r) => setTimeout(() => r('(still running after 60 s)'), 60000))]);
+check('Close → on_close enqueues "close" and execute() returns', updOut === 'Success: Preset editor closed.', updOut);
+check('the editor window is gone', await page.locator('iframe[title="Preset editor"]').count() === 0);
+await page.evaluate(async () => (await import('/slicer/src/presets/store.ts')).currentPresets.value.revertAll('process'));
+lap('preset update demo done');
 
 // ---- settings: picker, manifest, missing-plugin gate, Configure ----
 const inset = readFileSync(join(FIX, 'orca_inset_plugin_any.py'));

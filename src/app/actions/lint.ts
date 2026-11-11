@@ -11,9 +11,9 @@ export const INTENTIONAL_OVERLAPS = new Set([
   // Esc: close the shape palette > close the open tool > cancel a running slice > close a paint tool
   // > cancel lay-on-face picking > clear selection.
   ...pairs(['tool.palette.close', 'tool.close', 'slice.cancel', 'paint.close', 'object.lay-on-face.cancel', 'edit.select-none']),
-  // Design view (src/design): cancel a running slice > cancel a long rebuild > stop picking a reference
-  // > close the open feature card > clear the design selection.
-  ...pairs(['slice.cancel', 'design.cancel', 'design.pick.cancel', 'design.card.cancel', 'design.sketch.plane-cancel', 'design.select-none']),
+  // Design view (src/design): close the right-click offer menu > cancel a running slice > cancel a long
+  // rebuild > stop picking a reference > close the open feature card > clear the design selection.
+  ...pairs(['design.offer.close', 'slice.cancel', 'design.cancel', 'design.pick.cancel', 'design.card.cancel', 'design.sketch.plane-cancel', 'design.select-none']),
   // Sketcher (scope 'sketch'): a running slice first, then Orca's Esc ladder inside the sketch.
   'slice.cancel|design.sketch.escape',
   // F2 in the Design view: rename the selected feature, else the picked body.

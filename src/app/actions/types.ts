@@ -37,4 +37,6 @@ export interface Action extends ActionBase<AppContext, ActionCategory, ActionSco
   paletteHidden?: boolean;
   /** Visual tone on the toolbar. */
   tone?: 'default' | 'danger';
+  /** An image (URL / data URL) shown instead of `icon` in the command palette (a plugin page's get_icon()). */
+  iconSrc?: string;
 }

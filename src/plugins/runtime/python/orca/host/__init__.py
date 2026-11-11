@@ -508,6 +508,9 @@ class PresetCollection:
         return self._presets[index]
 
     def find_preset(self, name):
+        # PresetCollection::find_preset (real=false): the selected preset comes back as its edited copy.
+        if name == self._d["selected"] and self._find(name) is not None:
+            return self.get_edited_preset()
         return self._find(name)
 
     def preset_names(self):

@@ -27,10 +27,11 @@ const views = computed(() => [
   { value: 'prepare', label: 'Prepare', icon: 'i-lucide-box' },
   { value: 'preview', label: 'Preview', icon: 'i-lucide-layers' },
   // Orca 2.5 plugin pages (Pages capabilities), beside Prepare / Preview.
-  ...pluginPages.value.slice(0, VISIBLE_PAGES).map((t) => ({ value: `page:${t.key}`, label: t.name, icon: 'i-lucide-panels-top-left' })),
+  // A page's get_icon() image replaces the generic page icon (Orca: the tab's 20 px bitmap).
+  ...pluginPages.value.slice(0, VISIBLE_PAGES).map((t) => ({ value: `page:${t.key}`, label: t.name, icon: t.iconSrc ? undefined : 'i-lucide-panels-top-left', iconSrc: t.iconSrc })),
 ]);
 const morePages = computed(() => [pluginPages.value.slice(VISIBLE_PAGES).map((t) => ({
-  label: t.name, icon: 'i-lucide-panels-top-left', onSelect: () => { activePluginPage.value = t.key; },
+  label: t.name, icon: t.iconSrc ? undefined : 'i-lucide-panels-top-left', iconSrc: t.iconSrc, onSelect: () => { activePluginPage.value = t.key; },
 }))]);
 // Narrow screens: icon-only view switch.
 const viewItems = computed(() => (phone.value ? views.value.map((v) => ({ ...v, label: '' , 'aria-label': v.label })) : views.value));
@@ -84,8 +85,17 @@ function onName(e: Event) {
     <div class="top__center">
       <!-- Manual activation: focus coming back to a tab (closing the palette, a dialog) must not switch views. -->
       <UTabs v-model="view" :items="viewItems" :content="false" size="sm" variant="pill" color="neutral" activation-mode="manual"
-             :ui="{ list: 'bg-elevated/60 p-0.5', indicator: 'bg-accented', trigger: `${phone ? 'px-3' : compact ? 'px-3' : 'px-5'} data-[state=active]:text-highlighted` }" aria-label="View" />
+             :ui="{ list: 'bg-elevated/60 p-0.5', indicator: 'bg-accented', trigger: `${phone ? 'px-3' : compact ? 'px-3' : 'px-5'} data-[state=active]:text-highlighted` }" aria-label="View">
+        <template #leading="{ item, ui: u }">
+          <img v-if="item.iconSrc" :src="item.iconSrc" alt="" class="page-icon" data-testid="plugin-page-icon">
+          <UIcon v-else-if="item.icon" :name="item.icon" :class="u.leadingIcon()" />
+        </template>
+      </UTabs>
       <UDropdownMenu v-if="morePages[0].length" :items="morePages">
+        <template #item-leading="{ item }">
+          <img v-if="item.iconSrc" :src="item.iconSrc" alt="" class="page-icon">
+          <UIcon v-else-if="item.icon" :name="item.icon" class="size-5 shrink-0" />
+        </template>
         <UButton icon="i-lucide-chevron-down" color="neutral" variant="ghost" size="sm" aria-label="More plugin pages" />
       </UDropdownMenu>
     </div>
@@ -114,6 +124,8 @@ function onName(e: Event) {
 </template>
 
 <style scoped>
+/* A plugin page's own icon: 20 px high like Orca's tab bitmap. */
+.page-icon { height: 20px; width: auto; max-width: 40px; flex: none; object-fit: contain; }
 .top {
   height: var(--topbar-h); flex: none;
   /* The view switch stays centred while the left side fits; when it doesn't (menus at ~1100–1400 px), the

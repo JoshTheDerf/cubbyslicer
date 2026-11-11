@@ -83,6 +83,8 @@ export interface LoadedCapability extends CapabilityId {
   supported: boolean;
   textureFiles?: string[];
   textureError?: string;
+  /** A Pages capability's get_icon() image (SVG or PNG, base64), when it resolved to a file. */
+  icon?: { mime: string; data: string };
 }
 
 export interface ExecutionResult {
@@ -112,6 +114,8 @@ export interface RuntimeInit {
   hookChannel: SharedArrayBuffer | null;
   /** Pyodide interrupt buffer (SIGINT = 2), null without isolation. */
   interrupt: SharedArrayBuffer | null;
+  /** CallbackChannel (UI callbacks reach a runtime blocked in a wait); null without isolation. */
+  callbackChannel: SharedArrayBuffer | null;
   appInfo: Record<string, unknown>;
 }
 
@@ -131,6 +135,8 @@ export type ToRuntime =
   | { t: 'postProcess'; reqId: number; caps: { id: CapabilityId; config: unknown; configVersion: string }[]; gcode: ArrayBuffer; host: string; outputName: string; fullConfig: Record<string, string> }
   /** A UI callback (page message, submit, close, notification click) for a window / panel the runtime created. */
   | { t: 'uiEvent'; handle: string; kind: 'message' | 'submit' | 'close' | 'click' | 'cancel'; data?: unknown }
+  /** UI callbacks are waiting in the CallbackChannel (drained here when the runtime is idle). */
+  | { t: 'callbacks' }
   /** The answer to a load-time permission request. */
   | { t: 'permissionAnswer'; reqId: number; granted: boolean; grants?: PluginPermissions }
   /** A HookChannel to one engine worker (slicing-pipeline hooks); the port carries its hookBegin pings. */
@@ -153,6 +159,8 @@ export type FromRuntime =
   | { t: 'hostCall'; callId: number; method: HostMethod; pluginKey: string; capability: string; args: unknown }
   /** The runtime took a HostChannel chunk and wants the next one. */
   | { t: 'hostChunk'; callId: number }
+  /** The runtime emptied the CallbackChannel slot; the next batch may be written. */
+  | { t: 'callbacksTaken' }
   /** Fire-and-forget host requests (also work without cross-origin isolation). */
   | { t: 'hostPost'; method: HostMethod; pluginKey: string; capability: string; args: unknown }
   | { t: 'reply'; reqId: number; ok: boolean; value?: unknown; error?: string; gcode?: ArrayBuffer }

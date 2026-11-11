@@ -155,3 +155,29 @@ describe('dispatchActionKey', () => {
     expect(ctx.calls).toEqual(['align(0,min)', 'distribute(1)', 'orderObjects(height,false)']);
   });
 });
+
+describe('Design view Esc', () => {
+  it('closes the right-click offer menu before clearing the selection', async () => {
+    const { activeView } = await import('../state');
+    const { designUi } = await import('../../design/state');
+    const prev = activeView.value;
+    activeView.value = 'design';
+    setActionScope('design');
+    try {
+      designUi.pick = { kind: 'body', body: 0 };
+      let closed = 0;
+      designUi.offerClose = () => { closed++; designUi.offerClose = null; };
+      const ctx = fixtureContext();
+      expect(await dispatchActionKey(key('Escape'), ACTIONS, ctx, { textInputFocused: false })).toBe(true);
+      expect(closed).toBe(1);
+      expect(designUi.pick).toEqual({ kind: 'body', body: 0 });
+      // menu closed: the next Esc clears the selection as before
+      await dispatchActionKey(key('Escape'), ACTIONS, ctx, { textInputFocused: false });
+      expect(designUi.pick).toBeNull();
+    } finally {
+      activeView.value = prev;
+      designUi.pick = null;
+      designUi.offerClose = null;
+    }
+  });
+});

@@ -7,6 +7,7 @@ and the permission audit hook (PluginAuditManager.cpp), adapted to one
 browser thread. Driven by the runtime worker (prw.worker.ts) through `api`.
 """
 import asyncio
+import base64
 import importlib
 import inspect
 import json
@@ -19,6 +20,8 @@ import zipfile
 import orca
 from orca import _bridge, _core
 from orca.host import ui as _ui
+
+import _cubby_wait
 
 try:
     import _cubby_host as _host
@@ -43,7 +46,7 @@ def _exc_text(e):
 # ---- loaded plugins ---------------------------------------------------------------------
 
 class _Cap:
-    __slots__ = ("inst", "type", "name", "enabled", "has_config_ui", "loaded", "textures", "texture_error")
+    __slots__ = ("inst", "type", "name", "enabled", "has_config_ui", "loaded", "textures", "texture_error", "icon")
 
     def __init__(self, inst, ctype, name):
         self.inst, self.type, self.name = inst, ctype, name
@@ -52,6 +55,7 @@ class _Cap:
         self.loaded = False
         self.textures = None
         self.texture_error = None
+        self.icon = None
 
 
 class _Plugin:
@@ -108,6 +112,8 @@ def _caps_info(p):
             d["textureFiles"] = c.textures
         if c.texture_error:
             d["textureError"] = c.texture_error
+        if c.icon:
+            d["icon"] = c.icon
         out.append(d)
     return out
 
@@ -259,7 +265,40 @@ async def load(desc_json, enable_json, grants_json, skip_deps):
         except BaseException as e:
             unload(key)
             raise RuntimeError(f"Plugin on_load failed: {_exc_text(e)}") from e
+    for c in p.caps:
+        if c.type == "pages":
+            c.icon = _page_icon(key, c)
     return json.dumps(_caps_info(p))
+
+
+_ICON_MAX = 512 * 1024
+
+
+def _page_icon(key, c):
+    """PluginPages::create_page: get_icon() names an SVG or PNG (".svg" / ".png" optional), an existing
+    file or an image of Orca's resources/images; the SVG wins over a PNG of the same name. Failures are
+    logged and leave the tab without the icon. Returns {"mime", "data" (base64)} or None."""
+    try:
+        with _scope(key, c.type, c.name):
+            icon = c.inst.get_icon()
+    except BaseException as e:
+        _log("error", f"Failed to get icon for plugin {key}: {_exc_text(e)}", key)
+        return None
+    if not icon or not isinstance(icon, str):
+        return None
+    base, ext = os.path.splitext(icon)
+    if ext not in (".svg", ".png"):
+        base = icon
+    for suffix, mime in ((".svg", "image/svg+xml"), (".png", "image/png")):
+        for path in (base + suffix, os.path.join(RESOURCES_DIR, "images", base + suffix)):
+            try:
+                if os.path.isfile(path) and os.path.getsize(path) <= _ICON_MAX:
+                    with open(path, "rb") as fh:
+                        return {"mime": mime, "data": base64.b64encode(fh.read()).decode("ascii")}
+            except OSError:
+                pass
+    _log("error", f"Failed to load icon for plugin {key}: Could not load bitmap: {base}", key)
+    return None
 
 
 def _drop_paths(p):
@@ -708,11 +747,21 @@ def _audit(event, args):
         _in_audit = False
 
 
+def _callback(msg):
+    """One CallbackChannel message delivered while plugin code waits (_cubby_wait)."""
+    data = "" if msg.get("data") is None else json.dumps(msg["data"])
+    if msg.get("t") == "uiEvent":
+        ui_event(int(msg["handle"]), msg["kind"], data)
+    elif msg.get("t") == "pageMessage":
+        page_message(msg["id"]["pluginKey"], msg["id"]["name"], data)
+
+
 def install():
     os.makedirs(PLUGINS_DIR + "/plugin_data", exist_ok=True)
     os.makedirs(RESOURCES_DIR, exist_ok=True)
     os.makedirs("/orca/tmp", exist_ok=True)
     sys.addaudithook(_audit)
+    _cubby_wait.install(_callback)
 
 
 # ---- entry points for the worker: errors come back as data, not exceptions ------------------

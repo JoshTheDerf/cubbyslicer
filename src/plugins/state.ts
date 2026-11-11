@@ -13,7 +13,11 @@ export function openPluginsDialog(): void { openDialog('plugins'); }
 export const pluginsActive = ref(false);
 
 /** A Pages capability shown as a main-window tab beside Prepare / Preview (Orca: beside Prepare / Preview / Device). */
-export interface PluginPageTab { key: string; pluginKey: string; name: string; pluginName: string }
+export interface PluginPageTab {
+  key: string; pluginKey: string; name: string; pluginName: string;
+  /** The page's get_icon() as a data URL (tab and palette entry; none: the generic page icon). */
+  iconSrc?: string;
+}
 /** Tabs of the loaded, enabled Pages capabilities (kept by src/plugins/host/pages.ts). */
 export const pluginPages = shallowRef<PluginPageTab[]>([]);
 /** The page shown in the centre area instead of Prepare / Preview (null = none). */

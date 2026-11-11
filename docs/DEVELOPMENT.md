@@ -203,7 +203,8 @@ node scripts/dev/screenshots.mjs http://localhost:5399/slicer/    # docs/screens
 node scripts/dev/e2e-bridge.mjs http://localhost:5393/slicer/     # MCP bridge tools through a real MCP client (needs ../cubby-mcp built)
 node scripts/dev/e2e-plugins.mjs http://localhost:5421/slicer/    # Orca Python plugins: installs Orca's unmodified sample plugins (scripts/dev/fixtures/orca-plugins/)
 node scripts/dev/e2e-plugins-pipeline.mjs http://localhost:5421/slicer/   # slicing-pipeline hooks: Orca's slicing samples on both engine builds, G-code checked
-node scripts/dev/e2e-plugins-phase3.mjs http://localhost:5421/slicer/     # preset writes, plugin pages, export_3mf_copy, settings picker / gate, .whl, storage
+node scripts/dev/e2e-plugins-phase3.mjs http://localhost:5421/slicer/     # preset writes, plugin pages (+ get_icon), export_3mf_copy, settings picker / gate, .whl, storage,
+                                                                          # blocking waits fed by UI callbacks (Orca's Preset Update Demo)
 node scripts/dev/e2e-orca25.mjs http://localhost:5461/slicer/     # Orca 2.5 on the real engine: variants (H2D/H2C), mixed filaments, paint 17+, precise seam, prime tower
                                                                   # (placement, drag, relocation, arrange), purge modes, IDEX/IQEX/belt (+ belt purge prism), every
                                                                   # calibration, 3MF through Orca's loader (THREADS=1: single-threaded)

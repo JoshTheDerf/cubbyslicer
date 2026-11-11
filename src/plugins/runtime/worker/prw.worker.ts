@@ -10,7 +10,7 @@
  * Nothing of a plugin runs before that.
  */
 import type { CapabilityId, FromRuntime, PluginPermissions, RuntimeInit, ToRuntime } from '../../types';
-import { HostChannelClient } from '../hostChannel';
+import { CallbackChannelClient, HostChannelClient } from '../hostChannel';
 import { installNetGate } from './netGate';
 import { lockDownGlobals } from './lockdown';
 import { attachHookChannel, detachHookChannel, hookCancelled, hookQuery, setPipelineRunner } from './hookServer';
@@ -25,6 +25,7 @@ let port: MessagePort | null = null;
 let py: Py = null;
 let runtime: Py = null;
 let channel: HostChannelClient | null = null;
+let callbacks: CallbackChannelClient | null = null;
 let trusted = 0;
 let opfsPluginData: FileSystemDirectoryHandle | null = null;
 const grants = new Map<string, PluginPermissions>();
@@ -87,6 +88,15 @@ const hostModule = {
     return hookQuery(json, b);
   },
   hookCancelled() { return hookCancelled(); },
+  /**
+   * For a plugin blocked in a wait (_cubby_wait.py): up to `ms` for UI callbacks, returned as a JSON
+   * list for Python to dispatch ('' = none yet). null = no CallbackChannel (not cross-origin isolated).
+   */
+  waitCallbacks(ms: number): string | null {
+    if (!callbacks) return null;
+    const batch = callbacks.wait(ms);
+    return batch ? JSON.stringify(batch) : '';
+  },
 };
 
 async function writeFile(path: string, data: Uint8Array): Promise<void> {
@@ -100,6 +110,7 @@ async function boot(init: RuntimeInit): Promise<void> {
   pyodideBase = new URL(init.pyodideBase, scope.location.href).href;
   isolated = !!init.hostChannel;
   if (init.hostChannel) channel = new HostChannelClient(init.hostChannel, (m) => port!.postMessage(m));
+  if (init.callbackChannel) callbacks = new CallbackChannelClient(init.callbackChannel, () => send({ t: 'callbacksTaken' }));
   // Capture the OPFS plugin_data folder before navigator.storage is removed.
   try {
     const root = await navigator.storage.getDirectory();
@@ -262,6 +273,13 @@ async function handle(msg: ToRuntime): Promise<void> {
       permissionWaiters.delete(msg.reqId);
       if (w && msg.grants) grants.set(w.key, msg.grants);
       w?.resolve(JSON.stringify({ granted: msg.granted, grants: msg.grants ?? null }));
+      break;
+    }
+    case 'callbacks': {
+      // Idle runtime: deliver what the CallbackChannel holds (a blocked one took it from its wait).
+      const batch = callbacks?.take();
+      // handle() dispatches synchronously before its first await, so starting them all keeps the order.
+      await Promise.all((batch ?? []).map((m) => handle(m as ToRuntime)));
       break;
     }
     case 'configs': runtime.set_configs(JSON.stringify(msg.entries)); break;

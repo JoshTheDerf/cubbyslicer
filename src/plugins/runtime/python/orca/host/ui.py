@@ -4,7 +4,8 @@ Windows and dock panels are sandboxed iframes with the same window.orca bridge
 as OrcaSlicer (postMessage / submit / close / onMessage). A dock panel opens as
 a floating panel (CubbySlicer has no dock area for plugins yet). Callbacks
 (on_message, on_submit, on_close, on_click) run on the plugin runtime's event
-loop between other plugin code, not concurrently with it.
+loop between other plugin code, not concurrently with it, and also while plugin code
+waits in queue.Queue.get(), Event.wait(), time.sleep() and the like (_cubby_wait.py).
 """
 import itertools
 

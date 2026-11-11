@@ -41,6 +41,8 @@ export interface PaletteItem {
   /** Search-only alias when the title differs from the descriptive name (Orca `full_label`). */
   fullLabel?: string;
   icon?: string;
+  /** An image shown instead of `icon` (Action.iconSrc). */
+  iconSrc?: string;
   kbds?: string[];
   /** Search-only aliases (app extra). */
   keywords: string;
@@ -110,6 +112,7 @@ export function projectPalette(actions: Action[], ctx: AppContext, platform?: Pl
       source: plugin,
       kind: plugin !== undefined ? 'plugin' : 'command',
       icon: a.dynamicIcon?.(ctx) ?? a.icon,
+      iconSrc: a.iconSrc,
       kbds: kbds.length ? kbds : undefined,
       keywords: (a.aliases ?? []).join(' '),
       action: a,

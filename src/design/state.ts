@@ -48,6 +48,8 @@ export const designUi = reactive({
   phoneSection: 'features' as 'features' | 'bodies' | 'variables',
   /** Orca's Design section view: a horizontal cut at `z` (bed mm), keeping the lower half or, `upper`, the upper one. */
   section: null as null | { z: number; upper: boolean },
+  /** Closes the right-click offer menu while it is open (Esc closes it before anything else). */
+  offerClose: null as null | (() => void),
 });
 
 /** The feature whose parameters the editor shows (the last selected row). */

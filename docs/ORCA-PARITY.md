@@ -31,8 +31,7 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Internal threads** follow Orca's behaviour, including its failure when the bore equals the thread's minor diameter.
 
 ### Plugins
-- Blocking waits that keep UI callbacks running (Orca's Preset Update Demo).
-- Page tab icons; real dock-panel docking (panels float).
+- Real dock-panel docking (panels float).
 - Resource-texture plugins have nothing to feed until Texture Displacement exists.
 - The plugin worker runs on the app's origin with dangerous globals removed. Moving it to its own origin is a deployment change that has not been made.
 

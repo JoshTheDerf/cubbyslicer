@@ -5,7 +5,7 @@
  * Fillet / chamfer / draft, Repeat, Transform, Reference, Modify). Each entry opens its
  * feature card prefilled from the pick.
  */
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { DropdownMenuItem } from '@nuxt/ui';
 import { offerItems, type OfferItem } from '../create';
 import { deleteBody, selectFeature } from '../commands';
@@ -63,9 +63,18 @@ onMounted(async () => {
     editFeature: (i) => selectFeature(i),
   }));
   open.value = true;
+  designUi.offerClose = close;
 });
 
-function onOpen(v: boolean) { open.value = v; if (!v) emit('close'); }
+// Esc goes through the action registry (design.offer.close), which would otherwise clear the selection.
+function close() { onOpen(false); }
+function onOpen(v: boolean) {
+  open.value = v;
+  if (v) return;
+  if (designUi.offerClose === close) designUi.offerClose = null;
+  emit('close');
+}
+onBeforeUnmount(() => { if (designUi.offerClose === close) designUi.offerClose = null; });
 </script>
 
 <template>
