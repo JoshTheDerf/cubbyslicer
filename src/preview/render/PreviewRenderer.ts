@@ -18,7 +18,8 @@ import { buildBed, disposeObject3D as disposeObject } from '../../viewport/bed';
 import { buildCarriageBoxes, headMatrix } from '../../viewport/imexLayer';
 import type { CarriageBox } from '../../plates/imex';
 import { readViewportTheme } from '../../viewport/tokens';
-import { GcodeChunks, createSharedUniforms, DEFAULT_CHUNK_SIZE } from './chunks';
+import { GcodeChunks, createSharedUniforms, DEFAULT_CHUNK_SIZE, TRANSLUCENT_LAYER } from './chunks';
+import { OitTargets } from './oit';
 import type { SharedUniforms } from './chunks';
 import { RAMP, TOOL_SLOTS, schemeMeta, schemeRange, toolPrimary } from './colors';
 import type { ColorScheme, ToolColour, ValueRange } from './colors';
@@ -174,6 +175,7 @@ export class PreviewRenderer {
     this.controls.dispose();
     this.setImex(null);
     this.clearData();
+    this.disposeOit();
     if (this.bedGroup) { disposeObject(this.bedGroup); this.bedGroup = null; }
     disposeObject(this.toolhead);
     const canvas = this.renderer.domElement;
@@ -225,9 +227,86 @@ export class PreviewRenderer {
       this.camera.updateProjectionMatrix();
     }
     this.uniforms.uNear.value = this.camera.near;
+    this.uniforms.uFar.value = this.camera.far;
     this.syncCopies();
-    this.renderer.render(this.scene, this.camera);
+    this.drawScene(this.camera);
     for (const fn of this.afterRender) fn();
+  }
+
+  /** Order independent transparency (oit.ts); null until a translucent filament shows, or when the context can't. */
+  private oit: OitTargets | null = null;
+  private oitUnsupported = false;
+  private oitSize = new THREE.Vector2();
+
+  /** Whether translucent filaments draw order independent (dev hooks / e2e). */
+  get oitActive(): boolean { return !!this.oit && !this.oitUnsupported && !!this.chunks?.translucentPass; }
+
+  /**
+   * Draw the scene with `cam`. While a translucent filament shows, Orca's order independent passes
+   * (oit.ts) draw the translucent pass; otherwise (and without float targets) it is one render, the
+   * translucent meshes blended last.
+   */
+  private drawScene(cam: THREE.Camera): void {
+    const r = this.renderer, chunks = this.chunks, all = cam.layers.mask | (1 << TRANSLUCENT_LAYER);
+    const oit = chunks?.translucentPass && !this.oitUnsupported ? (this.oit ??= OitTargets.create(r)) : null;
+    if (chunks?.translucentPass && !oit) this.oitUnsupported = true;
+    r.getDrawingBufferSize(this.oitSize);
+    if (!chunks || !oit || !oit.ready(r, this.oitSize.x, this.oitSize.y)) {
+      if (oit) { this.oitUnsupported = true; this.disposeOit(); }
+      chunks?.setOitPass(0);
+      cam.layers.enable(TRANSLUCENT_LAYER);
+      r.render(this.scene, cam);
+      return;
+    }
+    const u = this.uniforms, prevMask = cam.layers.mask;
+    // The weights fall with the depth across the extrusions (Orca: the extrusions' box in view space).
+    cam.updateMatrixWorld();
+    const box = this.bounds(), v = new THREE.Vector3();
+    let zn = Infinity, zf = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).applyMatrix4(cam.matrixWorldInverse);
+      zn = Math.min(zn, -v.z); zf = Math.max(zf, -v.z);
+    }
+    u.uOitDepthRange.value.set(zn, Math.max(zf, zn + 1));
+    try {
+      // The scene without the translucent pass, on screen as ever; then its depth.
+      cam.layers.disable(TRANSLUCENT_LAYER);
+      r.render(this.scene, cam);
+      r.setRenderTarget(oit.opaque);
+      r.render(this.scene, cam);
+      // The nearest translucent surface.
+      cam.layers.set(TRANSLUCENT_LAYER);
+      u.uOpaqueDepth.value = oit.opaque.depthTexture;
+      u.uFrontDepth.value = null;
+      chunks.setOitPass(1);
+      r.setRenderTarget(oit.front);
+      r.render(this.scene, cam);
+      // That surface apart, the others weighted and summed.
+      u.uFrontDepth.value = oit.front.depthTexture;
+      chunks.setOitPass(2);
+      const clear = r.getClearColor(new THREE.Color()), alpha = r.getClearAlpha();
+      r.setClearColor(0x000000, 0);
+      r.setRenderTarget(oit.accum);
+      r.render(this.scene, cam);
+      r.setClearColor(clear, alpha);
+      // Composited over the scene.
+      r.setRenderTarget(null);
+      const autoClear = r.autoClear;
+      r.autoClear = false;
+      r.render(oit.composite, oit.compositeCamera);
+      r.autoClear = autoClear;
+    } finally {
+      r.setRenderTarget(null);
+      chunks.setOitPass(0);
+      u.uOpaqueDepth.value = null;
+      u.uFrontDepth.value = null;
+      cam.layers.mask = prevMask | all;
+    }
+  }
+
+  private disposeOit(): void {
+    this.oit?.dispose();
+    this.oit = null;
   }
 
   private afterRender = new Set<() => void>();
@@ -260,6 +339,7 @@ export class PreviewRenderer {
       this.chunks = null;
     }
     this.data = null;
+    this.disposeOit();
     this.buildResolve?.();
     this.buildResolve = null;
   }
@@ -281,6 +361,7 @@ export class PreviewRenderer {
     chunks.setTravelVisible(this.travelOn);
     chunks.setMarkersVisible(this.markersOn);
     chunks.setTranslucentPass(this.translucentOn && this.anyTranslucent && this.scheme === 'tool');
+    chunks.setOpaquePass(this.opaquePass());
     chunks.setRange(this.uniforms.uRangeMin.value, this.uniforms.uRangeMax.value);
     this.applyModelMatrix();
     this.scene.add(chunks.group);
@@ -374,8 +455,18 @@ export class PreviewRenderer {
     this.syncTranslucent();
   }
 
+  /** Whether any extruding filament draws opaque: with none, the opaque pass of every chunk would draw nothing. */
+  private opaquePass(): boolean {
+    if (!this.chunks?.translucentPass || !this.data) return true;
+    const c = this.uniforms.uToolColor.value;
+    return this.data.stats.toolsUsed.some((t) => c[t & 31].w >= 0.999);
+  }
+
   private syncTranslucent(): void {
     this.chunks?.setTranslucentPass(this.translucentOn && this.anyTranslucent && this.scheme === 'tool');
+    this.chunks?.setOpaquePass(this.opaquePass());
+    // The order independent targets live only while a translucent filament shows.
+    if (!this.chunks?.translucentPass) this.disposeOit();
     this.requestRender();
   }
 
@@ -654,7 +745,8 @@ export class PreviewRenderer {
       u.uPointPx.value = 7;
       u.uMinPx.value = 0.55;
       u.uNear.value = cam.near;
-      r.render(this.scene, cam);
+      u.uFar.value = cam.far;
+      this.drawScene(cam);
       // Same task as the render: the drawing buffer is still valid.
       out.getContext('2d')!.drawImage(r.domElement, 0, 0, w, h);
     } finally {
@@ -664,6 +756,7 @@ export class PreviewRenderer {
       u.uPointPx.value = prev.point;
       u.uMinPx.value = prev.min;
       u.uNear.value = prev.near;
+      u.uFar.value = this.camera.far;
       this.requestRender();
     }
     return new Promise((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error('The screenshot could not be encoded.'))), 'image/png'));

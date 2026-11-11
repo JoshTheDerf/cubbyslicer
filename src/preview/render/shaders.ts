@@ -171,6 +171,89 @@ void main() {
 }
 `;
 
+/**
+ * Translucent filaments (pass 1 materials only). Orca 2.5's order independent transparency
+ * (libvgcode `ViewerImpl::render_translucent_segments`, Shaders.hpp `Segments_Fragment_Shader`):
+ * uOitPass 1 keeps the depth of the nearest translucent surface (the depth buffer of oit.ts's
+ * front target), 2 sets that surface apart (outFront) and adds up the others weighted by depth
+ * (outColor, McGuire and Bavoil 2013) with their coverage (outReveal, −log(1 − α)); oit.ts
+ * composites them over the scene. Both discard what the opaque scene hides. uOitPass 0 is the
+ * plain blended pass (no float colour targets: Orca's OpenGL ES path).
+ */
+export const EXTRUSION_FRAG_CLEAR = /* glsl */ `
+layout(location = 0) out highp vec4 outColor;
+layout(location = 1) out highp vec4 outReveal;
+layout(location = 2) out highp vec4 outFront;
+uniform int uOitPass;
+uniform highp sampler2D uOpaqueDepth;
+uniform highp sampler2D uFrontDepth;
+uniform vec2 uOitDepthRange;  // view depth of the extrusions' box, near / far
+uniform float uNear;
+uniform float uFar;
+in vec4 vQ;
+flat in vec4 vCap;
+flat in vec2 vT;
+flat in vec3 vColor;
+flat in float vAlpha;
+
+void main() {
+  vec2 q = vQ.xy / vQ.w;
+  float L = vCap.z;
+  vec2 rel;
+  float r;
+  if (q.x < 0.0) { rel = q; r = vCap.x; }
+  else if (q.x > L) { rel = vec2(q.x - L, q.y); r = vCap.y; }
+  else { r = mix(vCap.x, vCap.y, L > 0.0 ? q.x / L : 0.0); rel = vec2(0.0, q.y); }
+  float d2 = dot(rel, rel) / (r * r);
+  if (d2 > 1.0) discard;
+  outReveal = vec4(0.0);
+  outFront = vec4(0.0);
+  ivec2 px = ivec2(gl_FragCoord.xy);
+  // The opaque scene hides what lies behind it.
+  if (uOitPass != 0 && gl_FragCoord.z > texelFetch(uOpaqueDepth, px, 0).r) discard;
+  if (uOitPass == 1) { outColor = vec4(0.0); return; }
+  vec2 nd = rel / r;
+  if (L > 0.5 * r) nd.x = 0.0;
+  float nz2 = max(1.0 - dot(nd, nd), 0.0);
+  vec2 n2 = vec2(-vT.y, vT.x);
+  vec3 N = normalize(vec3(vT * nd.x + n2 * nd.y, sqrt(nz2)));
+  vec3 L1 = normalize(vec3(-0.35, 0.55, 0.75));
+  float diff = max(dot(N, L1), 0.0);
+  vec3 H = normalize(L1 + vec3(0.0, 0.0, 1.0));
+  float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.18;
+  vec3 col = vColor * (0.28 + 0.52 * diff + 0.28 * N.z) + vec3(spec);
+  if (uOitPass == 0) { outColor = vec4(col, vAlpha); return; }
+  // Premultiplied; the nearest surface apart, the others weighted by their depth across the print.
+  vec4 c = vec4(clamp(col, 0.0, 1.0) * vAlpha, vAlpha);
+  if (gl_FragCoord.z <= texelFetch(uFrontDepth, px, 0).r) { outFront = c; outColor = vec4(0.0); return; }
+  float zv = 2.0 * uNear * uFar / (uFar + uNear - (2.0 * gl_FragCoord.z - 1.0) * (uFar - uNear));
+  float z = clamp((zv - uOitDepthRange.x) / (uOitDepthRange.y - uOitDepthRange.x), 0.0, 1.0);
+  outColor = c * vAlpha * max(pow(1.0 - z, 3.0), 1e-2);
+  outReveal = vec4(-log(1.0 - min(vAlpha, 0.999)));
+}
+`;
+
+/** Orca's `Translucent_Composite_Fragment_Shader`: the nearest translucent surface over the weighted mean of the others. */
+export const OIT_COMPOSITE_VERT = /* glsl */ `
+void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }
+`;
+export const OIT_COMPOSITE_FRAG = /* glsl */ `
+layout(location = 0) out highp vec4 outColor;
+uniform highp sampler2D uAccum;
+uniform highp sampler2D uReveal;
+uniform highp sampler2D uFront;
+void main() {
+  ivec2 px = ivec2(gl_FragCoord.xy);
+  vec4 front = texelFetch(uFront, px, 0);
+  vec4 accum = texelFetch(uAccum, px, 0);
+  if (front.a <= 0.0 && accum.a <= 0.0) discard;
+  float coverage = accum.a > 0.0 ? 1.0 - exp(-texelFetch(uReveal, px, 0).r) : 0.0;
+  vec3 behind = accum.a > 0.0 ? accum.rgb / accum.a * coverage : vec3(0.0);
+  float fa = min(front.a, 1.0);
+  outColor = vec4(front.rgb + (1.0 - fa) * behind, 1.0 - (1.0 - fa) * (1.0 - coverage));
+}
+`;
+
 /** Travel / wipe lines (non-instanced LineSegments, per-vertex segment index). */
 export const LINE_VERT = /* glsl */ `
 ${COMMON}

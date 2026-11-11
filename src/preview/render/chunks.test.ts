@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { GcodeChunks, chunkDrawCount, createSharedUniforms, planChunks } from './chunks';
+import { GcodeChunks, TRANSLUCENT_LAYER, chunkDrawCount, createSharedUniforms, planChunks } from './chunks';
 import { fillValues, rampColor, schemeRange, solidColour, toolColorsFromConfig, toolPrimary, toolSwatch } from './colors';
 import { parseGcode } from '../parser/parse';
 import { Feature } from '../parser/features';
@@ -123,6 +123,30 @@ describe('colour schemes', () => {
     expect(clear.material.uniforms.uPass.value).toBe(1);
     ch.setTranslucentPass(false);
     expect(clear.visible).toBe(false);
+    ch.dispose();
+  });
+  it('order independent passes (Orca 2.5): the translucent pass on its own layer, its GL state per pass; the opaque pass can be left out', () => {
+    const p = parseGcode(enc.encode(prusa));
+    const shared = createSharedUniforms();
+    const ch = new GcodeChunks(p, shared, 1 << 20);
+    while (ch.buildNext());
+    ch.setRange(0, p.segmentCount - 1);
+    ch.setTranslucentPass(true);
+    const opaque = ch.group.children.find((o) => o.name === 'gcode-chunk-0')!;
+    const clear = ch.group.children.find((o) => o.name.endsWith('-translucent')) as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+    expect(clear.layers.mask).toBe(1 << TRANSLUCENT_LAYER);
+    const m = clear.material;
+    ch.setOitPass(1); // nearest translucent depth: depth only
+    expect([shared.uOitPass.value, m.colorWrite, m.depthWrite, m.depthTest, m.blending]).toEqual([1, false, true, true, THREE.NoBlending]);
+    ch.setOitPass(2); // weighted sums: additive, no depth test (the shader tests the opaque depth)
+    expect([shared.uOitPass.value, m.colorWrite, m.depthWrite, m.depthTest, m.blending, m.blendSrc, m.blendDst]).toEqual([2, true, false, false, THREE.CustomBlending, THREE.OneFactor, THREE.OneFactor]);
+    ch.setOitPass(0); // the plain blended pass, as before
+    expect([shared.uOitPass.value, m.colorWrite, m.depthWrite, m.depthTest, m.blending, m.transparent]).toEqual([0, true, false, true, THREE.NormalBlending, true]);
+    expect(opaque.visible).toBe(true);
+    ch.setOpaquePass(false);
+    expect([opaque.visible, clear.visible]).toEqual([false, true]);
+    ch.setOpaquePass(true);
+    expect(opaque.visible).toBe(true);
     ch.dispose();
   });
 });

@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import { Feature, FIRST_NON_EXTRUSION } from '../parser/features';
 import type { ParsedGcode } from '../parser/types';
-import { EXTRUSION_FRAG, EXTRUSION_VERT, LINE_FRAG, LINE_VERT, POINT_FRAG, POINT_VERT } from './shaders';
+import { EXTRUSION_FRAG, EXTRUSION_FRAG_CLEAR, EXTRUSION_VERT, LINE_FRAG, LINE_VERT, POINT_FRAG, POINT_VERT } from './shaders';
 import { TOOL_SLOTS, fillValues } from './colors';
 import type { ColorScheme } from './colors';
 
@@ -60,6 +60,12 @@ export interface SharedUniforms {
   uKindColor: { value: THREE.Color[] };
   uKindVis: { value: Float32Array };
   uPointPx: { value: number };
+  /** Translucent filaments (oit.ts): 0 blended, 1 nearest translucent depth, 2 accumulate. */
+  uOitPass: { value: number };
+  uOpaqueDepth: { value: THREE.Texture | null };
+  uFrontDepth: { value: THREE.Texture | null };
+  uOitDepthRange: { value: THREE.Vector2 };
+  uFar: { value: number };
 }
 
 const lin = (hex: number) => new THREE.Color().setHex(hex, THREE.LinearSRGBColorSpace);
@@ -86,6 +92,11 @@ export function createSharedUniforms(): SharedUniforms {
     uKindColor: { value: [lin(0xcc00cc), lin(0x00cccc), lin(0xe6e6e6)] },
     uKindVis: { value: new Float32Array([0, 0, 0]) },
     uPointPx: { value: 6 },
+    uOitPass: { value: 0 },
+    uOpaqueDepth: { value: null },
+    uFrontDepth: { value: null },
+    uOitDepthRange: { value: new THREE.Vector2(0, 1) },
+    uFar: { value: 5000 },
     // Orca 2.5 section view: drawn where dot(xyz, p) <= w (w huge = off).
     uSection: { value: new THREE.Vector4(0, 0, 1, 1e9) },
   };
@@ -102,12 +113,29 @@ function material(vert: string, frag: string, shared: SharedUniforms, base: numb
 
 /** The extrusion material for one pass: 0 opaque, 1 translucent filaments (blended, no depth writes, drawn last). */
 function extrusionMaterial(shared: SharedUniforms, base: number, pass: 0 | 1): THREE.ShaderMaterial {
-  const m = material(EXTRUSION_VERT, EXTRUSION_FRAG, shared, base, { uPass: { value: pass } });
+  const m = material(EXTRUSION_VERT, pass === 1 ? EXTRUSION_FRAG_CLEAR : EXTRUSION_FRAG, shared, base, { uPass: { value: pass } });
   // Mirrored copies (IDEX/IQEX Mirror carriages) flip the quads' winding: draw both faces.
   m.side = THREE.DoubleSide;
-  if (pass === 1) { m.transparent = true; m.depthWrite = false; }
+  if (pass === 1) oitState(m, 0);
   return m;
 }
+
+/** The translucent materials' GL state for an order independent pass (oit.ts; uniform uOitPass picks the shader's path). */
+function oitState(m: THREE.ShaderMaterial, pass: 0 | 1 | 2): void {
+  m.colorWrite = pass !== 1;
+  m.depthTest = pass !== 2;
+  m.depthWrite = pass === 1;
+  m.transparent = pass !== 1;
+  if (pass === 2) {
+    m.blending = THREE.CustomBlending;
+    m.blendEquation = THREE.AddEquation;
+    m.blendSrc = THREE.OneFactor;
+    m.blendDst = THREE.OneFactor;
+  } else m.blending = pass === 1 ? THREE.NoBlending : THREE.NormalBlending;
+}
+
+/** Layer of the translucent-filament meshes: oit.ts draws them apart from the rest of the scene. */
+export const TRANSLUCENT_LAYER = 1;
 
 // One quad, shared by all chunks (never disposed per chunk).
 let quad: { pos: THREE.BufferAttribute; index: THREE.BufferAttribute } | null = null;
@@ -141,6 +169,7 @@ export class GcodeChunks {
   private travelOn = false;
   private markersOn = false;
   private translucentOn = false;
+  private opaqueOn = true;
   private rangeMin = 0;
   private rangeMax = -1;
 
@@ -219,6 +248,7 @@ export class GcodeChunks {
     m.name = `${c.mesh.name}-translucent`;
     m.frustumCulled = c.mesh.frustumCulled;
     m.renderOrder = 1;
+    m.layers.set(TRANSLUCENT_LAYER);
     c.clear = m;
     this.group.add(m);
     this.applyRangeTo(c);
@@ -231,6 +261,22 @@ export class GcodeChunks {
       if (on) this.ensureClear(c);
       else if (c.clear) c.clear.visible = false;
     }
+  }
+
+  /** Draw the opaque pass (off while every extruding filament is translucent: it would draw nothing). */
+  setOpaquePass(on: boolean): void {
+    if (this.opaqueOn === on) return;
+    this.opaqueOn = on;
+    for (const c of this.chunks) this.applyRangeTo(c);
+  }
+
+  /** Whether the translucent-filament pass draws. */
+  get translucentPass(): boolean { return this.translucentOn; }
+
+  /** Set the translucent materials up for pass `pass` of oit.ts (0: the plain blended pass). */
+  setOitPass(pass: 0 | 1 | 2): void {
+    this.shared.uOitPass.value = pass;
+    for (const c of this.chunks) if (c.clear) oitState(c.clear.material, pass);
   }
 
   private ensureTravel(c: Chunk): void {
@@ -317,7 +363,7 @@ export class GcodeChunks {
 
   private applyRangeTo(c: Chunk): void {
     const n = chunkDrawCount(c, this.rangeMin, this.rangeMax);
-    c.mesh.visible = n > 0;
+    c.mesh.visible = this.opaqueOn && n > 0;
     c.mesh.geometry.instanceCount = Math.max(n, 1);
     if (c.clear) c.clear.visible = this.translucentOn && n > 0;
     if (c.travel) c.travel.visible = this.travelOn && n > 0;

@@ -567,15 +567,33 @@ export async function resolveConflict(mode: 'replace' | 'keep' | 'dismiss'): Pro
   } finally { await endGesture(); }
 }
 
-/** Change a dimension's value (`sketch_set_constraint`); an unsatisfiable value changes nothing. */
-export async function setConstraintValue(index: number, value: number): Promise<string | null> {
+/**
+ * Change a dimension's value (`sketch_set_constraint`); an unsatisfiable value changes nothing.
+ * `hold` (a shape label's: what Orca's geometric editor keeps) is added for this solve only — each
+ * one the solver takes, skipping any whose references something already constrains — and removed
+ * after, all in one undo entry.
+ */
+export async function setConstraintValue(index: number, value: number, hold: readonly SkConstraint[] = []): Promise<string | null> {
   const c = sk.constraints[index];
   if (!c) return 'That dimension is gone.';
   if (!Number.isFinite(value)) return 'Enter a number';
   if ((c.type === 'distance' || c.type === 'radius' || c.type === 'diameter') && value <= 0) return 'Enter a value above 0';
+  const temp = hold.filter((h) => !guard(h, sk.entities) && !sk.constraints.some((x) => duplicateOf({ ...h, value: x.value }, [x]) === 0));
   const out = await edit('Dimension', async (k, doc) => {
+    let steps = 0;
+    const added: number[] = [];
+    for (const h of temp) {
+      const a = await step<{ ok: boolean; index?: number }>(k, 'sketch_constrain', { doc, constraints: [h] });
+      if (a.steps && typeof a.r.index === 'number') { steps += a.steps; added.push(a.r.index); }
+    }
     const s = await step<{ ok: boolean; error?: string; bad?: number[] }>(k, 'sketch_set_constraint', { doc, index, value: toWire(c.type, value) });
-    return { steps: s.steps, ok: s.r.ok, error: s.r.error ?? '' };
+    if (!s.steps) {
+      for (let n = 0; n < steps; n++) await k.call('sketch_undo', { doc });
+      return { steps: 0, ok: false, error: s.r.error ?? '' };
+    }
+    steps += s.steps;
+    for (const i of added.sort((a, b) => b - a)) steps += (await step(k, 'sketch_delete_constraint', { doc, index: i })).steps;
+    return { steps, ok: true, error: '' };
   });
   if (!out.ok) { const m = `${constraintLabel(c.type)} ${value} can’t be satisfied${out.error ? ` (${out.error})` : ''} — nothing changed.`; setStatus('error', m); return m; }
   setStatus('ok', `${constraintLabel(c.type)} set to ${value}${c.type === 'angle' ? '°' : ' mm'} — ${dofText()}.`);
@@ -784,10 +802,25 @@ export async function promoteQuote(q: LiveQuote, screen?: [number, number]): Pro
   if (q.dim || (!q.rotate && (q.kind === 'length' || q.kind === 'radius'))) {
     // A shape's size label: the driving dimension the drawing tool's own size field uses (quotes.ts).
     const c = q.dim ?? (q.kind === 'length' ? cons('distance', q.e, 'p0', q.e, 'p1', q.value) : cons('radius', q.e, 'center', -1, 'p0', q.value));
+    const before = sk.undo.length;
     if (await addConstraints([c])) return;
+    const placed = sk.undo.length === before + 1 ? sk.undo.length : -1;
     const i = duplicateOf(c, sk.constraints);
     if (i < 0) return;
-    requestValue({ label: title, value: +q.value.toFixed(4), unit: 'mm', ...at, submit: (v) => setConstraintValue(i, v) });
+    requestValue({
+      label: title, value: +q.value.toFixed(4), unit: 'mm', ...at,
+      submit: async (v) => {
+        const bad = Number.isFinite(v) ? q.check?.(v) : null;
+        if (bad) return bad;
+        const err = await setConstraintValue(i, v, q.hold);
+        // A shape's size: placing its dimension and the typed value are one undo entry.
+        if (!err && q.hold && placed > 0 && sk.undo.length === placed + 1) {
+          const u = sk.undo.slice(), b = u.pop()!, a = u.pop()!;
+          sk.undo = [...u, a + b];
+        }
+        return err;
+      },
+    });
     return;
   }
   if (q.rotate) {

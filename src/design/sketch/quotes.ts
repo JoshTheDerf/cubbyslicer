@@ -26,6 +26,8 @@
  * the shape's constraints in the kernel, so a size label becomes the driving dimension the drawing
  * tool's own size fields use (shapes.ts), and an angle label rotates the shape (with its
  * construction geometry) about Orca's pivot (`set_rect_angle`, `set_slot_angle`, `set_polygon_angle`).
+ * What Orca's editor keeps while one size changes (the other sizes, its anchor point) is held for
+ * that solve only (`hold`), so a typed corner radius doesn't grow the rounded rectangle.
  */
 import { add, onCircle, scale, sub, cons, type SkConstraint, type SkEntity, type V2 } from './model';
 
@@ -47,6 +49,14 @@ export interface LiveQuote {
   rotate?: { ents: number[]; pivot: V2 };
   /** The value editor's title when not the kind's (Width, Height, Side…). */
   title?: string;
+  /**
+   * A shape's size label: what Orca's geometric editor keeps (`set_rounded_rect` keeps the min
+   * corner and the other sizes, `set_slot` the start cap's centre…), held by these constraints
+   * only while the typed value is solved, then removed (session.ts `setConstraintValue`).
+   */
+  hold?: SkConstraint[];
+  /** A shape's size label: Orca's refusal for a value the shape can't take (null = fine). */
+  check?: (v: number) => string | null;
 }
 
 /** Edit-op and transform tools draw their own value gizmo (Orca: no quotes then). */
@@ -215,8 +225,12 @@ function shapeQuotes(entities: readonly SkEntity[], constraints: readonly SkCons
       // The tool's own size fields: the centre line's Length (or the caps' centres), the caps' size.
       const cl = g.helpers.find((h) => entities[h].type === 'line' && ((near(entities[h].p0, g.c0) && near(entities[h].p1, g.c1)) || (near(entities[h].p0, g.c1) && near(entities[h].p1, g.c0))));
       const lenDim = cl !== undefined ? cons('distance', cl, 'p0', cl, 'p1', Lc) : cons('distance', b + 3, 'center', b + 1, 'center', Lc);
-      if (!drivenBy(lenDim, cons('distance', b + 3, 'center', b + 1, 'center'))) add_({ kind: 'length', e: b, value: Lc, lines: [], label: add(scale(add(g.c0, g.c1), 0.5), scale(n, w + th * 2)), dim: lenDim, title: 'Length' });
-      if (!radiusDriven(b + 1, b + 3)) add_({ kind: 'length', e: b + 1, value: 2 * w, lines: [], label: add(g.c1, scale(u, w + th * 2)), dim: cons('diameter', b + 1, 'center', -1, 'p0', 2 * w), title: 'Width' });
+      // Orca's set_slot: the start cap's centre (c0) and the centre line's direction stay; a new
+      // Length keeps the width, a new Width keeps both caps' centres.
+      const lenDriven = drivenBy(lenDim, cons('distance', b + 3, 'center', b + 1, 'center')), wDriven = radiusDriven(b + 1, b + 3);
+      const wDim = cons('diameter', b + 1, 'center', -1, 'p0', 2 * w), fix0 = cons('fix', b + 3, 'center');
+      if (!lenDriven) add_({ kind: 'length', e: b, value: Lc, lines: [], label: add(scale(add(g.c0, g.c1), 0.5), scale(n, w + th * 2)), dim: lenDim, title: 'Length', hold: [fix0, ...(wDriven ? [] : [wDim])] });
+      if (!wDriven) add_({ kind: 'length', e: b + 1, value: 2 * w, lines: [], label: add(g.c1, scale(u, w + th * 2)), dim: wDim, title: 'Width', hold: [fix0, ...(lenDriven ? [] : [cons('fix', b + 1, 'center')])] });
       add_({ kind: 'angle', e: b, value: norm360(deg(Math.atan2(u0[1], u0[0]))), lines: [], label: sub(g.c0, scale(u, w + th * 2)), rotate: { ...turn, pivot: g.c0 }, title: 'Angle (°)' });
     }
   } else if (g.kind === 'polygon') {
@@ -225,7 +239,9 @@ function shapeQuotes(entities: readonly SkEntity[], constraints: readonly SkCons
       const n0: V2 = [-d[1] / L, d[0] / L];
       const side = Math.hypot(...sub(add(m0, n0), g.c0)) >= Math.hypot(...sub(m0, g.c0)) ? 1 : -1;
       const q = lineLength(e0, b, side, th);
-      if (q && !drivenBy(cons('distance', b, 'p0', b, 'p1'))) out.push({ ...q, title: 'Side' });
+      // Orca's set_polygon_side scales the polygon about its centre: the centre is held.
+      const circ = g.helpers.find((h) => entities[h].type === 'circle' && near(entities[h].center, g.c0));
+      if (q && !drivenBy(cons('distance', b, 'p0', b, 'p1'))) out.push({ ...q, title: 'Side', dim: cons('distance', b, 'p0', b, 'p1', L), ...(circ !== undefined ? { hold: [cons('fix', circ, 'center')] } : {}) });
     }
     const sp = sub(e0.p0, g.c0), R = Math.hypot(sp[0], sp[1]);
     if (R > 1e-6) {
@@ -236,10 +252,15 @@ function shapeQuotes(entities: readonly SkEntity[], constraints: readonly SkCons
   } else if (g.kind === 'rounded-rect') {
     const [xmin, ymin] = g.c0, [xmax, ymax] = g.c1, w = xmax - xmin, h = ymax - ymin, r = g.param, off = th * 2;
     const yb = ymin - off, xl = xmin - off, rc: V2 = [xmax - r, ymax - r], diag: V2 = [Math.SQRT1_2, Math.SQRT1_2];
-    const wDim = cons('distance_x', b + 6, 'p0', b + 2, 'p0', w), hDim = cons('distance_y', b, 'p0', b + 4, 'p0', h);
-    if (!drivenBy(wDim)) add_({ kind: 'length', e: b, value: w, lines: [[[xmin, ymin], [xmin, yb]], [[xmax, ymin], [xmax, yb]], [[xmin, yb], [xmax, yb]]], label: [(xmin + xmax) / 2, yb - th * 0.8], dim: wDim, title: 'Width' });
-    if (!drivenBy(hDim)) add_({ kind: 'length', e: b + 2, value: h, lines: [[[xmin, ymin], [xl, ymin]], [[xmin, ymax], [xl, ymax]], [[xl, ymin], [xl, ymax]]], label: [xl - th * 0.8, (ymin + ymax) / 2], dim: hDim, title: 'Height' });
-    if (!radiusDriven(b + 1, b + 3, b + 5, b + 7)) add_({ kind: 'radius', e: b + 1, value: r, lines: [[rc, add(rc, scale(diag, r))]], label: add(rc, scale(diag, r + th * 1.2)), dim: cons('radius', b + 1, 'center', -1, 'p0', r), title: 'Radius' });
+    const wDim = cons('distance_x', b + 6, 'p0', b + 2, 'p0', w), hDim = cons('distance_y', b, 'p0', b + 4, 'p0', h), rDim = cons('radius', b + 1, 'center', -1, 'p0', r);
+    const wOn = !drivenBy(wDim), hOn = !drivenBy(hDim), rOn = !radiusDriven(b + 1, b + 3, b + 5, b + 7);
+    // Orca's set_rounded_rect(w, h, r): the min corner stays, and the sizes not typed keep their values.
+    const corner = [cons('lock_x', b + 6, 'p0', -1, 'p0', xmin), cons('lock_y', b, 'p0', -1, 'p0', ymin)];
+    const hold = (skip: SkConstraint) => [...corner, ...([[wOn, wDim], [hOn, hDim], [rOn, rDim]] as const).filter(([on, c]) => on && c !== skip).map(([, c]) => c)];
+    const check = (nw: number, nh: number, nr: number) => (!(nw > 0 && nh > 0 && nr > 0) ? 'Enter a value above 0' : nr >= Math.min(nw, nh) / 2 ? 'The corner radius must be less than half the shorter side' : null);
+    if (wOn) add_({ kind: 'length', e: b, value: w, lines: [[[xmin, ymin], [xmin, yb]], [[xmax, ymin], [xmax, yb]], [[xmin, yb], [xmax, yb]]], label: [(xmin + xmax) / 2, yb - th * 0.8], dim: wDim, title: 'Width', hold: hold(wDim), check: (v) => check(v, h, r) });
+    if (hOn) add_({ kind: 'length', e: b + 2, value: h, lines: [[[xmin, ymin], [xl, ymin]], [[xmin, ymax], [xl, ymax]], [[xl, ymin], [xl, ymax]]], label: [xl - th * 0.8, (ymin + ymax) / 2], dim: hDim, title: 'Height', hold: hold(hDim), check: (v) => check(w, v, r) });
+    if (rOn) add_({ kind: 'radius', e: b + 1, value: r, lines: [[rc, add(rc, scale(diag, r))]], label: add(rc, scale(diag, r + th * 1.2)), dim: rDim, title: 'Radius', hold: hold(rDim), check: (v) => check(w, h, v) });
   } else if (g.kind === 'arc-slot') {
     const c = g.c0, ds = sub(g.c1, c), Rc = Math.hypot(ds[0], ds[1]), w = g.param, de = sub(entities[b + 1].center, c), lde = Math.hypot(de[0], de[1]);
     if (Rc > 1e-6 && lde > 1e-6) {
@@ -247,9 +268,13 @@ function shapeQuotes(entities: readonly SkEntity[], constraints: readonly SkCons
       let sweep = Math.atan2(de[1], de[0]) - aS;
       while (sweep < 0) sweep += 2 * Math.PI;
       const uMid: V2 = [Math.cos(aS + sweep / 2), Math.sin(aS + sweep / 2)];
-      const rDim = cons('distance', b, 'center', b + 3, 'center', Rc);
-      if (!drivenBy(rDim)) add_({ kind: 'radius', e: b, value: Rc, lines: [[c, add(c, scale(uMid, Rc))]], label: add(add(c, scale(uMid, Rc * 0.5)), [0, th]), dim: rDim, title: 'Radius' });
-      if (!radiusDriven(b + 1, b + 3)) add_({ kind: 'length', e: b + 1, value: 2 * w, lines: [[add(c, scale(dirS, Rc + w)), add(c, scale(dirS, Rc - w))]], label: add(c, scale(dirS, Rc + w + th * 1.2)), dim: cons('diameter', b + 1, 'center', -1, 'p0', 2 * w), title: 'Width' });
+      const rDim = cons('distance', b, 'center', b + 3, 'center', Rc), wDim = cons('diameter', b + 1, 'center', -1, 'p0', 2 * w);
+      // Orca's set_arc_slot: the centre and the centre line's directions stay; a new Radius keeps
+      // the width, a new Width keeps the radius (the start cap's centre held).
+      const rDriven = drivenBy(rDim), wDriven = radiusDriven(b + 1, b + 3), fixC = cons('fix', b, 'center');
+      const tooWide = 'The slot is too wide for its radius — the width must be less than twice the radius';
+      if (!rDriven) add_({ kind: 'radius', e: b, value: Rc, lines: [[c, add(c, scale(uMid, Rc))]], label: add(add(c, scale(uMid, Rc * 0.5)), [0, th]), dim: rDim, title: 'Radius', hold: [fixC, ...(wDriven ? [] : [wDim])], check: (v) => (w >= v ? tooWide : null) });
+      if (!wDriven) add_({ kind: 'length', e: b + 1, value: 2 * w, lines: [[add(c, scale(dirS, Rc + w)), add(c, scale(dirS, Rc - w))]], label: add(c, scale(dirS, Rc + w + th * 1.2)), dim: wDim, title: 'Width', hold: [fixC, ...(rDriven ? [] : [cons('fix', b + 3, 'center')])], check: (v) => (v / 2 >= Rc ? tooWide : null) });
     }
   }
   return out;

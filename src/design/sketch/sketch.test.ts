@@ -504,6 +504,52 @@ describe('sketch session', () => {
     expect(sk.undo.length).toBe(undo0 + 1);
   });
 
+  it('a shape size label holds what Orca keeps while the value solves: a rounded rectangle’s corner radius keeps its size and min corner (one undo entry, no extra dimensions)', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    const rr = DRAW_TOOL_BY_ID.get('rect-rounded')!.build([[10, 5], [50, 30], [12, 5]], opts())!;
+    await K.addEntities(rr.entities, rr.constraints);
+    const n0 = sk.constraints.length, undo0 = sk.undo.length;
+    const sent: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const call = fake.call.bind(fake);
+    fake.call = (m, p, b) => { if (m.startsWith('sketch_')) sent.push({ method: m, params: p as Record<string, unknown> }); return call(m, p, b); };
+    const r = liveQuotes(sk.entities, sk.constraints, 3, 2).find((q) => q.title === 'Radius')!;
+    expect(r.hold!.map((c) => `${c.type}:${+c.value.toFixed(3)}`)).toEqual(['lock_x:10', 'lock_y:5', 'distance_x:40', 'distance_y:25']);
+    await K.promoteQuote(r);
+    expect(sk.value).toMatchObject({ label: 'Radius', unit: 'mm' });
+    expect(await sk.value!.submit(13)).toBe('The corner radius must be less than half the shorter side');
+    sent.length = 0;
+    expect(await sk.value!.submit(5)).toBeNull();
+    sk.value = null;
+    // Held for the solve: the min corner, width and height; then removed again.
+    const held = sent.filter((s) => s.method === 'sketch_constrain').map((s) => (s.params.constraints as Array<{ type: string; value: number }>)[0]);
+    expect(held.map((c) => `${c.type}:${+c.value.toFixed(3)}`)).toEqual(['lock_x:10', 'lock_y:5', 'distance_x:40', 'distance_y:25']);
+    expect(sent.map((s) => s.method).filter((m) => m !== 'sketch_describe')).toEqual(['sketch_constrain', 'sketch_constrain', 'sketch_constrain', 'sketch_constrain', 'sketch_set_constraint',
+      'sketch_delete_constraint', 'sketch_delete_constraint', 'sketch_delete_constraint', 'sketch_delete_constraint']);
+    expect(sk.constraints).toHaveLength(n0 + 1);
+    expect(sk.constraints.at(-1)).toMatchObject({ type: 'radius', ea: 1, value: 5 });
+    expect(sk.undo.length).toBe(undo0 + 1); // placing the radius + the typed value: one entry
+    await K.sketchUndo();
+    expect(sk.constraints).toHaveLength(n0);
+    // An unsatisfiable value: the holds are rolled back, nothing changes.
+    const wq = liveQuotes(sk.entities, sk.constraints, 3, 2).find((q) => q.title === 'Width')!;
+    await K.promoteQuote(wq);
+    sk.value = null;
+    const n1 = sk.constraints.length;
+    expect(await K.setConstraintValue(n1 - 1, -999, wq.hold)).toMatch(/can’t be satisfied/);
+    expect(sk.constraints).toHaveLength(n1);
+    expect(sk.constraints.at(-1)).toMatchObject({ type: 'distance_x', value: 40 });
+    // Slot Length keeps the start cap's centre and the width; Width keeps both caps' centres; polygon Side its centre.
+    const s = DRAW_TOOL_BY_ID.get('slot')!.build([[100, 0], [130, 0], [110, 4]], opts({ base: sk.entities.length }))!;
+    await K.addEntities(s.entities, s.constraints);
+    const b = sk.entities.length - 5, sq = liveQuotes(sk.entities, sk.constraints, b, 2);
+    expect(sq.find((q) => q.title === 'Length')!.hold).toMatchObject([{ type: 'fix', ea: b + 3, ra: 'center' }, { type: 'diameter', ea: b + 1, value: 8 }]);
+    expect(sq.find((q) => q.title === 'Width')!.hold).toMatchObject([{ type: 'fix', ea: b + 3, ra: 'center' }, { type: 'fix', ea: b + 1, ra: 'center' }]);
+    const pg = DRAW_TOOL_BY_ID.get('polygon')!.build([[0, 100], [10, 100]], opts({ base: sk.entities.length }))!;
+    await K.addEntities(pg.entities, pg.constraints);
+    const pb = sk.entities.length - 7;
+    expect(liveQuotes(sk.entities, sk.constraints, pb, 2).find((q) => q.title === 'Side')).toMatchObject({ dim: { type: 'distance', ea: pb }, hold: [{ type: 'fix', ea: pb + 6, ra: 'center' }] });
+  });
+
   it('cancel leaves the design unchanged; trim drops the constraints on the moved end first', async () => {
     await K.beginSketch({ plane: 'XY' });
     await K.addEntities([line([0, 0], [10, 0]), line([10, 0], [10, 5])], [cons('coincident', 0, 'p1', 1, 'p0')]);
