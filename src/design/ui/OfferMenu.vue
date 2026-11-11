@@ -15,6 +15,7 @@ import type { EdgeInfo, FaceInfo } from '../kernel/types';
 import { designUi, type DesignPick } from '../state';
 import { designViewport } from '../viewport';
 import { toast } from '../../ui';
+import { guardOpenSubmenus } from '../../ui/submenuGuard';
 
 const props = defineProps<{ x: number; y: number; pick: DesignPick | null }>();
 const emit = defineEmits<{ (e: 'close'): void }>();
@@ -32,6 +33,9 @@ function toMenu(groups: OfferItem[][]): DropdownMenuItem[][] {
   });
   return groups.map((g) => g.map(conv));
 }
+
+// A submenu (Transform, Remove, Reference…) would otherwise close when the pointer moves on its trigger (Reka bug).
+const unguard = guardOpenSubmenus();
 
 onMounted(async () => {
   const p = props.pick;
@@ -74,7 +78,7 @@ function onOpen(v: boolean) {
   if (designUi.offerClose === close) designUi.offerClose = null;
   emit('close');
 }
-onBeforeUnmount(() => { if (designUi.offerClose === close) designUi.offerClose = null; });
+onBeforeUnmount(() => { unguard(); if (designUi.offerClose === close) designUi.offerClose = null; });
 </script>
 
 <template>

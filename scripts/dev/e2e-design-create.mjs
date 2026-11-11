@@ -702,14 +702,13 @@ export async function bridgeDesignFlow({ call, check, log, out }) {
 // Fillet / Chamfer, and Check interference from the feature tree's header.
 async function analysisChecks({ page, D, check, shot, settled, run, screen, topo }) {
   const status = () => D(() => window.__cubbyDesign.design.status?.text ?? '');
-  // Open an offer family's submenu (hover can miss while the menu settles): retry until `item` shows.
-  // (A hover can be missed by the menu here; the keyboard opens it too: focus the family, →.)
+  // Open an offer family's submenu by hovering it; it must still be open half a second later
+  // (src/ui/submenuGuard.ts: Reka closed it on a second pointer move over its trigger).
   const submenu = async (family, item) => {
-    for (let i = 0; i < 6; i++) {
-      const f = page.getByRole('menuitem', { name: family });
-      if (i % 2) { await f.focus(); await page.keyboard.press('ArrowRight'); } else await f.hover();
-      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); if (await page.getByRole('menuitem', { name: item }).first().isVisible()) return; } catch { /* retry */ } await page.mouse.move(5, 5);
-    }
+    await page.getByRole('menuitem', { name: family }).hover();
+    await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(500);
+    check(await page.getByRole('menuitem', { name: item }).first().isVisible(), `offer: hovering ${family} opens its submenu and it stays open`);
   };
   const bb = await D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.design.bodies[0].bbox)));
   const mid = [0, 1, 2].map((k) => (bb.min[k] + bb.max[k]) / 2);
@@ -820,13 +819,13 @@ export async function assemblySurfaceFlow({ page, D, check, shot, settled }) {
     for (let i = 0; i < 3 && (await D(() => window.__cubbyDesign.designUi.pick?.kind)) !== kind; i++) { await page.mouse.click(x, y); await page.waitForTimeout(350); }
     return D(() => JSON.parse(JSON.stringify(window.__cubbyDesign.designUi.pick)));
   };
-  // (A hover can be missed by the menu here; the keyboard opens it too: focus the family, →.)
+  // Open an offer family's submenu by hovering it; it must still be open half a second later
+  // (src/ui/submenuGuard.ts: Reka closed it on a second pointer move over its trigger).
   const submenu = async (family, item) => {
-    for (let i = 0; i < 6; i++) {
-      const f = page.getByRole('menuitem', { name: family });
-      if (i % 2) { await f.focus(); await page.keyboard.press('ArrowRight'); } else await f.hover();
-      try { await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 1500 }); await page.waitForTimeout(500); if (await page.getByRole('menuitem', { name: item }).first().isVisible()) return; } catch { /* retry */ } await page.mouse.move(5, 5);
-    }
+    await page.getByRole('menuitem', { name: family }).hover();
+    await page.getByRole('menuitem', { name: item }).first().waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(500);
+    check(await page.getByRole('menuitem', { name: item }).first().isVisible(), `offer: hovering ${family} opens its submenu and it stays open`);
   };
   const ok = async (what, pred) => { await page.click('[data-testid="design-card-ok"]'); await settled(pred, what); return D(() => ({ card: !!window.__cubbyDesign.card.tool, error: window.__cubbyDesign.card.error, ok: window.__cubbyDesign.design.ok })); };
   shot = ((orig) => (n) => orig(`m${n}`))(shot);
