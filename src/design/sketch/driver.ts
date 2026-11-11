@@ -149,8 +149,8 @@ function buildOpts(final: boolean) {
 
 /** The snapped point for a drawing click at `q` (point snaps beat the H / V snap; Shift suppresses both). */
 function snapAt(q: V2, c: PointerCtx): { p: V2; snap: Snap | null; axis: 'horizontal' | 'vertical' | null } {
-  if (c.shift) return { p: q, snap: null, axis: null };
   const t = drawTool();
+  if (c.shift || (t?.snapClick && !t.snapClick(live.pts.length))) return { p: q, snap: null, axis: null };
   const s = snapPoint(sk.entities, q, PX(c) * c.mmPerPx);
   const prev = live.pts[live.pts.length - 1];
   const lineish = t && (t.id === 'line' || t.id === 'polyline') && prev;

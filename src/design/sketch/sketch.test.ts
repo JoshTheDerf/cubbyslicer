@@ -92,6 +92,32 @@ describe('drawing tools (shapes)', () => {
     const circ = DRAW_TOOL_BY_ID.get('polygon')!.build([[0, 0], [10, 0]], opts({ polygonSides: 6, polygonCircumscribed: true }))!;
     expect(circ.entities[6].radius).toBeCloseTo(10 / Math.cos(Math.PI / 6));
   });
+  it('an arc slot is Orca’s four arcs: closed, tangent, concentric, with a Radius / Width queue', () => {
+    const t = DRAW_TOOL_BY_ID.get('arc-slot')!;
+    // Orca's click_snaps: only the start (the second click) snaps.
+    expect([0, 1, 2, 3].map((n) => t.snapClick!(n))).toEqual([false, true, false, false]);
+    // Rubber band: the centre-line circle, then the centre-line arc (counter-clockwise).
+    expect(t.build([[0, 0], [20, 0]], opts({ final: false }))!.entities[0]).toMatchObject({ type: 'circle', construction: true, radius: 20 });
+    const cl = t.build([[0, 0], [20, 0], [0, 5]], opts({ final: false }))!.entities[0];
+    expect(cl).toMatchObject({ type: 'arc', construction: true });
+    expect(cl.end_angle - cl.start_angle).toBeCloseTo(Math.PI / 2);
+    const b = t.build([[0, 0], [20, 0], [0, 5], [23, 0]], opts({ base: 3 }))!;
+    expect(b.entities.map((e) => e.type)).toEqual(['arc', 'arc', 'arc', 'arc']);
+    expect(b.entities.map((e) => +e.radius.toFixed(6))).toEqual([23, 3, 17, 3]);
+    for (let i = 0; i < 4; i++) expect(close(b.entities[i].p1, b.entities[(i + 1) % 4].p0, 1e-9), `joint ${i}`).toBe(true);
+    expect(b.entities[2].end_angle - b.entities[2].start_angle).toBeCloseTo(-Math.PI / 2); // the inner arc runs back, as Orca's
+    expect(close(b.entities[3].center, [20, 0], 1e-9) && close(b.entities[1].center, [0, 20], 1e-9)).toBe(true);
+    expect(b.constraints.filter((c) => c.type === 'coincident' && c.ra === 'p1')).toHaveLength(4);
+    expect(b.constraints.filter((c) => c.type === 'tangent')).toHaveLength(4);
+    expect(b.constraints).toContainEqual(cons('coincident', 5, 'center', 3, 'center'));
+    expect(b.constraints.every((c) => !guard(c, [line([0, 0], [1, 0]), line([0, 0], [1, 0]), line([0, 0], [1, 0]), ...b.entities]))).toBe(true);
+    expect(b.dims.map((d) => [d.label, d.constraint.type, +d.constraint.value.toFixed(6)])).toEqual([['Radius', 'distance', 20], ['Width', 'diameter', 6]]);
+    // The start's snap lands on the start cap's centre (the centre-line start).
+    expect(anchorConstraints(b, [null, { kind: 'end', p: [20, 0], entity: 0, role: 'p1' }], [line([0, 0], [20, 0])])).toEqual([cons('coincident', 6, 'center', 0, 'p1')]);
+    // make_arc_slot needs 0 < width < radius; a zero sweep makes nothing.
+    expect(t.build([[0, 0], [20, 0], [0, 5], [41, 0]], opts())).toBeNull();
+    expect(t.build([[0, 0], [20, 0], [30, 0], [23, 0]], opts())).toBeNull();
+  });
   it('every tool builds from its click count; degenerate clicks build nothing', () => {
     const pts: V2[] = [[0, 0], [20, 3], [7, 12], [3, 9], [-4, 6]];
     for (const [id, t] of DRAW_TOOL_BY_ID) {
@@ -253,6 +279,60 @@ describe('sketch session', () => {
     const doc = [...fake.docs.keys()][0];
     const f = (await designKernel().run('read', async (c) => (await c.call<{ feature: { entities: unknown[] } }>('get_feature', { doc, index: 0 })).result, { quiet: true }));
     expect(f.feature.entities).toHaveLength(2);
+  });
+
+  it('an arc slot lands as one undo entry with its shape constraints', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    const b = DRAW_TOOL_BY_ID.get('arc-slot')!.build([[0, 0], [20, 0], [0, 5], [23, 0]], opts())!;
+    const r = await K.addEntities(b.entities, b.constraints, 'Arc slot');
+    expect(r).toMatchObject({ first: 0, dropped: [] });
+    expect(sk.entities.map((e) => e.type)).toEqual(['arc', 'arc', 'arc', 'arc']);
+    expect(sk.constraints).toHaveLength(9);
+    expect(sk.loops?.closed_loops).toHaveLength(1);
+    expect(sk.undo).toEqual([2]);
+    await K.addConstraints([{ ...b.dims[0].constraint, value: 25 }, { ...b.dims[1].constraint, value: 8 }]);
+    expect(sk.constraints.slice(-2).map((c) => [c.type, c.value])).toEqual([['distance', 25], ['diameter', 8]]);
+  });
+
+  it('a plain click on a constraint badge deletes it (Select tool); Shift+click or another tool selects it', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    await K.addEntities([line([0, 0], [10, 0]), line([10, 0], [10, 5])], [cons('coincident', 0, 'p1', 1, 'p0'), cons('horizontal', 0, 'p0', 0, 'p1'), cons('vertical', 1, 'p0', 1, 'p1')]);
+    await K.badgeClick(1, true);
+    expect(sk.selCons).toEqual([1]);
+    expect(sk.constraints).toHaveLength(3);
+    sk.tool = 'line';
+    await K.badgeClick(2, false);
+    expect(sk.selCons).toEqual([2]);
+    expect(sk.constraints).toHaveLength(3);
+    sk.tool = 'select';
+    await K.badgeClick(1, false);
+    expect(sk.constraints.map((c) => c.type)).toEqual(['coincident', 'vertical']);
+    expect(design.status?.text ?? '').toMatch(/Deleted Horizontal/);
+    expect(sk.undo).toEqual([2, 1]); // one sketch undo entry
+    await K.sketchUndo();
+    expect(sk.constraints).toHaveLength(3);
+  });
+
+  it('text / SVG outlines: the centre handle moves them, a corner scales them about the opposite corner; Finish writes both', async () => {
+    await K.beginSketch({ plane: 'XY' });
+    const sq: V2[] = [[-5, -2], [5, -2], [5, 2], [-5, 2]];
+    expect(K.placeRegions([[sq]], 'SVG')).toBeNull();
+    expect(K.regionCorners()).toEqual([[-5, -2], [5, -2], [5, 2], [-5, 2]]);
+    K.dragRegionHandle(4, [0, 0], [10, 20]); // the centre: moved by the pointer's travel
+    expect(sk.regions).toMatchObject({ offset: [10, 20], scale: [1, 1] });
+    const c = K.regionCorners()!;
+    K.dragRegionHandle(2, c[0], [25, 26]); // the max / max corner to (25, 26); min / min (5, 18) stays
+    expect(sk.regions!.scale[0]).toBeCloseTo(2);
+    expect(sk.regions!.scale[1]).toBeCloseTo(2);
+    const after = K.regionCorners()!;
+    expect(close(after[0], [5, 18], 1e-9) && close(after[2], [25, 26], 1e-9)).toBe(true);
+    expect(close(K.regionPoint([5, 2]), [25, 26], 1e-9)).toBe(true);
+    const r = await K.finishSketch();
+    expect(r.ok).toBe(true);
+    const doc = [...fake.docs.keys()][0];
+    const f = (await designKernel().run('read', async (k) => (await k.call<{ feature: Record<string, unknown> }>('get_feature', { doc, index: r.index })).result, { quiet: true })).feature;
+    expect(f).toMatchObject({ import_scale_x: 2, import_scale_y: 2 });
+    expect(f.import_offset).toEqual([15, 22]);
   });
 
   it('cancel leaves the design unchanged; trim drops the constraints on the moved end first', async () => {

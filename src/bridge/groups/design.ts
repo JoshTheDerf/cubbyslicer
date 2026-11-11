@@ -115,7 +115,7 @@ function sketchState() {
     constraints: k.constraints.map((c, i) => ({ index: i, ...c, value: fromWire(c.type, c.value), text: describeConstraint(c, k.entities) })),
     dof: k.dof, solve_ok: k.solveOk, bad: k.bad, skipped: k.skipped, status: SK.dofText(),
     closed_loops: k.loops?.closed_loops.filter((l) => l.closed).length ?? 0, open_ends: k.loops?.open_ends ?? [], buildable: k.loops?.buildable ?? false,
-    regions: k.regions ? { label: k.regions.label, count: k.regions.regions.length, offset: k.regions.offset } : undefined,
+    regions: k.regions ? { label: k.regions.label, count: k.regions.regions.length, offset: k.regions.offset, scale: k.regions.scale } : undefined,
     undo_steps: k.undo.length,
   };
 }
@@ -164,7 +164,7 @@ function sketchTools(): BridgeTool[] {
     { name: 'design_sketch_describe', description: 'The open sketch: entities, constraints (angles in degrees), degrees of freedom, conflicts (`bad`), closed loops / open ends (Orca sketch_describe).', inputSchema: obj({}), async run() { return st(); } },
     {
       name: 'design_sketch_add',
-      description: 'Add entities (Orca sketch_add): `entities:[…]`, or `rect:[x0,y0,x1,y1]` (a constrained rectangle), or a drawing tool by `tool` + `points` (the clicks: line, rect, rect-center, rect-3pt, rect-rounded, circle, circle-2pt, circle-3pt, arc-3pt, arc-center, slot, polygon (+ `sides`), ellipse, ellipse-arc, spline, point) which also adds the shape’s constraints. `constraints` are added with them (indices absolute). `infer` (default true) joins exactly coincident ends and makes exactly level / plumb lines H / V, as the kernel’s scripted add. One sketch undo step.',
+      description: 'Add entities (Orca sketch_add): `entities:[…]`, or `rect:[x0,y0,x1,y1]` (a constrained rectangle), or a drawing tool by `tool` + `points` (the clicks: line, rect, rect-center, rect-3pt, rect-rounded, circle, circle-2pt, circle-3pt, arc-3pt, arc-center, slot, arc-slot (centre, start, end, width), polygon (+ `sides`), ellipse, ellipse-arc, spline, point) which also adds the shape’s constraints. `constraints` are added with them (indices absolute). `infer` (default true) joins exactly coincident ends and makes exactly level / plumb lines H / V, as the kernel’s scripted add. One sketch undo step.',
       timeoutMs: 300_000,
       inputSchema: obj({ entities: { type: 'array', items: ENTITY_SCHEMA }, rect: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 }, tool: str('A drawing tool id (see above).'), points: { type: 'array', items: { type: 'array', items: { type: 'number' } }, description: 'The tool’s clicks, plane mm.' }, sides: num('Polygon sides (default 6).'), construction: bool('Make the new entities construction geometry.'), constraints: { type: 'array', items: CONSTRAINT_SCHEMA }, infer: bool('Infer exact Coincident / H / V (default true).') }),
       async run(args) {

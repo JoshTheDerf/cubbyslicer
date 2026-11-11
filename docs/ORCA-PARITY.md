@@ -24,7 +24,7 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Mixed filaments:** Orca's lab-measured colours come from the engine; before the engine has loaded, swatches use the computed pigment blend.
 
 ### Design tab (experimental)
-- **Sketcher:** arc slot; splitting a curve (trim that removes the middle); dragging text / SVG outlines into place (they are positioned by typing X / Y); click-to-delete constraint badges; live measurement labels; snapping to body edges while drawing; per-entity free / constrained colouring; live expressions on constraint values.
+- **Sketcher:** live measurement labels; snapping to body edges while drawing; per-entity free / constrained colouring; live expressions on constraint values.
 - **Features:** surface features, coordinate systems, mates, pattern along a curve, extruding one chosen region of a sketch with several, text / SVG on faces.
 - **View and analysis:** section view, mass properties, interference check; Shift+click multi-select outside a feature card.
 - **Primitive bodies** (box, cylinder, cone, sphere, torus) are fixed-size, not parametric.

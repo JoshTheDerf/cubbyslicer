@@ -104,7 +104,7 @@ const dofClass = computed(() => (!sk.solveOk ? 'bad' : sk.dof === 0 ? 'fixed' : 
       </div>
     </form>
     <div v-if="sk.regions" class="skp__regions" data-testid="sketch-regions">
-      <span>{{ sk.regions.label }} outline — position</span>
+      <span>{{ sk.regions.label }} outline — drag its centre to move it, a corner to scale it, or type the position</span>
       <div class="skp__textrow">
         <label class="skp__sides">X <UInputNumber v-model="offX" :step="1" size="xs" class="w-24" /></label>
         <label class="skp__sides">Y <UInputNumber v-model="offY" :step="1" size="xs" class="w-24" /></label>

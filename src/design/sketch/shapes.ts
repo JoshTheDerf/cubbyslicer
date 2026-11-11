@@ -19,7 +19,7 @@ import type { Snap } from './infer';
 
 export type DrawToolId =
   | 'line' | 'polyline' | 'rect' | 'rect-center' | 'rect-3pt' | 'rect-rounded' | 'circle' | 'circle-2pt' | 'circle-3pt'
-  | 'arc-3pt' | 'arc-tangent' | 'arc-center' | 'ellipse' | 'ellipse-arc' | 'polygon' | 'slot' | 'spline' | 'point';
+  | 'arc-3pt' | 'arc-tangent' | 'arc-center' | 'ellipse' | 'ellipse-arc' | 'polygon' | 'slot' | 'arc-slot' | 'spline' | 'point';
 
 /** A click's target in the built shape: a point role of a new entity, or its rim (circle / arc). */
 export interface Anchor { click: number; ent: number; role: Role | 'rim' }
@@ -55,6 +55,11 @@ export interface DrawTool {
   prompts: string[];
   /** Number of clicks, or a chain ended by Enter / double-click / right-click. */
   clicks: number | 'chain';
+  /**
+   * Which clicks snap (Orca's `click_snaps`), by the number of clicks already made; every click
+   * when absent. A click that only sets a size or a direction is placed freely.
+   */
+  snapClick?(n: number): boolean;
   build(pts: readonly V2[], o: BuildOpts): Built | null;
 }
 
@@ -265,6 +270,43 @@ export const DRAW_TOOLS: DrawTool[] = [
       constraints.push(cons('coincident', b + 1, 'center', b + 4, 'p1'), cons('coincident', b + 3, 'center', b + 4, 'p0'), cons('equal_radius', b + 1, 'p0', b + 3, 'p0'));
       return { entities, constraints, anchors: [{ click: 0, ent: b + 4, role: 'p0' }, { click: 1, ent: b + 4, role: 'p1' }],
         dims: [dimDist('Length', b + 4, 'p0', b + 4, 'p1', dist(A, B)), { label: 'Radius', constraint: cons('radius', b + 1, 'center', -1, 'p0', r) }] };
+    },
+  },
+  {
+    // Orca's make_arc_slot: an outer arc (Rc + w), the cap at the end, the inner arc (Rc − w, run
+    // backwards) and the cap at the start — a closed chain of four arcs. Only the start snaps
+    // (click_snaps: the centre and the end direction are free, the width is a size).
+    id: 'arc-slot', title: 'Arc slot', icon: 'i-lucide-rainbow', family: 'slot',
+    hint: 'Click the centre, the start and the end of the centre line, then the width',
+    prompts: ['Click the centre the slot curves about', 'Click the start of the centre line (this sets the radius)', 'Click the end of the centre line', 'Click to set the width'], clicks: 4,
+    snapClick: (n) => n === 1,
+    build: (p, o) => {
+      if (p.length < 2 || dist(p[0], p[1]) < TOL) return null;
+      const c = p[0], Rc = dist(c, p[1]), aS = angleOf(sub(p[1], c));
+      // Rubber band: the centre-line circle, then the centre-line arc (counter-clockwise from the start).
+      if (p.length < 3) return { entities: [circle(c, Rc, true)], constraints: [], anchors: [], dims: [] };
+      if (dist(c, p[2]) < TOL) return null;
+      let sw = angleOf(sub(p[2], c)) - aS;
+      while (sw < 0) sw += 2 * Math.PI;
+      while (sw >= 2 * Math.PI) sw -= 2 * Math.PI;
+      if (sw < 1e-6) return null;
+      const aE = aS + sw;
+      if (p.length < 4) return { entities: [arc(c, Rc, aS, aE, true)], constraints: [], anchors: [], dims: [] };
+      const w = Math.abs(dist(c, p[3]) - Rc);
+      if (w < TOL || w >= Rc) return null; // make_arc_slot needs 0 < w < Rc
+      const C = o.construction, b = o.base, H = Math.PI;
+      const Sc: V2 = [c[0] + Rc * Math.cos(aS), c[1] + Rc * Math.sin(aS)], Ec: V2 = [c[0] + Rc * Math.cos(aE), c[1] + Rc * Math.sin(aE)];
+      const entities = [arc(c, Rc + w, aS, aE, C), arc(Ec, w, aE, aE + H, C), arc(c, Rc - w, aE, aS, C), arc(Sc, w, aS + H, aS + 2 * H, C)];
+      // The chain closed end to end, tangent at every joint, inner and outer concentric: the four
+      // arcs stay an arc slot (6 degrees of freedom: centre, radius, width, start and end angle).
+      // Equal caps and the caps' centres on the centre line follow from the tangents.
+      const constraints: SkConstraint[] = [];
+      for (let i = 0; i < 4; i++) constraints.push(cons('coincident', b + i, 'p1', b + ((i + 1) % 4), 'p0'));
+      for (let i = 0; i < 4; i++) constraints.push(cons('tangent', b + i, 'p0', b + ((i + 1) % 4), 'p0'));
+      constraints.push(cons('coincident', b + 2, 'center', b, 'center'));
+      return { entities, constraints, anchors: [{ click: 1, ent: b + 3, role: 'center' }],
+        // Orca's size fields: the centre-line Radius, then the full Width.
+        dims: [{ label: 'Radius', constraint: cons('distance', b, 'center', b + 3, 'center', Rc) }, { label: 'Width', constraint: cons('diameter', b + 1, 'center', -1, 'p0', 2 * w) }] };
     },
   },
   {

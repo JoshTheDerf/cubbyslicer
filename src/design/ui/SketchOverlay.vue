@@ -4,7 +4,8 @@
  * coloured by constraint state (under-constrained blue, fully constrained white, conflicting red;
  * construction dashed; selected / hovered highlighted), closed regions shaded, vertices, the
  * sketch axes, the rubber band and snap hints of the active tool, constraint badges and
- * dimensions (click a dimension to edit it, a badge to select its constraint), and the inline
+ * dimensions (click a dimension to edit it, a badge to delete its constraint — Shift+click selects it),
+ * the outlines' move / scale handles (Text / SVG), and the inline
  * value editor (Orca's SketchInlineEditor: Enter applies, Tab applies and moves on, Esc keeps
  * the geometry as drawn; numbers or expressions over the design's variables).
  *
@@ -20,7 +21,7 @@ import {
   type SkConstraint, type SkEntity, type V2,
 } from '../sketch/model';
 import { CONSTRAINT_BY_TYPE, constraintEntities, describeConstraint, dimensionText, fromWire } from '../sketch/constraints';
-import { sk, setConstraintValue, requestValue, deleteConstraints, toggleConstruction, deleteSelection, finishSketch, cancelSketch, applyConstraint } from '../sketch/session';
+import { sk, setConstraintValue, requestValue, deleteConstraints, toggleConstruction, deleteSelection, finishSketch, cancelSketch, applyConstraint, badgeClick, regionCorners, dragRegionHandle, regionPoint } from '../sketch/session';
 import { live, pointerContext, pointerDbl, pointerDown, pointerMove, pointerUp, setTool, type PointerCtx } from '../sketch/driver';
 import { evalValue } from '../sketch/expr';
 import { SNAP_LABEL } from '../sketch/infer';
@@ -103,8 +104,40 @@ const outlinePath = computed(() => {
   void tick.value;
   const r = sk.regions;
   if (!r) return '';
-  return r.regions.map((reg) => reg.map((loop) => path(loop.map((p) => [p[0] + r.offset[0], p[1] + r.offset[1]] as V2), true)).join('')).join('');
+  return r.regions.map((reg) => reg.map((loop) => path(loop.map((p) => regionPoint(p, r)), true)).join('')).join('');
 });
+
+/**
+ * Orca's TransformArt gizmo on the outlines: their box, a handle on each corner (drag: scale,
+ * the opposite corner stays) and one in the centre (drag: move). Handles take their own pointer
+ * (captured), so the sketch tools never see the drag.
+ */
+const xform = computed(() => {
+  void tick.value;
+  const c = regionCorners();
+  if (!c) return null;
+  const s = c.map((p) => P(p));
+  const mid: [number, number] = [(s[0][0] + s[2][0]) / 2, (s[0][1] + s[2][1]) / 2];
+  return { box: `M${s.map((p) => `${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join('L')}Z`, handles: [...s, mid] };
+});
+let xfDrag: { h: number; anchor: V2 } | null = null;
+const xfActive = ref(-1);
+function planeAt(ev: PointerEvent): V2 | null { return props.scene && sk.plane ? props.scene.planePoint(ev.clientX, ev.clientY, sk.plane) : null; }
+function xfDown(h: number, ev: PointerEvent) {
+  const q = planeAt(ev), c = regionCorners();
+  if (!q || !c) return;
+  (ev.currentTarget as Element).setPointerCapture?.(ev.pointerId);
+  xfDrag = { h, anchor: h === 4 ? q : c[(h + 2) % 4] };
+  xfActive.value = h;
+}
+function xfMove(ev: PointerEvent) {
+  if (!xfDrag) return;
+  const q = planeAt(ev);
+  if (!q) return;
+  dragRegionHandle(xfDrag.h, xfDrag.anchor, q);
+  if (xfDrag.h === 4) xfDrag.anchor = q; // the centre moves by the travel since the last event
+}
+function xfUp() { xfDrag = null; xfActive.value = -1; }
 
 const vertices = computed(() => {
   void tick.value;
@@ -274,10 +307,9 @@ function anchor(e: SkEntity): V2 {
   return e.p0;
 }
 
-function clickBadge(i: number, ev: MouseEvent) {
-  sk.sel = ev.shiftKey || ev.ctrlKey || ev.metaKey ? sk.sel : [];
-  sk.selCons = ev.shiftKey || ev.ctrlKey || ev.metaKey ? (sk.selCons.includes(i) ? sk.selCons.filter((x) => x !== i) : [...sk.selCons, i]) : [i];
-}
+/** Orca's badge click: Select tool → deletes the constraint; Shift / Ctrl (or another tool) → selects it. */
+function clickBadge(i: number, ev: MouseEvent) { void badgeClick(i, ev.shiftKey || ev.ctrlKey || ev.metaKey); }
+const badgeTitle = (b: Badge) => (sk.tool === 'select' ? `${b.title} — click to delete (Shift+click selects)` : b.title);
 
 function editDim(i: number) {
   const c = sk.constraints[i];
@@ -386,6 +418,7 @@ const menuItems = computed(() => {
       <circle :cx="axes.o[0]" :cy="axes.o[1]" r="3.5" class="sko__origin" />
       <path v-if="regionPath" :d="regionPath" class="sko__region" fill-rule="evenodd" />
       <path v-if="outlinePath" :d="outlinePath" class="sko__outline" fill-rule="evenodd" data-testid="sketch-outline" />
+      <path v-if="xform" :d="xform.box" class="sko__xbox" />
       <path v-for="p in entityPaths" :key="`e${p.i}`" :d="p.d" class="sko__ent" :class="[`is-${p.cls}`, { 'is-cons': p.construction }]" />
       <g class="sko__dims">
         <g v-for="d in dims" :key="`d${d.i}`" :class="{ 'is-bad': d.bad, 'is-sel': d.sel }">
@@ -416,8 +449,15 @@ const menuItems = computed(() => {
 
     <div v-if="snapHint && snapHint.label" class="sko__hint" :style="{ left: `${snapHint.x + 12}px`, top: `${snapHint.y + 10}px` }" data-testid="sketch-snap-hint">{{ snapHint.label }}</div>
 
+    <template v-if="xform">
+      <span v-for="(h, k) in xform.handles" :key="`x${k}`" class="sko__xh" :class="{ 'is-move': k === 4, 'is-on': xfActive === k }"
+            :style="{ left: `${h[0]}px`, top: `${h[1]}px` }" :title="k === 4 ? 'Drag to move the outline' : 'Drag to scale the outline (the opposite corner stays)'"
+            :data-testid="k === 4 ? 'sketch-outline-move' : `sketch-outline-corner-${k}`"
+            @pointerdown.stop.prevent="xfDown(k, $event)" @pointermove.stop="xfMove" @pointerup.stop="xfUp" @pointercancel.stop="xfUp" />
+    </template>
+
     <button v-for="b in badges" :key="b.key" type="button" class="sko__badge" :class="{ 'is-bad': b.bad, 'is-sel': b.sel }"
-            :style="{ left: `${b.x}px`, top: `${b.y}px` }" :title="b.title" :aria-label="b.title" data-testid="sketch-badge" @click.stop="clickBadge(b.i, $event)">{{ b.glyph }}</button>
+            :style="{ left: `${b.x}px`, top: `${b.y}px` }" :title="badgeTitle(b)" :aria-label="badgeTitle(b)" :data-constraint="b.i" data-testid="sketch-badge" @click.stop="clickBadge(b.i, $event)">{{ b.glyph }}</button>
 
     <button v-for="d in dims" :key="`l${d.i}`" type="button" class="sko__dimlabel" :class="{ 'is-bad': d.bad, 'is-sel': d.sel }"
             :style="{ left: `${d.x}px`, top: `${d.y}px` }" :title="`${d.title} — click to edit`" data-testid="sketch-dimension" @click.stop="editDim(d.i)">{{ d.text }}</button>
@@ -450,6 +490,13 @@ const menuItems = computed(() => {
 .sko__origin { fill: var(--vp-sketch-glyph-bg); stroke: var(--fg-0); stroke-width: 1.4; }
 .sko__region { fill: var(--vp-sketch-region); stroke: none; }
 .sko__outline { fill: color-mix(in srgb, var(--vp-sketch-fixed) 18%, transparent); stroke: var(--vp-sketch-fixed); stroke-width: 1.2; }
+.sko__xbox { fill: none; stroke: var(--vp-sketch-fixed); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.9; }
+.sko__xh {
+  position: absolute; pointer-events: auto; touch-action: none; width: 12px; height: 12px; transform: translate(-50%, -50%); cursor: nwse-resize;
+  background: var(--vp-sketch-fixed); border: 1px solid var(--vp-sketch-glyph-bg); border-radius: 2px;
+}
+.sko__xh.is-move { cursor: move; border-radius: 50%; }
+.sko__xh.is-on { background: var(--vp-sketch-hover); }
 .sko__ent { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .sko__ent.is-free, .sko__vtx.is-free, .sko__ctr.is-free { stroke: var(--vp-sketch-free); }
 .sko__ent.is-fixed, .sko__vtx.is-fixed, .sko__ctr.is-fixed { stroke: var(--vp-sketch-fixed); }
@@ -522,6 +569,7 @@ const menuItems = computed(() => {
 .sko__mi:hover { background: var(--bg-3); }
 @media (pointer: coarse) {
   .sko__badge { min-width: 24px; height: 24px; font-size: 13px; }
+  .sko__xh { width: 22px; height: 22px; }
   .sko__dimlabel { padding: 5px 8px; font-size: var(--fs-md); }
   .sko__mi { height: 40px; }
 }

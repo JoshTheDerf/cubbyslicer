@@ -236,6 +236,49 @@ export async function sketchFlow({ page, D, check, shot, settled, run, lap, out 
   check(['spline', 'ellipse', 'point'].every((x) => s.ents.includes(x)), 'spline, ellipse, point drawn');
   await h.key('Escape'); await h.key('Escape');
   await shot('04-tools');
+  // ---- arc slot (Orca's click sequence: centre, start, end, width), then its Radius / Width fields
+  const nBefore = (await h.state()).e;
+  await run('design.sketch.tool.arc-slot');
+  await h.click(-40, 60); await h.click(-25, 60, { shift: true }); await h.click(-40, 75);
+  await h.hover(-22, 60);
+  const rub = await D(() => window.__cubbyDesign.sketchLive?.preview?.length ?? null);
+  await shot('04b-arc-slot-rubber');
+  await h.click(-22, 60);
+  s = await h.state();
+  check(s.e === nBefore + 4 && s.ents.slice(-4).every((x) => x === 'arc'), `arc slot: four arcs (${s.ents.slice(-4)})`);
+  check(s.value === 'Radius', `arc slot: the Radius field opens (${s.value})`);
+  await h.typeValue(20);
+  s = await h.state();
+  check(s.value === 'Width', `then Width (${s.value})`);
+  await h.typeValue(8);
+  const sl = await D((n) => window.__cubbyDesign.sketch.sk.entities.slice(n).map((e) => +e.radius.toFixed(4)), nBefore);
+  const slc = await D((n) => window.__cubbyDesign.sketch.sk.constraints.filter((c) => c.ea >= n).map((c) => c.type), nBefore);
+  lap(`arc slot radii ${JSON.stringify(sl)} constraints ${JSON.stringify(slc)} rubber ${rub}`);
+  check(JSON.stringify(sl) === JSON.stringify([24, 4, 16, 4]), 'arc slot follows Radius 20 / Width 8 (outer 24, inner 16, caps 4)');
+  check(slc.filter((x) => x === 'tangent').length === 4 && slc.includes('distance') && slc.includes('diameter'), 'arc slot: tangent joints + its two dimensions');
+  check((await h.state()).ok, 'arc slot solves');
+  await shot('04c-arc-slot');
+  await h.key('Escape'); await h.key('Escape');
+  // ---- a constraint badge: Shift+click selects it, a plain click deletes it (Orca), Ctrl+Z brings it back
+  const badge = await D(() => { const k = window.__cubbyDesign.sketch.sk; for (const el of document.querySelectorAll('[data-testid="sketch-badge"]')) { const i = Number(el.getAttribute('data-constraint')); const r = el.getBoundingClientRect(); if (['horizontal', 'vertical'].includes(k.constraints[i]?.type) && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === el) return { i, type: k.constraints[i].type }; } return null; });
+  check(!!badge, `an H / V badge is shown, uncovered (${JSON.stringify(badge)})`);
+  if (badge) {
+    const sel = `[data-testid="sketch-badge"][data-constraint="${badge.i}"]`;
+    const c0 = (await h.state()).c;
+    await page.click(sel, { modifiers: ['Shift'] }); await h.idle();
+    check((await D(() => window.__cubbyDesign.sketch.sk.selCons.slice())).join() === String(badge.i) && (await h.state()).c === c0, 'Shift+click on a badge selects its constraint');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    await shot('04d-badge-before');
+    await page.click(sel); await page.waitForTimeout(150); await h.idle();
+    s = await h.state();
+    const status = await D(() => window.__cubbyDesign.design.status?.text ?? '');
+    check(s.c === c0 - 1, `a click on the badge deleted the constraint (${c0} → ${s.c}; ${status})`);
+    check(/Deleted/.test(status), 'status says what was deleted');
+    await shot('04e-badge-deleted');
+    await page.keyboard.press('Control+z'); await page.waitForTimeout(200); await h.idle();
+    s = await h.state();
+    check(s.c === c0 && s.types[badge.i] === badge.type, 'Ctrl+Z restores it');
+  }
   // ---- drag an under-constrained point (the polygon's centre circle moves the polygon)
   const before = s.dof;
   await h.dragP([90, 30], [92, 34]);
@@ -284,6 +327,26 @@ export async function sketchFlow({ page, D, check, shot, settled, run, lap, out 
   await tool('design_sketch_begin', { plane: 'XY' });
   const svg = await tool('design_sketch_svg', { svg: '<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="20mm" viewBox="0 0 20 20"><path d="M0 0H20V20H0Z M5 5V15H15V5Z" fill="black"/><circle cx="10" cy="10" r="2"/></svg>' });
   check(svg.regions?.count === 2, `svg: square with a hole + a dot (${svg.regions?.count} regions)`);
-  await tool('design_sketch_cancel');
+  // ---- drag the outlines into place (Orca's TransformArt): the centre handle moves, a corner scales
+  await page.waitForSelector('[data-testid="sketch-outline-move"]');
+  const dragEl = async (selector, to) => {
+    const bb = await page.locator(selector).boundingBox();
+    const [tx, ty] = await h.P(...to);
+    await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2); await page.mouse.down();
+    await page.mouse.move((bb.x + bb.width / 2 + tx) / 2, (bb.y + bb.height / 2 + ty) / 2, { steps: 5 }); await page.mouse.move(tx, ty, { steps: 5 }); await page.mouse.up();
+    await page.waitForTimeout(150);
+  };
+  await dragEl('[data-testid="sketch-outline-move"]', [30, 10]);
+  let rg = await D(() => window.__cubbyDesign.sketch.sk.regions);
+  check(Math.abs(rg.offset[0] - 30) < 0.6 && Math.abs(rg.offset[1] - 10) < 0.6 && rg.scale[0] === 1, `centre handle moved the outline to (${rg.offset.map((v) => v.toFixed(2))})`);
+  await shot('07-outline-moved');
+  await dragEl('[data-testid="sketch-outline-corner-2"]', [rg.offset[0] + 20, rg.offset[1] + 20]);
+  rg = await D(() => window.__cubbyDesign.sketch.sk.regions);
+  check(Math.abs(rg.scale[0] - 1.5) < 0.05 && Math.abs(rg.scale[1] - 1.5) < 0.05, `corner handle scaled it about the opposite corner (${rg.scale.map((v) => v.toFixed(3))})`);
+  await shot('08-outline-scaled');
+  const cm3 = await tool('design_sketch_commit');
+  check(cm3.ok, 'SVG sketch committed');
+  const fsv = await D(async (i) => { const W = window.__cubbyDesign; return W.designKernel().run('read', async (c) => (await c.call('get_feature', { doc: W.currentDoc(), index: i })).result.feature, { quiet: true }); }, cm3.sketch_index);
+  check(Math.abs(fsv.import_scale_x - rg.scale[0]) < 1e-9 && Math.abs(fsv.import_offset[0] - rg.offset[0]) < 1e-9, `the placement is written to the sketch (scale ${fsv.import_scale_x?.toFixed?.(3)}, offset ${JSON.stringify(fsv.import_offset)})`);
   void t;
 }

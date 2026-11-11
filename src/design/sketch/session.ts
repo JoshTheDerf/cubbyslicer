@@ -102,7 +102,7 @@ export const sk = reactive({
   /** The last sketch finished in this view (Orca offers Extrude / Revolve on it). */
   finished: null as null | { index: number; name: string },
   /** Text / SVG regions waiting for Finish (rigid outlines; written onto the Sketch feature). */
-  regions: null as null | { regions: V2[][][]; offset: V2; label: string; text?: { string: string; font: string; height: number } },
+  regions: null as null | { regions: V2[][][]; offset: V2; scale: V2; label: string; text?: { string: string; font: string; height: number } },
 });
 
 let sessionDoc: number | null = null;
@@ -279,7 +279,7 @@ export async function finishSketch(): Promise<{ ok: boolean; error: string; inde
   try {
     const out = await runEdit(label, async (c, doc) => {
       await ensureSession(c);
-      const fields: Record<string, unknown> | null = regions ? { imported_regions: regions.regions, import_offset: regions.offset } : null;
+      const fields: Record<string, unknown> | null = regions ? { imported_regions: regions.regions, import_offset: regions.offset, import_scale_x: regions.scale[0], import_scale_y: regions.scale[1] } : null;
       if (fields && regions?.text) Object.assign(fields, { text_string: regions.text.string, text_font: regions.text.font, text_height: regions.text.height });
       // Kernel v1.2 takes the regions with the commit (one rebuild; it refuses an entity-less session
       // without them); older kernels ignore `fields`, so they get the set_feature below.
@@ -547,6 +547,24 @@ export async function deleteConstraints(indices: number[]): Promise<void> {
   sk.selCons = [];
 }
 
+/**
+ * A click on a constraint badge (Orca's `remove_constraint_near`): with the Select tool a plain
+ * click deletes that constraint and re-solves (one sketch undo entry); Shift / Ctrl toggle it in
+ * the selection instead, and other tools select it.
+ */
+export async function badgeClick(index: number, additive: boolean): Promise<void> {
+  const c = sk.constraints[index];
+  if (!c) return;
+  if (!additive && sk.tool === 'select') {
+    const what = describeConstraint(c, sk.entities, index);
+    await deleteConstraints([index]);
+    setStatus('ok', `Deleted ${what} — ${dofText()}.`);
+    return;
+  }
+  if (!additive) sk.sel = [];
+  sk.selCons = additive ? (sk.selCons.includes(index) ? sk.selCons.filter((x) => x !== index) : [...sk.selCons, index]) : [index];
+}
+
 // ---- entity edits ---------------------------------------------------------------------------------
 
 export async function deleteSelection(): Promise<void> {
@@ -716,12 +734,58 @@ export function placeRegions(regions: V2[][][], label: 'Text' | 'SVG', o: { offs
   if (!sk.open) return 'No sketch is open';
   if (sk.entities.some((e) => !e.construction)) return `${label} goes in a sketch of its own — finish this one first, then start a new sketch for it`;
   if (!regions.length) return `The ${label.toLowerCase()} has no outline`;
-  sk.regions = { regions, offset: o.offset ?? sk.regions?.offset ?? [0, 0], label, ...(o.text ? { text: o.text } : {}) };
-  setStatus('ok', `${label}: ${regions.length} outline region${regions.length === 1 ? '' : 's'} placed — Finish writes them into the sketch (they extrude as they are).`);
+  sk.regions = { regions, offset: o.offset ?? sk.regions?.offset ?? [0, 0], scale: [1, 1], label, ...(o.text ? { text: o.text } : {}) };
+  setStatus('ok', `${label}: ${regions.length} outline region${regions.length === 1 ? '' : 's'} placed — drag a corner to scale, the centre to move; Finish writes them into the sketch (they extrude as they are).`);
   return null;
 }
 export function moveRegions(offset: V2): void { if (sk.regions) sk.regions = { ...sk.regions, offset }; }
 export function clearRegions(): void { sk.regions = null; }
+
+/** A region point where it lands: base × scale + offset (the Sketch feature's import convention). */
+export function regionPoint(p: V2, r: { offset: V2; scale: V2 } | null = sk.regions): V2 {
+  return r ? [p[0] * r.scale[0] + r.offset[0], p[1] * r.scale[1] + r.offset[1]] : p;
+}
+const baseBounds = new WeakMap<V2[][][], { min: V2; max: V2 }>();
+function regionsBounds(regions: V2[][][]): { min: V2; max: V2 } {
+  let b = baseBounds.get(regions);
+  if (b) return b;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const reg of regions) for (const loop of reg) for (const [x, y] of loop) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  b = x0 === Infinity ? { min: [0, 0], max: [0, 0] } : { min: [x0, y0], max: [x1, y1] };
+  baseBounds.set(regions, b);
+  return b;
+}
+const baseCorner = (b: { min: V2; max: V2 }, i: number): V2 => [i === 1 || i === 2 ? b.max[0] : b.min[0], i === 2 || i === 3 ? b.max[1] : b.min[1]];
+
+/** The placed outlines' box corners (0 min/min, 1 max/min, 2 max/max, 3 min/max; Orca's `xform_world_corners`), or null. */
+export function regionCorners(): V2[] | null {
+  const r = sk.regions;
+  if (!r) return null;
+  const b = regionsBounds(r.regions);
+  return [0, 1, 2, 3].map((i) => regionPoint(baseCorner(b, i), r));
+}
+
+/**
+ * Orca's TransformArt drag (`drag_xform_handle`): handle 4 (the centre) moves the outlines by the
+ * pointer's travel since `anchor`; a corner (0–3) scales them, X and Y apart, holding the opposite
+ * corner (`anchor`, where it was when the drag began) and sending the grabbed one to `target`.
+ */
+export function dragRegionHandle(handle: number, anchor: V2, target: V2): void {
+  const r = sk.regions;
+  if (!r) return;
+  if (handle === 4) { sk.regions = { ...r, offset: [r.offset[0] + target[0] - anchor[0], r.offset[1] + target[1] - anchor[1]] }; return; }
+  const b = regionsBounds(r.regions), bg = baseCorner(b, handle), ba = baseCorner(b, (handle + 2) % 4);
+  const offset: V2 = [r.offset[0], r.offset[1]], scale: V2 = [r.scale[0], r.scale[1]];
+  for (const k of [0, 1] as const) {
+    const db = bg[k] - ba[k];
+    if (Math.abs(db) <= 1e-9) continue;
+    let s = (target[k] - anchor[k]) / db;
+    if (Math.abs(s) < 1e-4) s = s < 0 ? -1e-4 : 1e-4;
+    scale[k] = s;
+    offset[k] = anchor[k] - ba[k] * s;
+  }
+  sk.regions = { ...r, offset, scale };
+}
 
 // ---- inline value editor ---------------------------------------------------------------------------
 
