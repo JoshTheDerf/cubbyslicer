@@ -92,6 +92,7 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
     clearPlate: () => cmd.clearPlateCmd(),
     sliceAll: cmd.sliceAllNow,
     exportAllGcode: cmd.exportAllGcode,
+    exportSlicedFile: cmd.exportSlicedFile,
     rename: cmd.startRename,
     setGizmo,
     toggleLayOnFace: cmd.toggleLayFlat,
@@ -157,6 +158,8 @@ export function createAppContext(slicer: SliceControllerLike | null): AppContext
         hasResult: !!lastSlice.value,
         stale: !!slicer?.isStale?.value,
         slicedPlates: slicer?.plateStates?.value.filter((x) => x !== 'none').length ?? 0,
+        currentPlates: slicer?.plateStates?.value.filter((x) => x === 'done').length ?? 0,
+        slicedFile: !!slicer?.slicedFileAvailable?.value,
       };
     },
     get plates() {

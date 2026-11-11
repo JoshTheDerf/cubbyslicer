@@ -18,6 +18,12 @@ export function sliceActions(): Action[] {
       binding: { key: 'g', ctrlOrMeta: true }, when: canExport, run: (c) => c.dispatch.exportGcode() },
     { id: 'slice.export-all-gcode', title: 'Export G-code of all sliced plates', icon: 'i-lucide-download', category: 'Export', aliases: ['export all plates'],
       when: (c) => c.slice.available && !c.slice.busy && c.plates.count > 1 && (c.slice.slicedPlates ?? 0) > 0, run: (c) => c.dispatch.exportAllGcode() },
+    // Orca's .gcode.3mf (File ▸ Export in desktop, for every printer; the slice bar's menu offers it for Bambu Lab / "Support 3MF as gcode").
+    { id: 'slice.export-sliced-file', title: 'Export plate sliced file', icon: 'i-lucide-package', category: 'Export', aliases: ['gcode.3mf', 'export current sliced file'],
+      when: (c) => !!c.slice.slicedFile && canExport(c) && !c.slice.stale, run: (c) => c.dispatch.exportSlicedFile(false) },
+    { id: 'slice.export-all-sliced-file', title: 'Export all sliced file', icon: 'i-lucide-package', category: 'Export', aliases: ['gcode.3mf all plates', 'export all plate sliced file'],
+      when: (c) => !!c.slice.slicedFile && c.slice.available && !c.slice.busy && (c.slice.currentPlates ?? 0) > 0,
+      run: (c) => c.dispatch.exportSlicedFile(true) },
     // Earlier builds used Ctrl+E; keep it working.
     { id: 'slice.export-gcode-e', title: 'Export G-code', icon: 'i-lucide-download', category: 'Export', hidden: true, paletteHidden: true,
       binding: { key: 'e', ctrlOrMeta: true }, when: canExport, run: (c) => c.dispatch.exportGcode() },

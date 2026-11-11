@@ -63,7 +63,7 @@
                :aria-label="lastSlice && isStale ? 'Re-slice' : 'Slice plate'"
                :disabled="!canSlice || status === 'slicing'" @click="slice()" />
     </UTooltip>
-    <UDropdownMenu v-if="plates.length > 1" :items="sliceMenu" :content="{ side: 'bottom', align: 'end' }">
+    <UDropdownMenu v-if="plates.length > 1 || slicedFileOffered" :items="sliceMenu" :content="{ side: 'bottom', align: 'end' }">
       <UButton color="primary" variant="soft" size="sm" icon="i-lucide-chevron-down" aria-label="More slicing options" class="-ms-1.5"
                :disabled="status === 'slicing'" />
     </UDropdownMenu>
@@ -83,18 +83,24 @@ import { lastSlice, resolvedConfig } from './state';
 import { getSliceObjects, objects, plates } from '../project/store';
 import { getConfigProblems, type ConfigProblem } from '../settings/validate';
 import { bindingTokensOf } from './shell/useActions';
+import { exportSlicedFile } from './shell/commands/slice';
 import PrintHostButton from '../printhost/PrintHostButton.vue';
 import { hostReady } from '../printhost/store';
 import { compact, narrow, phone } from './shell/uiState';
 import { jumpToSetting } from '../settings/useLayout';
 import { toast } from '../ui';
 
-const { status, progress, message, error, isStale, slice, sliceAll, cancel, exportGcode, exportAllGcode, plateStates } = useSliceController();
+const { status, progress, message, error, isStale, slice, sliceAll, cancel, exportGcode, exportAllGcode, plateStates, slicedFileOffered } = useSliceController();
 
-// Multi-plate: Orca's "Slice all" / export every sliced plate.
+// Multi-plate: Orca's "Slice all" / export every sliced plate. Bambu Lab / "Support 3MF as gcode"
+// printers: the sliced file (.gcode.3mf), as in desktop's print button menu.
 const sliceMenu = computed(() => [[
-  { label: 'Slice all plates', icon: 'i-lucide-layers-3', disabled: !objects.value.length || problems.value.length > 0, onSelect: () => { void sliceAll(); } },
-  { label: 'Export G-code of all sliced plates', icon: 'i-lucide-download', disabled: !plateStates.value.some((s) => s !== 'none'), onSelect: () => { exportAllGcode(); } },
+  ...(plates.value.length > 1 ? [{ label: 'Slice all plates', icon: 'i-lucide-layers-3', disabled: !objects.value.length || problems.value.length > 0, onSelect: () => { void sliceAll(); } }] : []),
+  ...(slicedFileOffered.value ? [
+    { label: 'Export plate sliced file', icon: 'i-lucide-package', disabled: !sliced.value, onSelect: () => { exportSlicedFile(false); } },
+    { label: 'Export all sliced file', icon: 'i-lucide-package', disabled: !plateStates.value.includes('done'), onSelect: () => { exportSlicedFile(true); } },
+  ] : []),
+  ...(plates.value.length > 1 ? [{ label: 'Export G-code of all sliced plates', icon: 'i-lucide-download', disabled: !plateStates.value.some((s) => s !== 'none'), onSelect: () => { exportAllGcode(); } }] : []),
 ]]);
 
 const stats = computed(() => lastSlice.value?.report.stats ?? null);

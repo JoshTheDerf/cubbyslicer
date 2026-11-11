@@ -27,6 +27,10 @@ export interface SliceSlice {
   stale: boolean;
   /** Plates with a sliced result (any plate). */
   slicedPlates?: number;
+  /** Plates whose sliced result is current. */
+  currentPlates?: number;
+  /** A sliced file (.gcode.3mf) can be written (OrcaSlicer engine). */
+  slicedFile?: boolean;
 }
 
 export interface PlatesSlice {
@@ -120,6 +124,8 @@ export interface ActionDispatch {
   cancelSlice(): void;
   exportGcode(): void | Promise<void>;
   exportAllGcode(): void;
+  /** Orca "Export plate sliced file" / "Export all sliced file" (.gcode.3mf). */
+  exportSlicedFile(all: boolean): void;
   // help
   openPalette(): void;
   openShortcuts(): void;

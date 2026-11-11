@@ -32,6 +32,8 @@ From left to right, the top bar has:
 
 After slicing, the bar shows the print time (and weight on wide screens). The slice button turns into "Sliced" and Export G-code becomes the main button. On a phone the bar keeps only the sidebar and menu buttons, the view switch and the slice controls.
 
+File ▸ Export plate sliced file and Export all sliced file save the sliced plates as a `.gcode.3mf`, the file Bambu Lab printers take (G-code with plate thumbnails, print time, weight and filaments); for Bambu Lab printers and printers with "Support 3MF as gcode" they are also in the slice button's menu.
+
 When a setting has an invalid value, the slice controls show "N settings to fix" and slicing is blocked. Click it for the list, and click a setting there to go to it. When slicing fails, click "Slicing failed" for the reason, with Copy and Try again.
 
 ## Preferences

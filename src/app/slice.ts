@@ -12,13 +12,19 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import { getSchema, SliceCancelled, SliceError, sliceJob } from '../engine/client';
 import { engineCaps, type FlatConfig, type SliceJob, type SliceReport, type SliceResult } from '../engine/types';
 import { ORCA_COMPAT_PREFIX, splitOrcaCompat } from '../presets/preflight/convert';
-import { activePlate, getSliceObjects, objectIssues, objectsOnPlate, plates, plateSliceSignature, projectLoads, setActivePlate } from '../project/store';
+import { activePlate, getSliceObjects, objectIssues, objectsOnPlate, plates, plateSliceSignature, projectLoads, projectName, serializePlates, setActivePlate } from '../project/store';
 import { activeEngine, activeView, lastSlice, resolvedConfig } from './state';
 import { applyPlateConfig } from '../plates/store';
 import { currentPresets, presetsSettled } from '../presets/store';
-import { asList } from '../lib/configValue';
+import { asList, cfgString, SCALAR } from '../lib/configValue';
 import { calibJobOptions, calibSignature } from '../calibration/state';
-import { saveBytes } from './shell/download';
+import { safeFileName, saveBytes } from './shell/download';
+import { isBblPrinter } from './shell/arrange';
+import { isOrcaConfig } from '../engine/capabilities';
+import { renderPlateImages, type PlateImages } from '../project/thumbnails';
+import { buildGcode3mf, GCODE_3MF_EXT, scanGcode, type Gcode3mfPlate } from '../project/export/gcode3mf';
+import { customGcodeXml, identifyIds, modelMetadataXml, projectSettings } from '../project/persistence/orca3mfWriter';
+import { passthroughFor } from '../project/persistence/passthrough';
 import { toast } from '../ui';
 import { GCODE_TYPES, fileInFolder, folderAccessSupported, writeHandle } from '../localfs/store';
 import { withGcodeThumbnails } from '../project/thumbnails';
@@ -336,9 +342,81 @@ function exportAllGcode(): number {
   return all.length;
 }
 
+/** The sliced file (.gcode.3mf) can be written: an OrcaSlicer slice (desktop's File ▸ Export has it for every printer). */
+const slicedFileAvailable = computed(() => isOrcaConfig(activeEngine.value));
+/**
+ * The print button's menu offers it for Bambu Lab printers and printers with
+ * "Support 3MF as gcode" (use_3mf) — MainFrame::available_print_actions.
+ */
+const slicedFileOffered = computed(() => slicedFileAvailable.value && (isBblPrinter() || cfgString(resolvedConfig.value, 'use_3mf', SCALAR) === '1'));
+
+const SLICED_FILE_TYPES: FilePickerAcceptType[] = [{ description: 'Sliced file (.gcode.3mf)', accept: { 'model/3mf': ['.3mf'] } }];
+
+/** The plates' results that are current (desktop only packs valid slice results). */
+function currentPlates(list: number[]): number[] {
+  return list.filter((i) => resultFor(i) && !plateStale(i));
+}
+
+/**
+ * The .gcode.3mf of `list` (Plater::export_gcode_3mf). Post-processing plugins
+ * run on each plate's G-code first (null: one failed, nothing is written).
+ */
+async function slicedFileBytes(list: number[], exportPlate: number | null, name: string): Promise<Uint8Array | null> {
+  const meta = serializePlates();
+  const fallbackIds = identifyIds();
+  const sliced = new Map<number, NonNullable<Gcode3mfPlate['sliced']>>();
+  const labelIdOf = new Map<string, number>();
+  for (const i of list) {
+    const r = resultFor(i)!.result;
+    const gcode = await gcodeForOutput(r.gcode, 'File', name);
+    if (!gcode) return null;
+    const scan = scanGcode(gcode);
+    const objs = getSliceObjects(i);
+    // Bambu G-code lists its label ids sorted; the engine numbers the instances in slice order.
+    if (scan.labelIds?.length === objs.length) objs.forEach((o, k) => labelIdOf.set(o.id, scan.labelIds![k]));
+    sliced.set(i, {
+      gcode, scan, stats: r.report.stats,
+      config: { ...resolvedConfig.value, ...(meta[i]?.config ?? {}) },
+      objects: objs.map((o) => ({ name: o.name, fallbackId: fallbackIds.get(o.id) ?? 0 })),
+    });
+  }
+  let images: PlateImages[] = [];
+  try {
+    images = await renderPlateImages((id) => labelIdOf.get(id) ?? fallbackIds.get(id) ?? 0);
+  } catch (e) {
+    console.warn('Sliced file thumbnails failed', e);
+  }
+  return buildGcode3mf({
+    plates: meta.map((p, i) => ({ name: p.name, locked: p.locked, config: p.config, images: images[i], sliced: sliced.get(i) })),
+    exportPlate,
+    config: resolvedConfig.value,
+    printerModelId: (await currentPresets.value.printerModelId()) ?? '',
+    bbl: isBblPrinter(),
+    modelMetadataXml: modelMetadataXml(passthroughFor(new Set()).modelMetadata),
+    projectSettings: projectSettings(),
+    customGcodeXml: customGcodeXml(meta),
+  });
+}
+
+/**
+ * Export the active plate ("Export plate sliced file") or every plate with a
+ * current result ("Export all sliced file") as a .gcode.3mf. Returns the number
+ * of plates in the file (0: nothing current to export).
+ */
+function exportSlicedFile(all: boolean): number {
+  const list = currentPlates(all ? plates.value.map((_, i) => i) : [activePlate.value]);
+  if (!list.length) return 0;
+  const stem = all ? safeFileName(projectName.value, 'plates') : gcodeFilename().replace(/\.gcode$/i, '');
+  const name = `${stem}${GCODE_3MF_EXT}`;
+  void saveBytes(() => slicedFileBytes(list, all ? null : activePlate.value, name), name, 'model/3mf', { types: SLICED_FILE_TYPES, id: 'cubby-gcode' })
+    .catch((e) => { toast.error("Couldn't export the sliced file.", { detail: (e as Error)?.message }); });
+  return list.length;
+}
+
 export function useSliceController() {
   return {
     status, progress, message, error, errorReport, isStale, plateStates,
     slice, sliceAll, cancel, exportGcode, exportAllGcode, gcodeFilename,
+    slicedFileAvailable, slicedFileOffered, exportSlicedFile,
   };
 }

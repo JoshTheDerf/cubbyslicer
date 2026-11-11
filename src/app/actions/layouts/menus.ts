@@ -23,7 +23,7 @@ export const FILE_MENU: MenuLayout = {
     [{ label: 'Local folders', icon: 'i-lucide-folder-tree', children: ['local.folders', 'local.save-folder', 'local.export-gcode', 'local.export-3mf'] },
       { label: 'CubbyCAD', icon: 'i-lucide-cloud', children: ['cloud.open', 'cloud.save', 'cloud.save-as', 'cloud.export-gcode', 'cloud.export-3mf', 'cloud.copy-link'] }],
     ['file.import'],
-    ['export.plate-3mf', 'export.plate-stl', 'export.selection-stl', 'export.cubby', 'slice.export-gcode', 'slice.export-all-gcode'],
+    ['export.plate-3mf', 'export.plate-stl', 'export.selection-stl', 'export.cubby', 'slice.export-sliced-file', 'slice.export-all-sliced-file', 'slice.export-gcode', 'slice.export-all-gcode'],
     ['presets.export-bundle'],
     ['plugins.open'],
     ['app.preferences'],
@@ -102,7 +102,7 @@ export const PLATE_MENU: MenuLayout = {
 export const SLICE_MENU: MenuLayout = {
   groups: [
     ['slice.run', 'slice.cancel'],
-    ['slice.export-gcode', 'printer.print', 'printer.send'],
+    ['slice.export-sliced-file', 'slice.export-all-sliced-file', 'slice.export-gcode', 'printer.print', 'printer.send'],
     ['printer.setup', 'printer.webui', 'printer.sync-filaments'],
     ['printer.bed-shape', 'filament.flushing', 'filament.grouping'],
     ['presets.create-printer', 'presets.create-filament'],

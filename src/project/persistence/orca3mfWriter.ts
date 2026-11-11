@@ -46,7 +46,7 @@ export function projectBytesFor(_fileName: string): Promise<Uint8Array> {
 }
 
 /** identify_id of each object instance, as buildOrca3mf numbers them (pick_N.png colours). */
-function identifyIds(): Map<string, number> {
+export function identifyIds(): Map<string, number> {
   const ids = new Map<string, number>();
   groupObjects(serializeObjects(), new Set(liveMeshes().map((m) => m.id))).forEach((g, gi) => {
     g.members.forEach((m, k) => ids.set(m.id, (gi + 1 + 100000) * 100 + k));
@@ -368,7 +368,7 @@ function volumeXml(sub: number, part: ObjectPart | null, objectName: string, kee
  * (designer, licence, …) plus ours, sorted by name (a std::map), the
  * "OrcaSlicer" tag right after "Application", dates blank (Orca's privacy rule).
  */
-function modelMetadataXml(kept: ReadonlyArray<readonly [string, string]>): string {
+export function modelMetadataXml(kept: ReadonlyArray<readonly [string, string]>): string {
   const items = new Map<string, string>();
   for (const k of ['Copyright', 'Description', 'Designer', 'DesignerCover', 'DesignerUserId', 'License', 'Origin']) items.set(k, '');
   for (const [k, v] of kept) items.set(k, v);
@@ -393,7 +393,7 @@ function pick(o: Record<string, ConfigValue>, keys: string[]): Record<string, Co
 }
 
 /** Orca's project_settings.config: the resolved config, preset names and the keys each preset changed. */
-function projectSettings(): Record<string, unknown> {
+export function projectSettings(): Record<string, unknown> {
   const p = currentPresets.value;
   const cfg: Record<string, unknown> = { ...resolvedConfig.value };
   const keys = (o: Record<string, unknown> | undefined) => Object.keys(o ?? {}).sort().join(';');
@@ -406,7 +406,7 @@ function projectSettings(): Record<string, unknown> {
   return cfg;
 }
 
-function customGcodeXml(plates: ReturnType<typeof serializePlates>): string | null {
+export function customGcodeXml(plates: ReturnType<typeof serializePlates>): string | null {
   // CustomGCode::Mode, as the engine bridge slices it (cs_bridge.cpp: several filaments → MultiAsSingle).
   const fd = resolvedConfig.value.filament_diameter;
   const filaments = Array.isArray(fd) ? fd.length : String(fd ?? '').split(/[,;]/).filter(Boolean).length;

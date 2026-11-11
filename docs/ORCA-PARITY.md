@@ -15,7 +15,7 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 ### Slicer
 - **Texture Displacement** tool and texture painting. Projects that contain texture layers keep them through open and save. The engine can bake geometry (`cs_tool texture_displacement`); the colour output and the UI are not built.
 - **Import of textured / coloured models** (glTF, GLB, FBX) and the Import Model dialog. Work in progress is parked in the engine port: `orcaslicer-wasm/docs/TEXTURE-IMPORT-NOTES.md`.
-- **`.gcode.3mf` export** for Bambu profiles.
+- **`.gcode.3mf` export** leaves some `slice_info.config` values as desktop writes them when it has no data, because the engine doesn't report them yet: first-layer time, toolpath-outside flag, slice warnings, per-plate filament grouping on multi-nozzle printers (H2D / H2C), layer filament and change sequences, mixed filaments used, and `plate_N.json` first-layer bounding boxes. Single-nozzle printers are exact.
 - **Preview:** centre-of-mass markers (needs per-object masses from the engine's G-code processor); order-independent transparency for translucent filaments (a simple blended pass is used).
 - **Print hosts:** Moonraker Happy Hare object fallback and Creality CFS mapping; Qidi Box slot contents.
 - **Published 3MFs:** a "full" published filament lands as unsaved edits on its slot (desktop creates a project-only preset); the setting-id scoring tier and mixed-slot colours are missing.

@@ -32,4 +32,10 @@ export function exportAllGcode(): void {
   else if (!(folderAccessSupported && n > 1)) toast.success(`Exported G-code for ${n} plate${n === 1 ? '' : 's'}.`, { timeout: 2200 });
 }
 
+/** Orca "Export plate sliced file" (`all` false) / "Export all sliced file": the .gcode.3mf. */
+export function exportSlicedFile(all: boolean): void {
+  if (!slicer) return;
+  if (!slicer.exportSlicedFile(all)) toast.info(all ? 'Slice the plates before exporting the sliced file.' : 'Slice the plate before exporting the sliced file.');
+}
+
 export function cancelSlice(): void { slicer?.cancel(); }
