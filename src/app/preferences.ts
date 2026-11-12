@@ -40,6 +40,8 @@ export interface Preferences {
   designCommitMode: 'assembly' | 'bodies';
   /** Orca 2.5 design_connector_face_glyph "Draw mate connectors as a face": a coordinate system is drawn as Orca's face glyph (on) or its disc (off). */
   designConnectorFace: boolean;
+  /** Orca 2.5 "Open the Speed Dial from the keyboard" (enable_speed_dial): the Speed Dial shortcut (Space) opens the command palette. */
+  speedDial: boolean;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -57,6 +59,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   designTab: true,
   designCommitMode: 'assembly',
   designConnectorFace: true,
+  speedDial: true,
 };
 
 const LS_KEY = 'cubby-slicer:preferences';
@@ -69,7 +72,7 @@ export function sanitizePreferences(raw: unknown): Preferences {
   // An engine this build doesn't have maps to the default engine.
   if (r.defaultEngine === 'last') out.defaultEngine = 'last';
   else { const e = toEngineId(r.defaultEngine); if (e) out.defaultEngine = e; }
-  for (const k of ['zoomToCursor', 'reverseZoom', 'orbitAroundCursor', 'swapPanRotate', 'autoArrangeImport', 'keyboardHints', 'askPrimitiveSize', 'designTab', 'designConnectorFace'] as const) {
+  for (const k of ['zoomToCursor', 'reverseZoom', 'orbitAroundCursor', 'swapPanRotate', 'autoArrangeImport', 'keyboardHints', 'askPrimitiveSize', 'designTab', 'designConnectorFace', 'speedDial'] as const) {
     if (typeof r[k] === 'boolean') out[k] = r[k] as boolean;
   }
   if (typeof r.orbitSpeed === 'number' && Number.isFinite(r.orbitSpeed)) out.orbitSpeed = Math.min(5, Math.max(0.1, r.orbitSpeed));

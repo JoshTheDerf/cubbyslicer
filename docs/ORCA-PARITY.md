@@ -18,9 +18,6 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **`.gcode.3mf` export** leaves some `slice_info.config` values as desktop writes them when it has no data, because the engine doesn't report them yet: first-layer time, toolpath-outside flag, slice warnings, per-plate filament grouping on multi-nozzle printers (H2D / H2C), layer filament and change sequences, mixed filaments used, and `plate_N.json` first-layer bounding boxes. Single-nozzle printers are exact.
 - **Preview:** centre-of-mass markers (needs per-object masses from the engine's G-code processor). Translucent filaments use desktop's order-independent transparency, its opacity by the path through the extrusion and its cut at the joints, but the cut is in screen space (the toolpaths here are screen-space capsules, not desktop's boxes), so where two segments of very different widths meet the seam can differ slightly from desktop. Without half-float render targets (some phones) the preview falls back to a single blended pass, as desktop's OpenGL ES build does.
 - **Print hosts:** "Sync filaments from printer" for a Creality K-series printer on the Creality Print host (Orca's CrealityPrint agent reads its CFS over the port-9999 socket and scores presets against the spools); the send dialog's CFS mapping is done.
-- **Published 3MFs:** a "full" published filament lands as unsaved edits on its slot (desktop creates a project-only preset); the setting-id scoring tier and mixed-slot colours are missing.
-- **Automatic value changes** run on edits and on preset selection, but not when a project is opened or when the MCP bridge or a plugin changes a setting.
-- **Speed Dial:** Ctrl+K opens the palette here (it is Clone in Orca); the two Speed Dial preferences are not wired; settings rows have no wiki links.
 - **Mixed filaments:** Orca's lab-measured colours come from the engine; before the engine has loaded, swatches use the computed pigment blend.
 
 ### Design tab (experimental)
@@ -34,6 +31,9 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 
 ## Deliberate differences
 
+- **Speed Dial:** Ctrl+K and Ctrl+Shift+P also open the command palette (Ctrl+K is Clone in Orca); "Open the Speed Dial from the keyboard" turns off only Space, Orca's Speed Dial key.
+- **Published 3MFs:** a filament published in full becomes a standalone user preset (desktop makes it a preset that lives only inside the project); CubbySlicer has no project-only presets and also keeps a desktop project's embedded presets as user presets.
+- **MCP bridge and automatic value changes:** where desktop asks (spiral vase, layer height limits, prime tower, …), the bridge takes desktop's suggestion (Yes / OK) without a dialog and reports it in the tool result. A project opened through the bridge asks in the browser, as an opened project does on desktop.
 - **Calibration:** where a filament's max volumetric speed or a machine speed limit is unset, Orca computes a speed of 0, which the engine refuses; CubbySlicer keeps the profile's speed.
 - **Height ranges:** settings the engine doesn't know are kept and written back (desktop drops them).
 - **Filament renumbering:** two desktop slips are not copied (a part's renumbered support filament written onto its object; a stray custom G-code entry on replace).

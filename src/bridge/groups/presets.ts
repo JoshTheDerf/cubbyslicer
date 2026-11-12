@@ -14,6 +14,7 @@ import { writeJson } from '../../lib/storage';
 import { normaliseHex } from '../../lib/colour';
 import { MAX_FILAMENT_SLOTS } from '../../mixed/model';
 import { panelRequest, SETUP_DONE_KEY, setupWizardState } from '../../settings/uiState';
+import { afterPresetSelect, autoAnswer, type AutoNote } from '../../settings/applyAutoChanges';
 import { oneOf } from '../logic';
 import { bridge } from '../store';
 import { presetSummary } from './core';
@@ -110,7 +111,8 @@ export function presetTools(): BridgeTool[] {
       name: 'select_preset',
       description:
         'Select a printer, process or filament preset by id (from list_presets) or exact name. A library printer is installed on selection; a new printer also picks its default process and filaments. ' +
-        'When the current preset has unsaved edits, pass unsaved: "discard", "keep" (carry the edits over) or "save" (user presets only), like the app asks.',
+        'When the current preset has unsaved edits, pass unsaved: "discard", "keep" (carry the edits over) or "save" (user presets only), like the app asks. ' +
+        'Desktop OrcaSlicer\'s automatic value changes then run as after a selection in the app; where desktop would ask, its suggestion (Yes / OK) is taken without a dialog and reported in `automatic`.',
       inputSchema: obj({
         kind: oneOfS(KINDS, 'Preset kind.'),
         id: str('Preset id, e.g. "sys:Prusa/Prusa MK4 0.4 nozzle".'),
@@ -145,7 +147,13 @@ export function presetTools(): BridgeTool[] {
         await settled();
         const got = p.selectedId(kind, index);
         if (got !== id) throw new Error(`"${id}" isn’t available for the selected printer (still ${p.selectedInfo(kind, index).name}). Use list_presets.`);
-        return { data: { ok: true, ...presetSummary() } };
+        // Orca's automatic value changes after a selection, answered without dialogs (as set_settings).
+        const asked: AutoNote[] = [];
+        const changed = await afterPresetSelect(kind, index, autoAnswer(asked));
+        if (Object.keys(changed).length) await settled();
+        const automatic = Object.keys(changed).length || asked.length
+          ? { changed, answered: asked.length ? asked.map((a) => ({ question: a.message, answer: a.button })) : undefined } : undefined;
+        return { data: { ok: true, ...presetSummary(), automatic } };
       },
     },
 

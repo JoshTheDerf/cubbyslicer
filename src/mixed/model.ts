@@ -45,6 +45,13 @@ export interface MixedDef {
   curve: GradientAnchor[];
   /** Gradient per part of an assembly instead of over the whole object. */
   perPart: boolean;
+  /**
+   * The slot's stored swatch (project `filament_colour`), shown while the mix can't blend (fewer than two
+   * components or one that isn't a physical filament): Orca recomputes a mix's colour from its components
+   * only when it is intact and otherwise keeps the stored one (Sidebar::update_mixed_filament_list), e.g.
+   * the colour a published 3MF seeds an unassigned mixed filament with.
+   */
+  colour?: string;
 }
 
 export interface MixedFilament extends MixedDef {
@@ -95,17 +102,18 @@ export function readMixedSlots(v: Record<string, ConfigValue | undefined>): Arra
     const components = parseComponents(at('filament_mixed_components', i));
     const gradient = truthy(at('filament_mixed_gradient', i)) && components.length === 2;
     const [r0, r1] = at('filament_mixed_gradient_range', i).split(',').map(parseFloat);
-    out.push({
-      index: i,
-      def: {
-        components,
-        ratios: parseRatios(at('filament_mixed_sublayer_ratios', i), components.length),
-        gradient,
-        direction: Number.isFinite(r0) && Number.isFinite(r1) && r0 < r1 ? 'ba' : 'ab',
-        curve: gradient ? parseGradientCurve(at('filament_mixed_gradient_curve', i)) : [],
-        perPart: gradient && truthy(at('filament_mixed_gradient_per_part', i)),
-      },
-    });
+    const def: MixedDef = {
+      components,
+      ratios: parseRatios(at('filament_mixed_sublayer_ratios', i), components.length),
+      gradient,
+      direction: Number.isFinite(r0) && Number.isFinite(r1) && r0 < r1 ? 'ba' : 'ab',
+      curve: gradient ? parseGradientCurve(at('filament_mixed_gradient_curve', i)) : [],
+      perPart: gradient && truthy(at('filament_mixed_gradient_per_part', i)),
+    };
+    // A mix that can't blend keeps its stored swatch.
+    const stored = at('filament_colour', i);
+    if ((components.length < 2 || components.includes(0)) && /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(stored)) def.colour = stored;
+    out.push({ index: i, def });
   });
   return out;
 }
@@ -186,7 +194,8 @@ let measuredSource: MeasuredSource | null = null;
 export function setMeasuredBlendSource(fn: MeasuredSource | null): void { measuredSource = fn; }
 
 /** `blend_mixed_color`: the mix's display colour from the physical colours (1-based components). */
-export function mixedColour(d: Pick<MixedDef, 'components' | 'ratios'>, physicalColours: readonly string[]): string {
+export function mixedColour(d: Pick<MixedDef, 'components' | 'ratios' | 'colour'>, physicalColours: readonly string[]): string {
+  if (d.colour && (d.components.length < 2 || d.components.some((c) => c < 1 || c > physicalColours.length))) return d.colour;
   const hexes = d.components.map((c) => (c >= 1 && c <= physicalColours.length ? physicalColours[c - 1] : '#808080'));
   if (measuredSource && hexes.length >= 2) {
     const key = `${hexes.join(',').toUpperCase()}|${d.ratios.join(',')}`;

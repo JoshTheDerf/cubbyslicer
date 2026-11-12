@@ -15,6 +15,8 @@ import { openDialog } from '../../dialogs/state';
 import { shapeRequest, volumesRequest } from '../../dialogs/bed/request';
 import { currentPresets } from '../../presets/store';
 import { asList, SCALAR, toNumber, valueAt } from '../../lib/configValue';
+import { activeEngine } from '../../app/state';
+import { settingWikiUrl } from '../wiki';
 // Orca 2.5 plugin-backed options (gui types plugin_picker / plugin_config): editors from src/plugins, loaded on demand.
 const PluginPicker = defineAsyncComponent(() => import('../../plugins/ui/PluginPicker.vue'));
 const PluginConfigField = defineAsyncComponent(() => import('../../plugins/ui/PluginConfigField.vue'));
@@ -53,6 +55,8 @@ const VOLUME_KEYS = new Set(['bed_exclude_volumes', 'extruder_bed_exclude_volume
 const vector = computed(() => isVectorType(props.def.type));
 const arr = computed(() => asList(props.value));
 const label = computed(() => props.labelOverride || props.def.label || props.def.fullLabel || props.optKey);
+/** Orca links the row label to its wiki page (Line::label_path → OptionsGroup::get_url). */
+const wikiUrl = computed(() => settingWikiUrl(activeEngine.value, props.optKey));
 const stateText = computed(() => (props.hiddenByRule ? `Hidden: ${props.reason || 'not used with the current settings.'}` : props.disabled && props.reason ? `Disabled: ${props.reason}` : ''));
 const multiline = computed(() => (props.def.multiline || /gcode$/.test(props.optKey)) && (props.def.type === 'string' || props.def.type === 'strings'));
 
@@ -146,17 +150,21 @@ const hasRange = computed(() => (props.def.min !== null && props.def.min !== und
 
     <!-- The tooltip is mounted on first hover: ~700 eager UTooltips double a page's render time. -->
     <span v-if="!tip" class="row__lbl" @pointerenter="tip = true" @focusin="tip = true">
-      <span class="row__text">{{ label }}</span>
+      <a v-if="wikiUrl" class="row__text row__link" :href="wikiUrl" target="_blank" rel="noopener">{{ label }}</a>
+      <span v-else class="row__text">{{ label }}</span>
       <span v-if="def.mode === 'expert'" class="row__mode" title="Expert setting">E</span>
       <UIcon v-if="perVariant" name="i-lucide-split" class="row__var" />
     </span>
     <UTooltip v-else :delay-duration="450" :content="{ side: 'top', align: 'start' }" :ui="{ content: 'h-auto max-w-80 flex-col items-start gap-1 py-2 px-2.5' }">
       <span class="row__lbl">
-        <span class="row__text">{{ label }}</span>
+        <a v-if="wikiUrl" class="row__text row__link" :href="wikiUrl" target="_blank" rel="noopener">{{ label }}</a>
+        <span v-else class="row__text">{{ label }}</span>
         <span v-if="def.mode === 'expert'" class="row__mode" title="Expert setting">E</span>
         <UIcon v-if="perVariant" name="i-lucide-split" class="row__var" />
       </span>
       <template #content>
+        <!-- Orca: a linked label's tooltip starts with the wiki URL. -->
+        <span v-if="wikiUrl" class="text-[11px] break-all text-dimmed">{{ wikiUrl }}</span>
         <strong class="text-xs text-highlighted">{{ def.fullLabel || label }}</strong>
         <span v-if="def.tooltip" class="whitespace-pre-wrap text-xs leading-snug text-muted">{{ def.tooltip }}</span>
         <span v-if="perVariant" class="text-xs leading-snug text-muted">One value per nozzle: this edits the one chosen at the top of the page.</span>
@@ -232,6 +240,8 @@ const hasRange = computed(() => (props.def.min !== null && props.def.min !== und
 /* Long labels wrap (a second line beats "Wipe tower rotation a…"). */
 .row__text { overflow-wrap: anywhere; line-height: 1.25; padding-block: 4px; }
 .row--mod .row__text { color: var(--modified); }
+.row__link { color: inherit; text-decoration: none; cursor: pointer; }
+.row__link:hover, .row__link:focus-visible { text-decoration: underline; }
 .row__var { width: 12px; height: 12px; flex: none; color: var(--ui-text-dimmed); }
 .row__mode { font-size: 9px; line-height: 12px; padding: 0 3px; border-radius: 3px; flex: none; color: var(--ui-warning); border: 1px solid color-mix(in srgb, var(--ui-warning) 40%, transparent); }
 .row__dl { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; margin: 2px 0 0; font-size: 11px; }

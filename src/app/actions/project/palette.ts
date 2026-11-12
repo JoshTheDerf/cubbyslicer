@@ -143,6 +143,8 @@ export interface SettingEntry {
   hidden?: string;
   /** Disabled by a rule: why. */
   disabled?: string;
+  /** The row's wiki page (Orca: help_url = OptionsGroup::get_url(wiki_path)). */
+  helpUrl?: string;
 }
 
 /** Orca materialize_setting_actions: one entry per setting, id `setting:<key>`. */
@@ -158,7 +160,7 @@ export function settingItems(entries: readonly SettingEntry[], run: (e: SettingE
       id: `setting:${e.key}`, label: e.label, category: '', group: '', source, kind: 'setting',
       fullLabel: e.fullLabel && e.fullLabel !== e.label ? e.fullLabel : undefined,
       // App extra: the option key is searchable too.
-      icon: e.icon, keywords: e.key, mode: e.mode ?? 'simple', description, run: () => run(e),
+      icon: e.icon, keywords: e.key, mode: e.mode ?? 'simple', description, helpUrl: e.helpUrl, run: () => run(e),
     });
   }
   return out;

@@ -8,6 +8,7 @@
  * preset's keys are the schema options of its kind (print / filament /
  * machine scope), like Orca's per-type preset configs.
  */
+import { afterSettingEdit } from '../../settings/applyAutoChanges';
 import { currentPresets } from '../../presets/store';
 import type { PresetInfo, PresetKind } from '../../presets/types';
 import type { ConfigScope } from '../../engine/types';
@@ -166,7 +167,7 @@ export async function beginUpdate(a: { category: string; preset_name?: string; s
 }
 
 /** commit(): validate every staged key and value, then apply all of them or none. */
-export function commitUpdate(a: { category: string; target_id: string; target_name: string; slot_number?: number; staged: [string, string][]; selection_changed?: boolean }): Record<string, unknown> {
+export async function commitUpdate(a: { category: string; target_id: string; target_name: string; slot_number?: number; staged: [string, string][]; selection_changed?: boolean }): Promise<Record<string, unknown>> {
   const kind = CATEGORY_KIND[a.category];
   if (!kind) throw new HostError('Unsupported preset category');
   const s = currentPresets.value;
@@ -198,7 +199,13 @@ export function commitUpdate(a: { category: string; target_id: string; target_na
     : [0];
   const before = slots.map((i) => ({ i, bag: { ...s.overrideBag(kind, i) } }));
   try {
-    for (const i of slots) for (const [key, v] of parsed) s.setValue(kind, key, v, i);
+    // Tab::apply_preset_config_values: each key goes through the hand-edit path in turn (field_changed →
+    // on_value_change → update), so Orca's automatic value changes run, with their questions, as in the app.
+    for (const [key, v] of parsed) {
+      for (const i of slots) s.setValue(kind, key, v, i);
+      const auto = await afterSettingEdit(kind, key, v, index);
+      for (const i of slots) if (i !== index) for (const [k2, v2] of Object.entries(auto)) s.setValue(kind, k2, v2, i);
+    }
   } catch (e) {
     for (const b of before) {
       const bag = s.overrideBag(kind, b.i);

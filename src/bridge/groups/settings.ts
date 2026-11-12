@@ -12,6 +12,8 @@ import type { PresetKind } from '../../presets/types';
 import { normalizeValue } from '../../presets/values';
 import { validateValue } from '../../settings/validate';
 import { getObjectOverrides, setObjectOverride } from '../../settings/projectAdapter';
+import { setWithCoupled } from '../../settings/useRules';
+import { afterOverrideEdit, autoAnswer, type AutoNote } from '../../settings/applyAutoChanges';
 import { getRange } from '../../layers/store';
 import { PLATE_KEYS, plateConfig, setPlateConfig } from '../../plates/store';
 import { MIXED_SLOT_KEYS } from '../../mixed/model';
@@ -157,7 +159,9 @@ export function settingsTools(): BridgeTool[] {
         'objectId / partId / rangeId: per-object, per-part (modifier) or height-range overrides (process settings and "extruder"). plate: plate settings (bed type, print sequence, spiral vase, filament order). ' +
         'Filament colours: set_filaments; flushing: set_flushing_volumes; mixed filaments: edit_mixed_filaments. ' +
         'Per-nozzle settings (Orca 2.5 speeds, accelerations, retraction, filament temperatures on multi-nozzle / High Flow printers): a single value applies to every nozzle variant; a list sets each variant column; get_settings reports `perExtruder`, the value each extruder slices with. ' +
-        'Returns what changed and anything rejected with the reason.',
+        'Desktop OrcaSlicer\'s automatic value changes run after each value, as after an edit in the sidebar (e.g. spiral vase turns off what it can\'t print with, a layer height outside the printer\'s limits is adjusted); ' +
+        'where desktop would ask, the change goes ahead with desktop\'s suggestion (Yes / OK) without a dialog. ' +
+        'Returns what changed, anything rejected with the reason, and `automatic`: the values those changes set and the questions answered for you.',
       inputSchema: obj({ values: { type: 'object', description: 'Setting key → value (string, number, boolean, a list for per-extruder values, or null to reset).' }, ...TARGET_ARGS }, ['values']),
       async run(args) {
         const values = args.values as Record<string, unknown>;
@@ -171,6 +175,10 @@ export function settingsTools(): BridgeTool[] {
         const applied: string[] = [];
         const rejected: Record<string, string> = {};
         const plateNext: Record<string, ConfigValue> = t.kind === 'plate' ? { ...plateConfig(t.plate) } : {};
+        // Orca's automatic value changes (ConfigManipulation), answered without dialogs.
+        const asked: AutoNote[] = [];
+        const ask = autoAnswer(asked);
+        const autoChanged: Record<string, ConfigValue> = {};
         for (const [key, raw] of Object.entries(values)) {
           const def = schema.options[key];
           if (!def) { rejected[key] = 'unknown key (see find_settings)'; continue; }
@@ -188,6 +196,11 @@ export function settingsTools(): BridgeTool[] {
           } else if (t.kind === 'object') {
             if (!OBJECT_OK(def, key)) { rejected[key] = `a ${def.scope === 'machine' ? 'printer' : def.scope} setting can’t be set per object`; continue; }
             setObjectOverride(t.objectId, key, reset ? undefined : v, t.partId, t.rangeId);
+            if (!reset) {
+              const { objectId, partId, rangeId } = t;
+              Object.assign(autoChanged, await afterOverrideEdit(() => getObjectOverrides(objectId, partId, rangeId),
+                (k2, v2) => setObjectOverride(objectId, k2, v2, partId, rangeId), key, v!, ask));
+            }
           } else if (MIXED_KEYS.has(key)) {
             rejected[key] = 'use edit_mixed_filaments'; continue;
           } else if (key === 'filament_colour') {
@@ -199,7 +212,7 @@ export function settingsTools(): BridgeTool[] {
           } else {
             const kind = tabOf(def);
             if (reset) p.revert(kind, key, kind === 'filament' ? slot : 0);
-            else p.setValue(kind, key, v, kind === 'filament' ? slot : 0);
+            else Object.assign(autoChanged, await setWithCoupled(kind, key, v!, kind === 'filament' ? slot : 0, 0, ask));
           }
           applied.push(key);
         }
@@ -217,6 +230,9 @@ export function settingsTools(): BridgeTool[] {
             ok: applied.length > 0 || Object.keys(rejected).length === 0,
             target: t.kind === 'global' ? 'presets (unsaved edits)' : t.kind === 'plate' ? `plate ${t.plate + 1}` : t.label,
             applied: now, rejected: Object.keys(rejected).length ? rejected : undefined,
+            automatic: Object.keys(autoChanged).length || asked.length
+              ? { changed: autoChanged, answered: asked.length ? asked.map((a) => ({ question: a.message, answer: a.button })) : undefined }
+              : undefined,
           },
         };
       },

@@ -93,6 +93,9 @@ async function openOrca3mf(name: string, buffer: ArrayBuffer): Promise<string[] 
     const what = [`${r.objects} object${r.objects === 1 ? '' : 's'}`, `${r.plates} plate${r.plates === 1 ? '' : 's'}`, r.sliced ? `G-code for ${r.sliced} plate${r.sliced === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ');
     if (r.warnings.length) toast.warn(`Opened ${name} (${what}).`, { detail: r.warnings.slice(0, 8).join('\n') });
     else toast.success(`Opened ${name} (${what}).`);
+    // Desktop reloads every settings tab after opening a project (load_current_presets → Tab::update),
+    // which runs the automatic value changes and their questions.
+    void import('../../../settings/applyAutoChanges').then((m) => m.afterProjectOpen());
     return objects.value.map((o) => o.id);
   } catch (e) {
     const msg = e instanceof ImportError ? e.message : `${(e as Error)?.message ?? e}`;

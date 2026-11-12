@@ -14,7 +14,7 @@ import { readJson, writeJson } from '../lib/storage';
 import { objects } from '../project/store/state';
 import { MODE_RANK, perExtruderKeys } from './useLayout';
 import { settingsUi } from './uiState';
-import { bedExcludeVolumeOffer, isBedExclusionVolumeSyntax, runAutoChanges, runPresetChecks, type Answer, type AutoContext, type Prompt } from './rules/autoChanges';
+import { bedExcludeVolumeOffer, isBedExclusionVolumeSyntax, runAutoChanges, runPresetChecks, type Answer, type AutoContext, type Prompt, type Writes } from './rules/autoChanges';
 import { parseVolumes } from '../dialogs/bed/collisionVolumes';
 import type { RuleFamily } from './rules/types';
 
@@ -89,40 +89,72 @@ function context(kind: PresetKind, slot: number, extruder: number, self?: (key: 
 
 let running: Promise<void> = Promise.resolve();
 
+/** Answers a prompt: the app's dialog (askPrompt), or a non-interactive answerer (autoAnswer). */
+export type Asker = (p: Prompt) => Promise<Answer>;
+/** A prompt a non-interactive run answered by itself. */
+export interface AutoNote { id: string; message: string; answer: Answer; button: string }
+
+/**
+ * The non-interactive answerer (the MCP bridge): take the button that goes ahead with the change and
+ * Orca's suggestion (Yes / OK), and record each prompt so the caller can report it.
+ */
+export function autoAnswer(notes: AutoNote[]): Asker {
+  return async (p) => {
+    const answer: Answer = p.buttons === 'yesno' ? 'yes' : 'ok';
+    notes.push({ id: p.id, message: p.message, answer, button: answer === 'yes' ? p.yesLabel ?? 'Yes' : 'OK' });
+    return answer;
+  };
+}
+
 /**
  * After `key` was set to `value` in a preset tab: run the checks and apply what they change (one run at a
- * time, like Orca's `is_msg_dlg_already_exist`). Resolves when done.
+ * time, like Orca's `is_msg_dlg_already_exist`). Resolves with the values the checks changed.
  */
-export function afterSettingEdit(kind: PresetKind, key: string, value: ConfigValue, slot = 0, extruder = 0): Promise<void> {
-  if (activeEngine.value !== 'orca') return Promise.resolve();
+export function afterSettingEdit(kind: PresetKind, key: string, value: ConfigValue, slot = 0, extruder = 0, ask: Asker = askPrompt): Promise<Writes> {
+  if (activeEngine.value !== 'orca') return Promise.resolve({});
+  const changed: Writes = {};
   running = running.then(async () => {
-    const writes = await runAutoChanges(context(kind, slot, extruder), { key, value }, askPrompt);
+    const writes = await runAutoChanges(context(kind, slot, extruder), { key, value }, ask);
     const p = currentPresets.value;
-    for (const [k, v] of Object.entries(writes)) if (!same(p.value(kind, k, slot), v)) p.setValue(kind, k, v, slot);
+    for (const [k, v] of Object.entries(writes)) if (!same(p.value(kind, k, slot), v)) { p.setValue(kind, k, v, slot); changed[k] = v; }
     // TabPrinter: turning single extruder multi-material on makes the printer one extruder (Orca's "#if 1").
     if (kind === 'printer' && key === 'single_extruder_multi_material' && toBool(valueAt(p.value('printer', key), 0))
       && asList(p.value('printer', 'nozzle_diameter')).length > 1) await setExtruderCount(1);
   }).catch((e) => { console.warn('settings auto changes:', e); });
-  return running;
+  return running.then(() => changed);
 }
 
 /**
  * A preset was picked (Tab::select_preset → load_current_preset → update): the checks that run on every
  * update, for that tab — and for a printer also the process and filament tabs it reloads (m_dependent_tabs).
  */
-export function afterPresetSelect(kind: PresetKind, slot = 0): Promise<void> {
-  if (activeEngine.value !== 'orca') return Promise.resolve();
-  const tabs: Array<[PresetKind, number]> = kind === 'printer'
-    ? [['printer', 0], ['process', 0], ['filament', Math.min(settingsUi.filamentSlot, Math.max(0, currentPresets.value.selection.filaments.length - 1))]]
-    : [[kind, slot]];
+export function afterPresetSelect(kind: PresetKind, slot = 0, ask: Asker = askPrompt): Promise<Writes> {
+  return updateTabs(kind === 'printer' ? [['printer', 0], ['process', 0], ['filament', filamentTabSlot()]] : [[kind, slot]], ask);
+}
+
+/**
+ * A project was opened (Plater::load_files → GUI_App::load_current_presets → Tab::load_current_preset →
+ * update on every tab, in MainFrame's tab order: process, filament, printer). Desktop asks as it does on
+ * a preset selection.
+ */
+export function afterProjectOpen(): Promise<Writes> {
+  return updateTabs([['process', 0], ['filament', filamentTabSlot()], ['printer', 0]]);
+}
+
+const filamentTabSlot = () => Math.min(settingsUi.filamentSlot, Math.max(0, currentPresets.value.selection.filaments.length - 1));
+
+/** Run the update checks of each tab in turn; resolves with the values they changed. */
+function updateTabs(tabs: Array<[PresetKind, number]>, ask: Asker = askPrompt): Promise<Writes> {
+  if (activeEngine.value !== 'orca') return Promise.resolve({});
+  const changed: Writes = {};
   running = running.then(async () => {
     for (const [k, i] of tabs) {
-      const writes = await runPresetChecks(context(k, i, 0), askPrompt);
+      const writes = await runPresetChecks(context(k, i, 0), ask);
       const p = currentPresets.value;
-      for (const [key, v] of Object.entries(writes)) if (!same(p.value(k, key, i), v)) p.setValue(k, key, v, i);
+      for (const [key, v] of Object.entries(writes)) if (!same(p.value(k, key, i), v)) { p.setValue(k, key, v, i); changed[key] = v; }
     }
   }).catch((e) => { console.warn('preset select auto changes:', e); });
-  return running;
+  return running.then(() => changed);
 }
 
 /**
@@ -160,18 +192,19 @@ export async function setExtruderCount(n: number): Promise<void> {
 }
 
 /** After an object / part override edit: the checks see the overrides over the process and write overrides. */
-export function afterOverrideEdit(overrides: () => Readonly<Record<string, ConfigValue>>, set: (key: string, value: ConfigValue) => void, key: string, value: ConfigValue): Promise<void> {
-  if (activeEngine.value !== 'orca') return Promise.resolve();
+export function afterOverrideEdit(overrides: () => Readonly<Record<string, ConfigValue>>, set: (key: string, value: ConfigValue) => void, key: string, value: ConfigValue, ask: Asker = askPrompt): Promise<Writes> {
+  if (activeEngine.value !== 'orca') return Promise.resolve({});
+  const changed: Writes = {};
   running = running.then(async () => {
     const own = overrides();
-    const writes = await runAutoChanges(context('process', 0, 0, (k) => own[k]), { key, value }, askPrompt);
+    const writes = await runAutoChanges(context('process', 0, 0, (k) => own[k]), { key, value }, ask);
     const p = currentPresets.value;
     for (const [k, v] of Object.entries(writes)) {
       const cur = own[k] ?? p.value('process', k);
-      if (!same(cur, v)) set(k, v);
+      if (!same(cur, v)) { set(k, v); changed[k] = v; }
     }
   }).catch((e) => { console.warn('object settings auto changes:', e); });
-  return running;
+  return running.then(() => changed);
 }
 
 function same(a: ConfigValue | undefined, b: ConfigValue): boolean {

@@ -55,6 +55,11 @@ export interface PresetInfo {
   fromLibrary?: boolean;
   /** Filament preset's `filament_id` (own, else its parent's): the engine's `filament_ids` (PresetBundle full_config). */
   filamentId?: string;
+  /**
+   * Orca `Preset::setting_id`: a system preset's own `setting_id`, else the one Orca generates for an
+   * instantiated preset (generate_preset_setting_id). Published 3MFs match filaments by it.
+   */
+  settingId?: string;
 }
 
 export interface VendorInfo {

@@ -145,6 +145,22 @@ describe('dispatchActionKey', () => {
     expect(e.prevented).toBe(false);
   });
 
+  it('the "Open the Speed Dial from the keyboard" preference off: Space passes through (Orca enable_speed_dial)', async () => {
+    const { preferences, sanitizePreferences } = await import('../preferences');
+    expect(sanitizePreferences({}).speedDial).toBe(true);
+    expect(sanitizePreferences({ speedDial: false }).speedDial).toBe(false);
+    preferences.speedDial = false;
+    try {
+      const ctx = fixtureContext();
+      const e = key(' ');
+      expect(await dispatchActionKey(e, ACTIONS, ctx, { textInputFocused: false })).toBe(false);
+      expect(e.prevented).toBe(false);
+      expect(ctx.calls).toEqual([]);
+      // Ctrl+K (CubbySlicer's own palette key) still opens it.
+      expect(await dispatchActionKey(key('k', { ctrl: true }), ACTIONS, ctx, { textInputFocused: false })).toBe(true);
+    } finally { preferences.speedDial = true; }
+  });
+
   it('runs the A29 align / order actions through the dispatch', async () => {
     const ctx = fixtureContext({ selection: { count: 3, ids: ['a', 'b', 'c'], single: null, allHidden: false, allNotPrintable: false } });
     for (const id of ['object.align.x-min', 'object.distribute.y', 'plate.order.height']) {

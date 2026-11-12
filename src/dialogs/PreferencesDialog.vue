@@ -15,6 +15,7 @@ import {
   DEFAULT_PREFERENCES, preferences, clearRememberedChoice, rememberedChoices, resetRememberedChoices, type Preferences,
 } from '../app/preferences';
 import { toast } from '../ui';
+import { paletteRecentCount, RECENT_COUNT_DEFAULT, RECENT_COUNT_MAX, RECENT_COUNT_MIN } from '../app/actions/recent';
 import { dialogs } from './state';
 
 type Key = keyof Preferences;
@@ -31,6 +32,8 @@ const SECTIONS: Array<{ id: string; title: string; rows: Row[] }> = [
     { key: 'units', label: 'Units', help: 'Lengths in the object manipulation panel.', kind: 'select',
       items: [{ value: 'metric', label: 'Metric (mm)' }, { value: 'imperial', label: 'Imperial (in)' }] },
     { key: 'keyboardHints', label: 'Show keyboard shortcuts', help: 'Shortcut hints in menus and tooltips.', kind: 'switch' },
+    // Orca 2.5 General > Features (enable_speed_dial); "Recent actions" is the custom row below.
+    { key: 'speedDial', label: 'Open the Speed Dial from the keyboard', help: 'When enabled, the Speed Dial keyboard shortcut (Space) opens the action search from any page.', kind: 'switch' },
   ] },
   { id: 'slicing', title: 'Slicing', rows: [
     { key: 'defaultEngine', label: 'Default engine', help: 'Slicing engine selected when the app starts.', kind: 'select', items: engineItems },
@@ -71,7 +74,14 @@ const threadItems = computed<Item[]>(() => {
   return out;
 });
 
-const nChanged = computed(() => (Object.keys(DEFAULT_PREFERENCES) as Key[]).filter(changed).length + (threads.value ? 1 : 0));
+// ---- Speed Dial "Recent actions" (Orca speed_dial_recent_count, 0–10; its own key, read by the palette) ----
+const recentChanged = computed(() => paletteRecentCount.value !== RECENT_COUNT_DEFAULT);
+function setRecent(v: unknown): void {
+  const n = Number(v);
+  if (Number.isFinite(n)) paletteRecentCount.value = Math.min(RECENT_COUNT_MAX, Math.max(RECENT_COUNT_MIN, Math.round(n)));
+}
+
+const nChanged = computed(() => (Object.keys(DEFAULT_PREFERENCES) as Key[]).filter(changed).length + (threads.value ? 1 : 0) + (recentChanged.value ? 1 : 0));
 
 // ---- remembered choices --------------------------------------------------------------------
 const remembered = ref(rememberedChoices());
@@ -86,11 +96,12 @@ function clearChoices(): void {
 
 /** Reset everything to the defaults, with an Undo in the toast. */
 function resetAll(): void {
-  const before = { ...preferences }, beforeThreads = threads.value;
+  const before = { ...preferences }, beforeThreads = threads.value, beforeRecent = paletteRecentCount.value;
   Object.assign(preferences, DEFAULT_PREFERENCES);
   threads.value = 0;
+  paletteRecentCount.value = RECENT_COUNT_DEFAULT;
   toast.info('Preferences reset to their defaults.', {
-    action: { label: 'Undo', run: () => { Object.assign(preferences, before); threads.value = beforeThreads; } },
+    action: { label: 'Undo', run: () => { Object.assign(preferences, before); threads.value = beforeThreads; paletteRecentCount.value = beforeRecent; } },
   });
 }
 
@@ -120,6 +131,19 @@ const shown = (id: string) => !mobileDialog.value || section.value === id;
               <USlider :model-value="(preferences[r.key] as number)" @update:model-value="set(r.key, $event)" :min="r.min" :max="r.max" :step="r.step" class="flex-1" :aria-label="r.label" />
               <span class="w-9 text-right text-xs tabular-nums text-muted">{{ r.fmt(preferences[r.key] as number) }}</span>
             </div>
+          </div>
+        </div>
+        <div v-if="s.id === 'general'" class="pf__row">
+          <div class="pf__lbl">
+            <span>Recent actions</span>
+            <small>How many recently launched actions to show at the top of the Speed Dial. Set to 0 to hide recent actions.</small>
+          </div>
+          <div class="pf__ctl">
+            <UButton v-if="recentChanged" size="xs" variant="ghost" color="warning" icon="i-lucide-undo-2" square aria-label="Revert Recent actions"
+                     :title="`Revert to the default (${RECENT_COUNT_DEFAULT})`" @click="paletteRecentCount = RECENT_COUNT_DEFAULT" />
+            <UInputNumber :model-value="paletteRecentCount" @update:model-value="setRecent" :min="RECENT_COUNT_MIN" :max="RECENT_COUNT_MAX" size="sm"
+                          class="w-28" aria-label="Recent actions" data-testid="pref-recent-actions" />
+            <span class="text-xs text-muted">actions</span>
           </div>
         </div>
         <div v-if="s.id === 'slicing'" class="pf__row">

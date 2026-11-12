@@ -27,6 +27,7 @@ const schema: ConfigSchema = {
     filament_max_volumetric_speed: opt('floats', 'filament', '10'),
     filament_type: opt('strings', 'filament', 'PLA'),
     filament_settings_id: opt('strings', 'other', ''),
+    compatible_printers: opt('strings', 'filament', ''),
     default_filament_colour: opt('strings', 'filament', '""'),
     filament_colour: opt('strings', 'other', '"#F2754E"'),
     filament_multi_colour: opt('strings', 'filament', '""'),
@@ -130,15 +131,85 @@ describe('published 3MF: material pass', () => {
     expect(r.warnings.join('\n')).toContain('material:GFN03 (nozzle_temperature)');
   });
 
-  it('a Full entry lands the whole published filament on the slot', async () => {
-    const s = await receiver(1);
+  it('a Full entry becomes a standalone, universal copy of the author’s filament selected on the slot', async () => {
+    const s = await receiver(2);
+    s.setValue('filament', 'nozzle_temperature', ['199'], 0); // an unsaved edit: not part of the copy's baseline
     const r = await openOrcaProject('pub.3mf', published({
-      orca_published_material_keys: [{ slot: 0, keys: [], full: true, full_keys: ['nozzle_temperature', 'filament_max_volumetric_speed', 'filament_type'], material: { name: 'Author PLA @Printer' } }],
-      orca_published_config: 'filament_colour = "#123456"\nnozzle_temperature = 222\nfilament_max_volumetric_speed = 17\nfilament_type = "PLA"\n',
+      orca_published_material_keys: [
+        { slot: 0, keys: [], full: true, full_keys: ['nozzle_temperature', 'filament_max_volumetric_speed', 'filament_type'], material: { name: 'Author PLA @Printer', setting_id: 'S1' } },
+        // The same identity on another slot shares the copy.
+        { slot: 1, keys: [], full: true, full_keys: ['nozzle_temperature'], publish_color: true, color: '#00FF00', material: { name: 'Author PLA @Printer', setting_id: 'S1' } },
+      ],
+      orca_published_config: 'filament_colour = "#123456";"#654321"\nnozzle_temperature = 222,223\nfilament_max_volumetric_speed = 17,18\nfilament_type = "PLA";"PLA"\n',
     }));
+    const info = s.selectedInfo('filament', 0);
+    expect(info).toMatchObject({ name: 'Author PLA', source: 'user' });
+    expect(info.parentId).toBeUndefined();
+    expect(s.selection.filaments[1]).toBe(info.id);
+    expect(s.dirtyCount('filament', 0)).toBe(0);
     expect(s.value('filament', 'nozzle_temperature', 0)).toEqual(['222']);
     expect(s.value('filament', 'filament_max_volumetric_speed', 0)).toEqual(['17']);
-    expect(r.warnings.join('\n')).toContain('slot 0: PLA -> Author PLA (applied as changes to PLA)');
+    expect(s.users.get(info.id)!.values.compatible_printers).toEqual([]);
+    expect(s.filamentColour(1)).toBe('#00FF00');
+    expect(r.warnings.join('\n')).toContain('slot 0: PLA -> Author PLA');
+    // A second load clashes with that name: "(Published)".
+    const t = await receiver(1);
+    t.users.create({ kind: 'filament', name: 'Author PLA', values: {} });
+    await openOrcaProject('pub.3mf', published({
+      orca_published_material_keys: [{ slot: 0, keys: [], full: true, full_keys: ['nozzle_temperature'], material: { name: 'Author PLA @Printer' } }],
+      orca_published_config: 'filament_colour = "#123456"\nnozzle_temperature = 222\n',
+    }));
+    expect(t.selectedInfo('filament', 0).name).toBe('Author PLA (Published)');
+  });
+
+  it('the setting-id tier: a type requirement picks the filament with the author’s setting_id', async () => {
+    files['V/f/PETG.json'] = { ...(files['V/f/PETG.json'] as object), setting_id: 'GFSG99' };
+    files['V.json'] = { ...(files['V.json'] as { filament_list: unknown[] }), filament_list: [...(files['V.json'] as { filament_list: unknown[] }).filament_list, { name: 'PETG HF', sub_path: 'f/PETGHF.json' }] };
+    files['V/f/PETGHF.json'] = { type: 'filament', name: 'PETG HF', instantiation: 'true', filament_type: ['PETG'], compatible_printers: ['P1'] };
+    try {
+      const s = await receiver(1);
+      await openOrcaProject('pub.3mf', published({
+        orca_published_material_keys: [{ slot: 0, keys: [], publish_type: true, type: 'PETG', material: { setting_id: 'GFSG99', filament_type: 'PETG' } }],
+        orca_published_config: 'filament_colour = "#111111"\n',
+      }));
+      expect(s.selection.filaments[0]).toBe(sysId('V', 'PETG'));
+      // A profile without its own id gets the generated one (generate_preset_setting_id).
+      const { generatePresetSettingId } = await import('../presets/settingId');
+      const id = await generatePresetSettingId('V', 'filament', 'PETG HF');
+      const t = await receiver(1);
+      await openOrcaProject('pub.3mf', published({
+        orca_published_material_keys: [{ slot: 0, keys: [], publish_type: true, type: 'PETG', material: { setting_id: id, filament_type: 'PETG' } }],
+        orca_published_config: 'filament_colour = "#111111"\n',
+      }));
+      expect(t.selection.filaments[0]).toBe(sysId('V', 'PETG HF'));
+    } finally {
+      files['V/f/PETG.json'] = { type: 'filament', name: 'PETG', instantiation: 'true', nozzle_temperature: ['240'], filament_type: ['PETG'], compatible_printers: ['P1'] };
+      delete files['V/f/PETGHF.json'];
+      const v = files['V.json'] as { filament_list: Array<{ name: string }> };
+      files['V.json'] = { ...v, filament_list: v.filament_list.filter((f) => f.name !== 'PETG HF') };
+    }
+  });
+
+  it('an unassigned mixed filament keeps the colour its slot was seeded with', async () => {
+    const s = await receiver(1); // single-extruder multi-material: capacity is the slot limit, so set up a 2-nozzle printer
+    s.setValue('printer', 'single_extruder_multi_material', '0');
+    s.setValue('printer', 'nozzle_diameter', ['0.4', '0.4']);
+    await s.setFilamentCount(2);
+    s.setValue('filament', 'filament_colour', ['#ABCDEF'], 1);
+    await openOrcaProject('pub.3mf', published({
+      orca_published_material_keys: [
+        { slot: 2, keys: ['nozzle_temperature'], publish_color: true, color: '#00AA00', material: { filament_type: 'PLA' } },
+        { slot: 3, keys: ['nozzle_temperature'], material: { filament_type: 'PLA' } },
+      ],
+      orca_published_config: 'filament_colour = "#111111";"#222222";"#333333";"#444444"\nnozzle_temperature = 1,2,3,4\n',
+    }));
+    expect(s.selection.filaments).toHaveLength(2);
+    expect(s.mixedDefs()).toHaveLength(2);
+    expect(s.mixedDefs()[0].components).toEqual([]);
+    const colours = s.filamentColours();
+    expect(colours[2]).toBe('#00AA00');
+    // No published colour: the receiver's last filament's preset colour.
+    expect(colours[3]).toBe('#ABCDEF');
   });
 
   it('a mixed filament authored on a real slot moves to the tail and the model’s references follow', async () => {

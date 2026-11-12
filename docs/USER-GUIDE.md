@@ -42,7 +42,7 @@ Ctrl+, (⌘, on a Mac) opens Preferences. Its sections are General, Slicing, Beh
 
 ## Command palette (Speed Dial)
 
-Space (when no text field has focus), Ctrl+K or Ctrl+Shift+P (⌘K, ⌘⇧P on a Mac) opens the command palette, CubbySlicer's version of OrcaSlicer 2.5's Speed Dial.
+Space (when no text field has focus), Ctrl+K or Ctrl+Shift+P (⌘K, ⌘⇧P on a Mac) opens the command palette, CubbySlicer's version of OrcaSlicer 2.5's Speed Dial. Preferences ▸ General has OrcaSlicer's two Speed Dial preferences: "Open the Speed Dial from the keyboard" (off, Space no longer opens it; Ctrl+K and Ctrl+Shift+P still do) and "Recent actions", how many recent commands it lists first (0 to 10, default 5; 0 hides them).
 
 - **Empty search:** it lists your pinned commands, your recent commands, then every command by menu.
 - **Pins:** Ctrl+B (⌘B) pins or unpins the highlighted command, up to 10. While the palette is open, Alt+1 … Alt+9 and Alt+0 (Option on a Mac) run pinned commands 1 to 10. Right-click a pinned command to unpin it.
@@ -78,6 +78,10 @@ The sidebar runs top to bottom: Printer (engine, printer preset, plate type), Fi
 Filament swatches show what the filament colour holds: a checkerboard behind translucent colours, and bands or a gradient for multi-colour filaments. Clicking a filament's swatch opens OrcaSlicer 2.5's colour picker: a hue / lightness field with a saturation slider, hex, opacity, HSL and RGB fields, Solid or Gradient (up to seven colours: click a stop to edit it, − / + remove or add one), the original colour, the star button that saves the colour to the 16 favourites, and the palette panel (Basic Colors, Orca Palette, RAL Classic, Gradients, with a search). A segmented multi-colour filament opens as its first colour and stays as it is unless you pick another. Colour settings use the same picker without opacity and gradients.
 
 Settings follow OrcaSlicer's rules: a setting that doesn't apply with the current values is greyed out or hidden, and its tooltip says why ("Disabled: …"). A search jump to a hidden setting shows it dimmed with the reason.
+
+As in OrcaSlicer, a setting's label links to its page in the OrcaSlicer wiki when the wiki has one (it opens in a new tab; the tooltip starts with the address). The command palette's Wiki (F1) on a setting opens the same page.
+
+OrcaSlicer's automatic value changes run as on desktop: after you change a setting (spiral vase turns off what it can't print with, a layer height outside the printer's limits is offered the nearest one, …), after you pick a preset, and after you open a project, with OrcaSlicer's questions where desktop asks them. A plugin that changes preset settings goes through the same path, questions included. An AI agent's changes (MCP bridge) don't stop for questions: the change goes ahead with OrcaSlicer's suggestion (Yes / OK) and the tool result reports what changed and what was answered.
 
 ### Nozzles and variants
 
@@ -167,6 +171,8 @@ The Design tab is OrcaSlicer 2.5's parametric CAD, running Orca's own modelling 
 ## Files
 
 Projects are 3MF files in OrcaSlicer's project format, so desktop OrcaSlicer and Bambu Studio open them with their plates, parts, painting and settings. Opening an Orca or Bambu project 3MF works the other way round. Sliced 3MFs show each plate's G-code in the preview until you re-slice.
+
+A published 3MF (OrcaSlicer 2.5's Publish) keeps your printer, process and filaments and lays the author's published settings over them. A filament published in full becomes a filament preset of its own, named after the author's (with "(Published)" when you already have one with that name), selected on its slot and listed with your filament presets; it fits every printer and process. Filaments are matched as desktop matches them (exact name, alias, the preset's setting id, filament id, vendor and type, type). A slot past your printer's filament count becomes an empty mixed filament in the published colour (else your last filament's colour) until you give it components.
 
 Project files keep CubbyCAD shapes editable: the node trees are stored in the 3MF next to the meshes (in `Metadata/cubby_cad.json`), so reopening the project restores them. Desktop Orca just sees the meshes.
 

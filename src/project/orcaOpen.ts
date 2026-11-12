@@ -530,7 +530,7 @@ interface PublishedOutcome {
 }
 
 type FilamentPick = FilamentCandidate & { id: string };
-const pickOf = (i: PresetInfo): FilamentPick => ({ id: i.id, name: i.name, alias: i.alias, filamentId: i.filamentId, filamentType: i.filamentType, filamentVendor: i.filamentVendor });
+const pickOf = (i: PresetInfo): FilamentPick => ({ id: i.id, name: i.name, alias: i.alias, settingId: i.settingId, filamentId: i.filamentId, filamentType: i.filamentType, filamentVendor: i.filamentVendor });
 
 /**
  * A published 3MF (PresetBundle::load_config_file_config, published mode):
@@ -547,8 +547,10 @@ const pickOf = (i: PresetInfo): FilamentPick => ({ id: i.id, name: i.name, alias
  *   opened model's references follow), a slot sharing its preset with
  *   another is re-pointed to the best matching distinct filament, a type
  *   requirement swaps the slot's filament for the best match (exact name,
- *   alias, filament id, vendor + type, type), then the colour and the keys
- *   land on the slot; a Full entry lands as the whole published filament.
+ *   alias, setting id, filament id, vendor + type, type), then the colour and
+ *   the keys land on the slot; a Full entry becomes a standalone copy of the
+ *   author's filament selected on the slot; an empty mixed filament keeps the
+ *   colour the slot was seeded with.
  * What couldn't be applied is reported.
  */
 async function applyPublished(pub: OrcaPublished): Promise<PublishedOutcome> {
@@ -683,7 +685,15 @@ async function applyPublishedMaterials(pub: OrcaPublished, ctx: {
   for (const [from, to] of plan.receiverMoves) slots[to] = start[from];
   for (const [from] of plan.receiverMoves) slots[from] = PHYSICAL;
   const label = (e: PlannedMaterial) => materialLabel(e);
-  const placeholder = (s: number) => { slots[s] = { kind: 'mix', def: EMPTY_MIX, receiver: false }; };
+  // A grown slot's swatch (the growth pass of the material pass): the published colour of what lands
+  // there, else the colour of the receiver's last filament, which a grown slot starts from. An empty
+  // mixed filament keeps it until it has components.
+  const seedColour = (slot: number): string | undefined => {
+    const e = plan.entries.find((x) => x.slot === slot && x.publishColor && x.color);
+    const c = e?.color || listOf(p.value('filament', 'filament_colour', Math.max(0, physical - 1)))[0] || '';
+    return /^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(c) ? c : undefined;
+  };
+  const placeholder = (s: number) => { slots[s] = { kind: 'mix', def: { ...EMPTY_MIX, colour: seedColour(s) }, receiver: false }; };
   for (const e of plan.entries) if (e.placeholder && e.slot < total) placeholder(e.slot);
   const payloadMixes = plan.entries.filter((e) => e.slot >= 0 && e.slot < total && !e.placeholder && isMixedDefinition(e));
   // Every slot that holds a mixed filament once the load completes (components must not name one).
@@ -846,13 +856,18 @@ async function applyPublishedMaterials(pub: OrcaPublished, ctx: {
     }
   };
 
+  // Full copies made by this load (identity → preset id) and the exact-name clash test of add_detached_preset.
+  const fullCopies = new Map<string, string>();
+  const nameTaken = async (n: string) => !!p.users.findByName('filament', n)
+    || (await p.catalog.findByName('filament', n, undefined, false).catch(() => null))?.name === n;
+
   for (const e of plan.entries) {
     if (e.slot < 0 || e.slot >= total || e.placeholder || isMixedDefinition(e)) continue;
     const slot = physicalOf(e);
     if (slot < 0 || slot >= p.selection.filaments.length) continue;
     const name = label(e);
     if (e.full) {
-      applyFull(e, slot, name);
+      await applyFull(e, slot, name);
       continue;
     }
     let applySlot = true;
@@ -891,43 +906,81 @@ async function applyPublishedMaterials(pub: OrcaPublished, ctx: {
   }
 
   /**
-   * Full Publish: desktop loads the author's whole filament as a new
-   * project-only preset (named after it, "(Published)" on a clash) based on
-   * the slot's filament. Here the published values land on the slot's
-   * filament as unsaved changes (same resulting settings; the preset keeps
-   * its name).
+   * Full Publish: a standalone copy of the slot's stored filament (not its unsaved edits) with the
+   * author's whole filament laid over it, compatible with every printer and process, named after the
+   * author's preset ("(Published)" / "(Published N)" on a clash), and selected on the slot. Desktop makes
+   * it a project-embedded preset; CubbySlicer keeps a project's embedded presets as user presets (as when
+   * it opens a desktop project's embedded ones), so the copy lands in the user's filament list. Two
+   * entries with the same identity and variants share one copy.
    */
-  function applyFull(e: PlannedMaterial, slot: number, name: string): void {
+  async function applyFull(e: PlannedMaterial, slot: number, name: string): Promise<void> {
     const columns = selfIndex.flatMap((v, c) => (v === e.slot + 1 ? [c] : []));
     const authorVariants = columns.filter((c) => c < authorVariantList.length).map((c) => authorVariantList[c]);
     const authorLayout = columns.length > 0 && authorVariants.length === columns.length;
-    const receiverVariants = listOf(p.value('filament', 'filament_extruder_variant', slot));
-    for (const key of e.fullKeys) {
-      const base = publishBaseKey(key);
-      if (PUBLISH_STRUCTURAL.has(base) || base === 'filament_extruder_variant' || base === 'filament_self_index') continue;
-      const def = schema.options[base];
-      if (cfg[base] === undefined || (def && !isVectorType(def.type))) continue;
-      const dst = listOf(p.value('filament', base, slot));
-      if (!def || !dst.length) { skipped.push(`material:${name} (${base})`); continue; }
-      const src = vec(base);
-      const next = [...dst];
-      if (isVariantKey(base)) {
-        if (!authorLayout || columns.some((c) => c >= src.length)) continue;
-        if (dst.length <= 1) next[0] = src[columns[0]];
-        else receiverVariants.forEach((v, j) => { const i = authorVariants.indexOf(v); if (i >= 0 && j < next.length) next[j] = src[columns[i]]; });
-      } else {
-        if (e.slot < 0 || e.slot >= src.length) continue;
-        next[0] = src[e.slot];
-      }
-      set('filament', base, next, slot);
-    }
+    let dedup = `${e.material.settingId}\x1f${e.material.name}`;
+    if (dedup === '\x1f') dedup += String(slot);
+    else if (e.material.filamentId) dedup += `\x1f${e.material.filamentId}`;
+    for (const v of authorVariants) dedup += `\x1f${v}`;
     const old = p.selectedInfo('filament', slot).name;
-    const copy = publishMaterialBaseName(e.material.name) || e.material.filamentId || e.type || e.material.filamentType || 'Published Filament';
-    replacements.push(`slot ${slot}: ${old} -> ${copy} (applied as changes to ${old})`);
-    if (e.publishColor && e.color) {
-      set('filament', 'filament_colour', [e.color], slot);
-      setColour(slot, e.color);
-    } else setColour(slot, colourOf(slot));
+    let id = fullCopies.get(dedup);
+    if (!id) {
+      const base = await p.resolvePreset('filament', p.selectedId('filament', slot));
+      const values: Record<string, ConfigValue> = { ...(base?.values ?? {}) };
+      const copied = new Set<string>();
+      for (const key of e.fullKeys) {
+        const k = publishBaseKey(key);
+        if (PUBLISH_STRUCTURAL.has(k) || k === 'filament_extruder_variant' || k === 'filament_self_index') continue;
+        const def = schema.options[k];
+        if (cfg[k] === undefined || (def && !isVectorType(def.type))) continue; // nothing in the file for it
+        // The baseline is the preset's resolved values; a key it doesn't set has the option's default.
+        const dst = def ? listOf(values[k] ?? normalizeValue(def, def.default)) : [];
+        if (!def || !dst.length) { skipped.push(`material:${name} (${k})`); continue; }
+        const src = vec(k);
+        if (isVariantKey(k)) {
+          // Only with the author's layout known and every one of its columns in the file.
+          if (!authorLayout || columns.some((c) => c >= src.length)) continue;
+          values[k] = columns.map((c) => src[c]);
+          copied.add(k);
+        } else {
+          if (e.slot < 0 || e.slot >= src.length) continue;
+          const next = [...dst];
+          next[0] = src[e.slot];
+          values[k] = next;
+        }
+      }
+      if (authorLayout) {
+        // The copy's layout is the author's: a variant key the file didn't carry stays only when the
+        // receiver's own list describes the same variants (or a single value); otherwise it is dropped.
+        const receiverVariants = listOf(values.filament_extruder_variant);
+        const sameLayout = receiverVariants.length <= 1 || (receiverVariants.length === authorVariants.length && receiverVariants.every((v, i) => v === authorVariants[i]));
+        for (const k of Object.keys(values)) {
+          if (k === 'filament_extruder_variant' || !isVariantKey(k) || copied.has(k)) continue;
+          if (!sameLayout || listOf(values[k]).length !== columns.length) {
+            skipped.push(`material:${name} (${k}, the file carries no value for its variant)`);
+            delete values[k];
+          }
+        }
+        if ('filament_extruder_variant' in values) values.filament_extruder_variant = authorVariants;
+      }
+      if (e.publishColor && e.color) values.filament_colour = [e.color, ...listOf(values.filament_colour).slice(1)];
+      // make_publish_universal.
+      for (const k of ['compatible_printers', 'compatible_prints']) if (k in values) values[k] = [];
+      for (const k of ['compatible_printers_condition', 'compatible_prints_condition']) if (k in values) values[k] = '';
+      const own = Object.fromEntries(Object.entries(values).filter(([k]) => k !== 'filament_settings_id'
+        && (tabOfScope(schema.options[k]?.scope) === 'filament' || k.startsWith('compatible_'))));
+      const baseName = publishMaterialBaseName(e.material.name) || e.material.filamentId || e.type || e.material.filamentType || 'Published Filament';
+      let copyName = baseName;
+      if (await nameTaken(copyName)) {
+        copyName = `${baseName} (Published)`;
+        for (let i = 2; await nameTaken(copyName); i++) copyName = `${baseName} (Published ${i})`;
+      }
+      id = p.users.create({ kind: 'filament', name: copyName, values: own }).id;
+      fullCopies.set(dedup, id);
+    }
+    await p.selectFilament(slot, id);
+    replacements.push(`slot ${slot}: ${old} -> ${p.selectedInfo('filament', slot).name}`);
+    if (e.publishColor && e.color) setColour(slot, e.color);
+    else setColour(slot, colourOf(slot));
   }
 }
 

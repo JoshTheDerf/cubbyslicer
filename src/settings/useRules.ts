@@ -13,7 +13,8 @@ import { variantKey } from '../presets/variants';
 import { choicesFor, coupledEdits, evaluateRules, type RowState, type RuleContext, type RuleFamily } from './rules';
 import { extruderCount, MODE_RANK } from './useLayout';
 import { settingsUi } from './uiState';
-import { afterSettingEdit } from './applyAutoChanges';
+import { afterSettingEdit, type Asker } from './applyAutoChanges';
+import type { Writes } from './rules/autoChanges';
 
 const FAMILY: Record<PresetKind, RuleFamily> = { process: 'print', printer: 'printer', filament: 'filament' };
 
@@ -72,9 +73,9 @@ export function narrowedDef(kind: PresetKind, key: string, def: ConfigOptionDef,
  * Set a value plus the values Orca rewrites with it (retract before / after wipe), then run Orca's
  * automatic changes and their dialogs (./applyAutoChanges.ts). Resolves when those are done.
  */
-export function setWithCoupled(kind: PresetKind, key: string, value: ConfigValue, slot = 0, element = 0): Promise<void> {
+export function setWithCoupled(kind: PresetKind, key: string, value: ConfigValue, slot = 0, element = 0, ask?: Asker): Promise<Writes> {
   const p = currentPresets.value;
   p.setValue(kind, key, value, slot);
   for (const [k, v] of Object.entries(coupledEdits(FAMILY[kind], key, value, (k2) => p.value(kind, k2, slot), element))) p.setValue(kind, k, v, slot);
-  return afterSettingEdit(kind, key, value, slot, element);
+  return afterSettingEdit(kind, key, value, slot, element, ask);
 }

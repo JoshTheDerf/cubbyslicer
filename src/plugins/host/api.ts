@@ -50,7 +50,7 @@ const calls: Partial<Record<HostMethod, (key: string, cap: string, a: Args) => P
   'plater.state': () => ok({ project_dirty: projectDirty(), presets_dirty: presetsDirty(), project_path: '' }),
   'app.info': () => ok(appInfo()),
   'presets.beginUpdate': async (_k, _c, a) => ok(await beginUpdate(a as Parameters<typeof beginUpdate>[0])),
-  'presets.commit': (_k, _c, a) => ok(commitUpdate(a as Parameters<typeof commitUpdate>[0])),
+  'presets.commit': async (_k, _c, a) => ok(await commitUpdate(a as Parameters<typeof commitUpdate>[0])),
   'plater.export3mf': async () => {
     // Plater::export_3mf_copy: the current project with unsaved changes; the file name and saved state stay.
     const { buildOrca3mfWithThumbnails } = await import('../../project/persistence/orca3mfWriter');

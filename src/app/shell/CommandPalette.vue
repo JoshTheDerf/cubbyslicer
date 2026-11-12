@@ -32,6 +32,8 @@ import { askConfirm, confirmAction } from './uiState';
 import { dialogs } from '../../dialogs/state';
 import { currentPresets } from '../../presets/store';
 import { buildSearchIndex } from '../../settings/search';
+import { settingWikiUrl } from '../../settings/wiki';
+import { activeEngine } from '../state';
 import { jumpToSetting, pageIcon, settingsLayout } from '../../settings/useLayout';
 import { settingsUi } from '../../settings/uiState';
 import { rowStates } from '../../settings/useRules';
@@ -75,7 +77,7 @@ function settingEntries(): SettingEntry[] | null {
     return {
       key: e.key, label: e.label, tab: e.tab, pageTitle: e.pageTitle, groupTitle: e.groupTitle,
       fullLabel: [def?.fullLabel, def?.label].find((x) => x && x !== e.label),
-      tooltip: def?.tooltip || undefined, mode: def?.mode, icon: pageIcon(e.pageTitle),
+      tooltip: def?.tooltip || undefined, mode: def?.mode, icon: pageIcon(e.pageTitle), helpUrl: settingWikiUrl(activeEngine.value, e.key),
       ...(e.state?.hidden ? { hidden: e.state.reason ?? '' } : e.state?.disabled ? { disabled: e.state.reason ?? '' } : {}),
     };
   });

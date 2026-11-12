@@ -14,6 +14,7 @@
  * preset's own keys (see resolveRaw).
  * Preset files are fetched lazily and cached per URL.
  */
+import { generatePresetSettingId, SETTING_ID_TYPE } from '../settingId';
 import type { EngineId } from '../../engine/types';
 import { includesOf, infoMetaFrom, isTemplate, toPresetValues, type RawPreset } from '../inherit';
 import type { BedAssets, MachineModel, PresetCatalog, PresetInfo, PresetKind, PresetValues, VendorInfo } from '../types';
@@ -349,10 +350,14 @@ export class OrcaCatalog implements PresetCatalog {
           const name = await this.currentName(sid.vendor, kind, sid.name);
           return name && name !== sid.name ? this.info(sysId(sid.vendor, name), kind) : null;
         }
+        // Preset::setting_id: the profile's own (not inherited), else generated for an instantiated preset.
+        const settingId = str(r.leaf.setting_id)
+          || (str(r.leaf.instantiation) === 'true' ? await generatePresetSettingId(sid.vendor, SETTING_ID_TYPE[kind], sid.name).catch(() => '') : '');
         return {
           id, kind, name: sid.name, source: 'system', vendor: sid.vendor,
           fromLibrary: sid.vendor === this.library,
           ...(kind === 'filament' && r.filamentId ? { filamentId: r.filamentId } : {}),
+          ...(settingId ? { settingId } : {}),
           ...infoMetaFrom(r.values, sid.name, r.leaf),
         } as PresetInfo;
       })();
