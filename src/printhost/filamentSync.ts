@@ -15,10 +15,16 @@
  * the runout sensors, and the printer's `officiall_filas_list.cfg` dictionary.
  * Without a filament id, the material picks a generic preset of that type; the
  * slot colour becomes the filament colour.
+ *
+ * A Creality Print host (CrealityPrintAgent) on a CFS-capable K-series model
+ * reads the CFS over the printer's port-9999 socket (`boxsInfo`), scores the
+ * presets against each spool's vendor / name / type for its filament_id, and
+ * falls back to the Moonraker sources above at the same address.
  */
 import { SCALAR, valueAt } from '../lib/configValue';
 import { parseColour, toHex } from '../lib/colour';
 import { currentPresets } from '../presets/store';
+import { crealityBoxes, crealityInfo, crealityMultiColour } from './hosts/creality';
 import { fetchLaneData, isQidi, moonrakerGet } from './hosts/moonraker';
 import { boundPrinter, hostContext, physicalPrinter } from './store';
 import { browserEnv } from './transport';
@@ -215,6 +221,131 @@ export async function fetchQidiBox(config: PhysicalPrinterConfig, printerModel =
   return parseQidiSlots(parse(await moonrakerGet(ctx, env, QIDI_SLOT_QUERY, signal)), dict, series);
 }
 
+// ---- Creality K-series CFS over the Creality Print socket (CrealityPrintAgent) ---------------------
+
+export interface CfsSpool { box: number; slot: number; colour: string; type: string; brand: string; vendor: string }
+
+/**
+ * CrealityPrintAgent::parse_cfs_response: loaded slots of the active CFS boxes (type 0, state 1),
+ * the boxes renumbered 0, 1, … (the spool holder, type 1, and gaps don't count); a slot is loaded
+ * when its state isn't 0 and it names a vendor or a type; "#0RRGGBB" → "#RRGGBB". Null when the
+ * reply has no `boxsInfo.materialBoxs`.
+ */
+export function parseCfsSync(reply: unknown): { boxCount: number; spools: CfsSpool[] } | null {
+  const boxes = (reply as { boxsInfo?: { materialBoxs?: unknown } } | null)?.boxsInfo?.materialBoxs;
+  if (!Array.isArray(boxes)) return null;
+  const num = (v: unknown) => (typeof v === 'number' ? Math.trunc(v) : 0);
+  const s = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
+  const spools: CfsSpool[] = [];
+  let boxCount = 0;
+  for (const b of boxes as Array<Record<string, unknown>>) {
+    if (!b || typeof b !== 'object' || num(b.state) !== 1 || num(b.type) !== 0) continue;
+    const box = boxCount++;
+    if (!Array.isArray(b.materials)) continue;
+    for (const m of b.materials as Array<Record<string, unknown>>) {
+      if (!m || typeof m !== 'object' || num(m.state) === 0) continue;
+      const vendor = s(m.vendor), type = s(m.type);
+      if (!vendor && !type) continue;
+      let colour = s(m.color, '#FFFFFF');
+      if (colour.length === 8 && colour[0] === '#') colour = `#${colour.slice(2)}`;
+      spools.push({ box, slot: num(m.id), colour, type, brand: s(m.name), vendor });
+    }
+  }
+  return { boxCount, spools };
+}
+
+/** CrealityPrintAgent::normalize_filament_type: "PLA Silk" / "PLA+" → "PLA" (first matching prefix). */
+export function cfsBaseType(type: string): string {
+  for (const b of ['PETG', 'PET', 'PLA', 'ABS', 'ASA', 'TPU', 'PC', 'PA', 'PVA', 'HIPS']) if (type.startsWith(b)) return b;
+  return type;
+}
+
+export interface CfsCandidate {
+  id: string;
+  name: string;
+  filamentType?: string;
+  filamentId?: string;
+  /** The owning vendor bundle (system presets only, like Orca's Preset::vendor). */
+  vendor?: string;
+  system: boolean;
+  /** A user preset (not system, not the default). */
+  user: boolean;
+  /** Its own base (no parent preset): get_preset_base(p) == &p. */
+  base: boolean;
+}
+
+const nameWords = (name: string) => (name.split('@')[0].toLowerCase().match(/[a-z0-9]+/g) ?? []);
+
+/**
+ * CrealityPrintAgent::match_filament_preset → the filament_id for a spool. Among presets of the
+ * spool's base type: +20 when the name contains the brand, +10 when the preset belongs to the
+ * vendor (its bundle or its name), −5 per name word the spool never mentioned ("generic" excepted);
+ * highest score, then system before user, then name. Nothing scored: the first system base preset
+ * of the type ("PLA High Speed" → "PLA"), if it is that type and a base with its id exists; else ''.
+ */
+export function matchCfsPreset(candidates: readonly CfsCandidate[], vendor: string, brand: string, baseType: string): string {
+  const v = vendor.toLowerCase(), b = brand.toLowerCase(), t = baseType.toLowerCase();
+  const said = new Set(['generic', ...nameWords(b), ...nameWords(v), ...nameWords(t)]);
+  const matches: Array<{ c: CfsCandidate; score: number }> = [];
+  for (const c of candidates) {
+    if ((c.filamentType ?? '').toLowerCase() !== t) continue;
+    const n = c.name.toLowerCase();
+    let score = 0;
+    if (b && n.includes(b)) score += 20;
+    if (v && ((c.vendor ?? '').toLowerCase() === v || n.includes(v))) score += 10;
+    if (!score) continue;
+    for (const w of nameWords(c.name)) if (!said.has(w)) score -= 5;
+    matches.push({ c, score });
+  }
+  if (!matches.length) {
+    const byType = (x: string) => candidates.find((c) => c.system && c.base && (c.filamentType ?? '') === x);
+    const sp = baseType.indexOf(' ');
+    const fb = byType(baseType) ?? (sp >= 0 ? byType(baseType.slice(0, sp)) : undefined);
+    const id = fb?.filamentId ?? '';
+    return fb && fb.filamentType === baseType && candidates.some((c) => c.base && c.filamentId === id) ? id : '';
+  }
+  matches.sort((x, y) => (y.score - x.score) || (Number(x.c.user) - Number(y.c.user)) || (x.c.name < y.c.name ? -1 : x.c.name > y.c.name ? 1 : 0));
+  return matches[0].c.filamentId ?? '';
+}
+
+/**
+ * PresetBundle::sync_ams_list for a tray's filament_id: the first compatible base preset with that
+ * id, else the first system preset named "Generic <type>…". An empty id changes nothing.
+ */
+export function pickByFilamentId(candidates: readonly CfsCandidate[], filamentId: string, type: string): CfsCandidate | null {
+  if (!filamentId) return null;
+  return candidates.find((c) => c.base && c.filamentId === filamentId)
+    ?? (type ? candidates.find((c) => c.system && c.name.startsWith(`Generic ${type}`)) ?? null : null);
+}
+
+/**
+ * CrealityPrintAgent::fetch_filament_info: the model from `info`; a CFS-capable model (and a CFS
+ * connected, with active boxes) gives one lane per loaded slot (box · 4 + slot), its base type,
+ * colour and matched filament_id. Otherwise null: the caller falls back to Moonraker, as desktop
+ * falls back to MoonrakerPrinterAgent. `socketError` is why the socket couldn't be opened, if so.
+ */
+export async function fetchCrealityCfs(config: PhysicalPrinterConfig, candidates: () => Promise<CfsCandidate[]>, signal?: AbortSignal): Promise<{ lanes: PrinterLane[] | null; error?: HostError; socket?: boolean }> {
+  const ctx = hostContext(config), env = browserEnv();
+  const asHostError = (e: unknown) => (e instanceof HostError ? e : new HostError('network', String((e as Error)?.message ?? e)));
+  let model: string | undefined;
+  // read_printer_info: an unreachable printer isn't multi-colour.
+  try { ({ model } = await crealityInfo(ctx, env, signal)); } catch (e) { return { lanes: null, error: asHostError(e) }; }
+  if (!crealityMultiColour(model)) return { lanes: null };
+  let boxes: { reply: unknown; noCfs: boolean };
+  try { boxes = await crealityBoxes(ctx, env); } catch (e) { return { lanes: null, error: asHostError(e), socket: true }; }
+  if (boxes.noCfs) return { lanes: null };
+  const parsed = parseCfsSync(boxes.reply);
+  if (!parsed || !parsed.boxCount) return { lanes: null };
+  const list = await candidates();
+  const lanes = parsed.spools.filter((s) => s.box < parsed.boxCount && s.slot >= 0 && s.slot < 4).map((s) => {
+    const type = cfsBaseType(s.type);
+    return { index: s.box * 4 + s.slot, colour: laneColour(s.colour), material: type, filamentId: matchCfsPreset(list, s.vendor, s.brand, type), nozzleTemp: 0, bedTemp: 0 };
+  });
+  // by_position: a later entry for the same slot wins.
+  const bySlot = new Map(lanes.map((l) => [l.index, l]));
+  return { lanes: [...bySlot.values()].sort((a, b) => a.index - b.index) };
+}
+
 /** The printer's loaded lanes, from the first source that reports any (Orca's order). */
 async function printerLanes(config: PhysicalPrinterConfig, signal?: AbortSignal): Promise<PrinterLane[]> {
   if (isQidi(boundPrinter.value.model)) {
@@ -264,30 +395,64 @@ export interface SyncResult { lanes: PrinterLane[]; matched: Array<{ lane: numbe
  * lane index, the matched preset and the lane colour.
  */
 export async function syncFilamentsFromPrinter(config: PhysicalPrinterConfig | undefined = physicalPrinter.value?.config, signal?: AbortSignal): Promise<SyncResult> {
-  if (!config || config.type !== 'moonraker') throw new HostError('unsupported', 'Filament sync needs a Moonraker printer.');
-  const lanes = await printerLanes(config, signal);
-  if (!lanes.length) throw new HostError('protocol', isQidi(boundPrinter.value.model) ? 'The printer reports no loaded Qidi Box slots.' : 'The printer reports no filament lanes (no AFC / Happy Hare lane data, Happy Hare MMU or Creality CFS).');
+  if (!config || (config.type !== 'moonraker' && config.type !== 'crealityprint')) throw new HostError('unsupported', 'Filament sync needs a Moonraker or Creality Print printer.');
   const p = currentPresets.value;
   const infos = p.compatible.value.filament;
-  const candidates: FilamentCandidate[] = infos.map((i) => ({ id: i.id, name: i.name, filamentType: i.filamentType, system: i.source === 'system' }));
-  // filament_id lives in the preset values: resolve only when a lane carries one.
-  if (lanes.some((l) => l.filamentId)) {
-    await Promise.all(candidates.map(async (c) => {
-      const r = await p.resolvePreset('filament', c.id).catch(() => null);
-      const v = r?.values.filament_id;
-      c.filamentId = valueAt(v, SCALAR);
-    }));
+  let cfsList: Promise<CfsCandidate[]> | null = null;
+  // Creality Print host (CrealityPrintAgent): the CFS over the printer's socket; presets by filament_id.
+  if (config.type === 'crealityprint') {
+    const cfs = await fetchCrealityCfs(config, cfsCandidates, signal);
+    if (cfs.lanes) {
+      if (!cfs.lanes.length) throw new HostError('protocol', 'The printer reports no loaded CFS slots.');
+      return applyLanes(cfs.lanes, (lane, list) => pickByFilamentId(list, lane.filamentId, lane.material), await cfsCandidates());
+    }
+    // Not a CFS model, no CFS, or no answer: MoonrakerPrinterAgent at the same address, as desktop.
+    const lanes = await printerLanes({ ...config, type: 'moonraker' }, signal).catch(() => [] as PrinterLane[]);
+    if (lanes.length) return applyMoonrakerLanes(lanes);
+    const e = cfs.error;
+    if (e && cfs.socket) {
+      throw new HostError(e.kind, `${e.message} The CFS is read over the printer’s ws://…:9999 socket, which browsers refuse from an HTTPS page; enter a wss:// proxy for it as the printer’s WebSocket URL.`, e.detail);
+    }
+    if (e) throw e;
+    throw new HostError('protocol', 'The printer reports no CFS slots (and no Moonraker filament lanes).');
   }
-  const count = lanes[lanes.length - 1].index + 1;
-  if (p.selection.filaments.length < count) await p.setFilamentCount(count);
-  const matched: SyncResult['matched'] = [];
-  for (const lane of lanes) {
-    const hit = lane.material ? matchLane(lane, candidates) : null;
-    if (hit) await p.selectFilament(lane.index, hit.id);
-    if (lane.colour) p.setFilamentColour(lane.index, lane.colour);
-    matched.push({ lane: lane.index, preset: hit?.name ?? null });
+  const lanes = await printerLanes(config, signal);
+  if (!lanes.length) throw new HostError('protocol', isQidi(boundPrinter.value.model) ? 'The printer reports no loaded Qidi Box slots.' : 'The printer reports no filament lanes (no AFC / Happy Hare lane data, Happy Hare MMU or Creality CFS).');
+  return applyMoonrakerLanes(lanes);
+
+  function cfsCandidates(): Promise<CfsCandidate[]> {
+    return (cfsList ??= Promise.all(infos.map(async (i) => ({
+      id: i.id, name: i.name, filamentType: i.filamentType, system: i.source === 'system', user: i.source === 'user', base: !i.parentId,
+      vendor: i.source === 'system' ? i.vendor : undefined,
+      filamentId: i.filamentId ?? valueAt((await p.resolvePreset('filament', i.id).catch(() => null))?.values.filament_id, SCALAR),
+    }))));
   }
-  return { lanes, matched };
+
+  async function applyMoonrakerLanes(lanes: PrinterLane[]): Promise<SyncResult> {
+    const candidates: FilamentCandidate[] = infos.map((i) => ({ id: i.id, name: i.name, filamentType: i.filamentType, system: i.source === 'system' }));
+    // filament_id lives in the preset values: resolve only when a lane carries one.
+    if (lanes.some((l) => l.filamentId)) {
+      await Promise.all(candidates.map(async (c) => {
+        const r = await p.resolvePreset('filament', c.id).catch(() => null);
+        const v = r?.values.filament_id;
+        c.filamentId = valueAt(v, SCALAR);
+      }));
+    }
+    return applyLanes(lanes, (lane, list) => (lane.material ? matchLane(lane, list) : null), candidates);
+  }
+
+  async function applyLanes<C extends { id: string; name: string }>(lanes: PrinterLane[], pick: (lane: PrinterLane, list: C[]) => C | null, list: C[]): Promise<SyncResult> {
+    const count = lanes[lanes.length - 1].index + 1;
+    if (p.selection.filaments.length < count) await p.setFilamentCount(count);
+    const matched: SyncResult['matched'] = [];
+    for (const lane of lanes) {
+      const hit = pick(lane, list);
+      if (hit) await p.selectFilament(lane.index, hit.id);
+      if (lane.colour) p.setFilamentColour(lane.index, lane.colour);
+      matched.push({ lane: lane.index, preset: hit?.name ?? null });
+    }
+    return { lanes, matched };
+  }
 }
 
 /**

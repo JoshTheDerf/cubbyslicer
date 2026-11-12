@@ -35,9 +35,9 @@ export const printhostActions: Action[] = [
   },
   {
     id: 'printer.sync-filaments', title: 'Sync filaments from printer', icon: 'i-lucide-refresh-cw', category: 'Settings',
-    aliases: ['ams', 'afc', 'happy hare', 'mmu', 'lanes', 'spools', 'filament slots', 'moonraker'],
-    description: 'Sets the filament slots from the printer’s lanes (AFC / Happy Hare on Moonraker): one slot per lane, with its colour and a matching preset.',
-    when: () => physicalPrinter.value?.config.type === 'moonraker', run: syncFilaments,
+    aliases: ['ams', 'afc', 'happy hare', 'mmu', 'lanes', 'spools', 'filament slots', 'moonraker', 'cfs', 'creality'],
+    description: 'Sets the filament slots from the printer’s lanes (AFC / Happy Hare / Qidi Box on Moonraker, a Creality K-series CFS on Creality Print): one slot per lane, with its colour and a matching preset.',
+    when: () => physicalPrinter.value?.config.type === 'moonraker' || physicalPrinter.value?.config.type === 'crealityprint', run: syncFilaments,
   },
 ];
 

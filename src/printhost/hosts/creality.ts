@@ -4,6 +4,7 @@
  *   upload: POST upload/<name>  multipart: [path=<folder>] (not on CFS-capable models), file   (spaces → _)
  *   slots:  WebSocket ws://<host>:9999/  { method: "get", params: { boxsInfo: 1 } } → { boxsInfo: { materialBoxs: [...] } }
  *           (a status with cfsConnect: 0 means no CFS: the print uses the external spool)
+ *           The same reply feeds "Sync filaments from printer" (CrealityPrintAgent, filamentSync.ts).
  *   print:  same socket. Plain: { method: "set", params: { opGcodeFile: "printprt:<path>"[, enableSelfTest] } }
  *           CFS mapping: { method: "set", params: { colorMatch: { path, list: [{ id, type, color, boxId, materialId }] } } }
  *           then { method: "set", params: { multiColorPrint: { gcode: <path>, enableSelfTest } } }
@@ -89,19 +90,27 @@ export function crealityStartCommands(multiColour: boolean, path: string, cfs?: 
   return [{ method: 'set', params: { opGcodeFile: `printprt:${path}`, ...(multiColour ? { enableSelfTest: selfTest } : {}) } }];
 }
 
-/** CrealityPrint::query_boxes_info: the slots, or none (with `noCfs` when a status says no CFS is connected). */
-export async function crealitySlots(ctx: HostContext, env: HostEnv, timeoutMs = 8000): Promise<{ slots: CfsSlot[]; noCfs: boolean }> {
+/**
+ * CrealityPrint::query_boxes_info: the `boxsInfo` reply, or null (with `noCfs` when a status says no
+ * CFS is connected, or nothing in time). Throws when the socket can't be opened.
+ */
+export async function crealityBoxes(ctx: HostContext, env: HostEnv, timeoutMs = 8000): Promise<{ reply: unknown; noCfs: boolean }> {
   const ws = await openWs(env, wsUrl(ctx));
   try {
     ws.send({ method: 'get', params: { boxsInfo: 1 } });
-    const r = await ws.next((m) => {
+    return await ws.next((m) => {
       if (!m || typeof m !== 'object') return undefined;
-      if ('boxsInfo' in m) return { slots: parseCfsSlots(m), noCfs: false };
-      if ((m as { cfsConnect?: unknown }).cfsConnect === 0) return { slots: [], noCfs: true };
+      if ('boxsInfo' in m) return { reply: m, noCfs: false };
+      if ((m as { cfsConnect?: unknown }).cfsConnect === 0) return { reply: null, noCfs: true };
       return undefined;
-    }, timeoutMs).catch(() => ({ slots: [] as CfsSlot[], noCfs: false }));
-    return r;
+    }, timeoutMs).catch(() => ({ reply: null, noCfs: false }));
   } finally { ws.close(); }
+}
+
+/** The send dialog's slots from query_boxes_info, or none (with `noCfs` when a status says no CFS is connected). */
+export async function crealitySlots(ctx: HostContext, env: HostEnv, timeoutMs = 8000): Promise<{ slots: CfsSlot[]; noCfs: boolean }> {
+  const { reply, noCfs } = await crealityBoxes(ctx, env, timeoutMs);
+  return { slots: reply ? parseCfsSlots(reply) : [], noCfs };
 }
 
 export const crealityprint: PrintHostDriver = {

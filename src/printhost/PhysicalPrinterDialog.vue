@@ -115,7 +115,7 @@ async function requestCredentials() {
 }
 
 const syncBusy = ref(false);
-/** Moonraker: filament slots from the printer's lanes (AFC / Happy Hare lane_data). */
+/** Moonraker / Creality Print: filament slots from the printer's lanes (AFC / Happy Hare, Qidi Box, Creality CFS). */
 async function syncFilaments() {
   syncBusy.value = true;
   try {

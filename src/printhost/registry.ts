@@ -34,7 +34,7 @@ export interface HostMeta {
   userPassword?: { user: string; password: string; credentials?: boolean };
   /** Every upload starts printing (no plain Upload). */
   printOnly?: boolean;
-  /** Moonraker: the filament slots can be synced from the printer's lanes. */
+  /** Moonraker / Creality Print: the filament slots can be synced from the printer's lanes. */
   filamentSync?: boolean;
   /** Repetier: printer slug (`printhost_port`). */
   printerSlug?: boolean;
@@ -154,10 +154,10 @@ export const HOSTS: HostMeta[] = [
   },
   {
     type: 'crealityprint', label: 'Creality Print', support: 'full', driver: crealityprint,
-    apiKeyLabel: 'Token (optional)', folder: 'folder', hostPlaceholder: '192.168.1.100', canPrint: always, wsUrl: 'ws://<printer>:9999/',
-    note: 'Starting the print opens ws://<printer>:9999. K2 multi-colour (CFS) mapping isn’t available; K2 prints use the spool holder.',
+    apiKeyLabel: 'Token (optional)', folder: 'folder', hostPlaceholder: '192.168.1.100', canPrint: always, wsUrl: 'ws://<printer>:9999/', filamentSync: true,
+    note: 'Reading the CFS (filament mapping, Sync filaments) and starting the print use ws://<printer>:9999.',
     hints: (origin) => [
-      { text: `The printer must answer CORS for ${origin}. Browsers block insecure ws:// from HTTPS pages, so “Upload & Print” may only upload.` },
+      { text: `The printer must answer CORS for ${origin}. Browsers refuse insecure ws:// from HTTPS pages, so without a wss:// WebSocket URL (a proxy) “Upload & Print” only uploads and the CFS can’t be read.` },
       proxyHint(origin, '192.168.1.100'),
     ],
   },

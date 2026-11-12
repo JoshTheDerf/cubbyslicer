@@ -9,6 +9,7 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Plugins:** subprocesses, raw sockets, OS threads, arbitrary filesystem access, printer-connection (agent) plugins. Dependencies must be pure Python or shipped with Pyodide.
 - **Bambu device tab, printer agents, filament sync from a connected Bambu printer** ("Smart filament assign", rack contents reported by the printer).
 - **Printers that don't allow cross-origin requests** (for example UltiMaker, which is http-only) need a proxy; the printer setup help shows one.
+- **Printer WebSockets from https://cubbycad.com.** A page served over HTTPS may not open a `ws://` socket to a LAN printer: Chrome refuses it outright (`SecurityError`, even for a private IP and with Local Network Access allowed, which only exempts `fetch`; checked in Chromium 147), and Firefox and Safari block it too. Creality Print's port-9999 socket (reading the CFS for Sync filaments and the send dialog's mapping, starting a print) and Elegoo's port-3030 socket therefore work only through a `wss://` proxy entered as the printer's WebSocket URL.
 
 ## Not done
 
@@ -17,11 +18,9 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Import of textured / coloured models** (glTF, GLB, FBX) and the Import Model dialog. Work in progress is parked in the engine port: `orcaslicer-wasm/docs/TEXTURE-IMPORT-NOTES.md`.
 - **`.gcode.3mf` export** leaves some `slice_info.config` values as desktop writes them when it has no data, because the engine doesn't report them yet: first-layer time, toolpath-outside flag, slice warnings, per-plate filament grouping on multi-nozzle printers (H2D / H2C), layer filament and change sequences, mixed filaments used, and `plate_N.json` first-layer bounding boxes. Single-nozzle printers are exact.
 - **Preview:** centre-of-mass markers (needs per-object masses from the engine's G-code processor). Translucent filaments use desktop's order-independent transparency, its opacity by the path through the extrusion and its cut at the joints, but the cut is in screen space (the toolpaths here are screen-space capsules, not desktop's boxes), so where two segments of very different widths meet the seam can differ slightly from desktop. Without half-float render targets (some phones) the preview falls back to a single blended pass, as desktop's OpenGL ES build does.
-- **Print hosts:** "Sync filaments from printer" for a Creality K-series printer on the Creality Print host (Orca's CrealityPrint agent reads its CFS over the port-9999 socket and scores presets against the spools); the send dialog's CFS mapping is done.
 - **Mixed filaments:** Orca's lab-measured colours come from the engine; before the engine has loaded, swatches use the computed pigment blend.
 
 ### Design tab (experimental)
-- **Primitive bodies** (box, cylinder, cone, sphere, torus) are fixed-size, not parametric.
 - **Closed hollow shell** (no open face) is refused: Orca's own result for it is not a hollow body.
 - **Internal threads** follow Orca's behaviour, including its failure when the bore equals the thread's minor diameter.
 
@@ -50,4 +49,4 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - Third-party STEP files have not been tested in the Design tab.
 - Sketch mirror, move / rotate / scale and the two array operations were checked against the kernel but not through the UI.
 - Plugins and the Design tab have been run in Chromium only.
-- Print-host filament sources and mappings with no hardware here (Happy Hare `mmu` gates, a Creality Hi's CFS `box` object, the Qidi Box slots and filament dictionary, the Creality K-series CFS slot query and colour-mapped print start) are tested only against replies shaped after OrcaSlicer's parsing code, never against a real printer.
+- Print-host filament sources and mappings with no hardware here (Happy Hare `mmu` gates, a Creality Hi's CFS `box` object, the Qidi Box slots and filament dictionary, the Creality K-series CFS slot query, its Sync filaments preset scoring and colour-mapped print start) are tested only against replies shaped after OrcaSlicer's parsing code, never against a real printer.
