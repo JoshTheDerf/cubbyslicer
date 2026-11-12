@@ -1,7 +1,7 @@
 /**
  * Engine tool ops (`cs_tool`, docs/ENGINE-CONTRACT.md "Tools"): each op's
  * arguments and result, so callers of `engineTool` get both checked.
- * New ops (texture bake, fix model, colour decompose, mixed_filament) go here.
+ * New ops (fix model, colour decompose, mixed_filament, texture bake) go here.
  */
 import type { FlatConfig, PaintLayers, PaintMap } from './types';
 
@@ -201,6 +201,27 @@ export interface ToolOps {
   wipe_tower_footprint: { args: WipeTowerFootprintArgs; result: WipeTowerFootprintResult };
   /** Desktop "Fix model": CGAL repair of one volume's mesh (meshes[0] in, repaired meshes[0] out). */
   repair_mesh: { args: RepairMeshArgs; result: RepairMeshResult };
+  /** Orca 2.5 texture displacement bake of one volume (meshes[0] = base mesh → displaced mesh). */
+  texture_displacement: { args: TextureDisplacementArgs; result: { triangles: number; budgetLimited: boolean } };
+}
+
+/**
+ * ENGINE-CONTRACT "Texture displacement". Uint8Array values in tool args are
+ * packed into the request blob and sent as `{offset, length}` (packTool).
+ */
+export interface TextureDisplacementArgs {
+  /** `{version, options, layers}` as texture_displacement_layers_to_json writes it. */
+  layers: { version: number; options: Record<string, unknown>; layers: Array<Record<string, unknown>> };
+  /** Slot → PNG bytes. */
+  images: Record<string, Uint8Array>;
+  /** Slot → paint mask. */
+  paint: Record<string, ReadonlyArray<readonly [number, string]>>;
+  /** Column-major mesh → world (instance · volume). */
+  transform?: number[];
+  /** World point the texture is anchored at (the object's first model part). */
+  anchor?: [number, number, number];
+  /** How far the object's lowest point lies below this part's (mm). */
+  restingDrop?: number;
 }
 
 export type ToolOp = keyof ToolOps;

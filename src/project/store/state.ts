@@ -11,7 +11,7 @@ import { bedFromConfig, resolvedConfig } from '../../app/state';
 import type { ConfigValue, PaintLayers } from '../../engine/types';
 import { computeBBox } from '../mesh';
 import { newPlate, plateBed, type PlateMeta } from '../plates';
-import type { MeshData, ProjectObject } from '../types';
+import type { MeshData, MeshTexture, ProjectObject } from '../types';
 
 // ---- reactive state ---------------------------------------------------------
 
@@ -48,6 +48,12 @@ export function clampActivePlate(): void {
  * PaintMap arrays are immutable — replace, never mutate — so snapshots share them.
  */
 export const meshPaint = shallowRef<Record<string, PaintLayers>>({});
+
+/**
+ * Orca 2.5 texture displacement per mesh (layer stack + paint masks), keyed by
+ * mesh id like `meshPaint`. Values are immutable — replace, never mutate.
+ */
+export const meshTexture = shallowRef<Record<string, MeshTexture>>({});
 
 /** Shared empty override record (read-only views of objects / parts without overrides). */
 export const EMPTY_OVERRIDES: Readonly<Record<string, ConfigValue>> = Object.freeze({});

@@ -10,7 +10,8 @@
 import { watch } from 'vue';
 import { exclusive, liveTabIds, tabSession } from '../../app/tabSession';
 import { presetsAutosaveData, presetsProjectSection, presetsRevision } from '../../presets/store';
-import { liveMeshes, loadProjectData, projectName, projectRevision, serializeObjects, serializePaint, serializePlates } from '../store';
+import { liveMeshes, loadProjectData, projectName, projectRevision, serializeObjects, serializePaint, serializePlates, serializeTexture } from '../store';
+import { sanitizeTexture } from '../../texture/persist';
 import { meshFromArrays, sanitizeObjects, sanitizePaint, sanitizePlates, type MeshRef } from './format';
 import { isEmptyPassthrough, passthroughFor, passthroughRevision, sanitizeProjectPassthrough, setProjectPassthrough } from './passthrough';
 import { LEGACY_SLOT, planSlots, slotKey, type SlotMeta } from './slots';
@@ -20,7 +21,7 @@ const DB_NAME = 'cubby-slicer';
 const DB_VERSION = 2;
 const DEBOUNCE_MS = 1500;
 
-interface StoredProject { name: string; objects: unknown; plates?: unknown; paint?: unknown; presets?: unknown; meshes: MeshRef[]; savedAt: number; editedAt?: number }
+interface StoredProject { name: string; objects: unknown; plates?: unknown; paint?: unknown; texture?: unknown; presets?: unknown; meshes: MeshRef[]; savedAt: number; editedAt?: number }
 interface StoredMesh { id: string; positions: Float32Array; indices: Uint32Array }
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -95,6 +96,7 @@ async function saveNow(): Promise<void> {
     objects: serializeObjects(),
     plates: serializePlates(),
     paint: serializePaint(),
+    texture: serializeTexture(),
     presets,
     meshes: ms.map((m) => ({ id: m.id, vertexCount: m.vertexCount, triangleCount: m.triangleCount })),
     savedAt: Date.now(),
@@ -227,7 +229,7 @@ export async function restoreAutosave(): Promise<number> {
     const meshIds = new Set(meshes.map((m) => m.id));
     const objects = sanitizeObjects(proj.objects, meshIds);
     if (!objects.length) return 0;
-    loadProjectData({ name: proj.name, objects, meshes, plates: sanitizePlates(proj.plates), paint: sanitizePaint(proj.paint, meshIds) });
+    loadProjectData({ name: proj.name, objects, meshes, plates: sanitizePlates(proj.plates), paint: sanitizePaint(proj.paint, meshIds), texture: sanitizeTexture(proj.texture, meshIds) });
     const stored = key ? await reqP(db.transaction('passthrough').objectStore('passthrough').get(key)).catch(() => undefined) : undefined;
     const pass = sanitizeProjectPassthrough(stored, meshIds);
     if (pass) setProjectPassthrough(pass);

@@ -9,12 +9,17 @@ import { markSliceInputsChanged } from '../../app/state';
 import type { PaintLayers } from '../../engine/types';
 import { HistoryManager, type Operation } from '@cubby/shared/history';
 import { clonePlate, newPlate, type PlateMeta } from '../plates';
-import type { ProjectObject } from '../types';
+import type { MeshTexture, ProjectObject } from '../types';
 import { cloneObj } from './clone';
 import { pruneSelection } from './selection';
-import { clampActivePlate, meshIdsOf, meshPaint, meshRevision, meshes, objects, plates, projectRevision } from './state';
+import { clampActivePlate, meshIdsOf, meshPaint, meshRevision, meshTexture, meshes, objects, plates, projectRevision } from './state';
 
-interface Snapshot { objects: ProjectObject[]; plates: PlateMeta[]; paint: Record<string, PaintLayers>; slots: Record<string, unknown> }
+interface Snapshot {
+  objects: ProjectObject[]; plates: PlateMeta[]; paint: Record<string, PaintLayers>;
+  /** Texture displacement per mesh (immutable record, compared by identity). */
+  texture: Record<string, MeshTexture>;
+  slots: Record<string, unknown>;
+}
 
 /**
  * Project state outside the store that undo must restore too (the Design tab's document bytes,
@@ -73,7 +78,7 @@ function snapshotReplacer(k: string, v: unknown): unknown {
 }
 
 function snapshot(): Snapshot {
-  return { objects: objects.value.map(cloneObj), plates: plates.value.map((p) => clonePlate(toRaw(p))), paint: meshPaint.value, slots: captureSlots() };
+  return { objects: objects.value.map(cloneObj), plates: plates.value.map((p) => clonePlate(toRaw(p))), paint: meshPaint.value, texture: meshTexture.value, slots: captureSlots() };
 }
 
 function samePaint(a: Record<string, PaintLayers>, b: Record<string, PaintLayers>): boolean {
@@ -95,7 +100,7 @@ function sameSlots(a: Record<string, unknown>, b: Record<string, unknown>): bool
 
 function sameSnapshot(a: Snapshot, b: Snapshot): boolean {
   // Paint maps and slot values are immutable: compare by reference (they can be large).
-  return samePaint(a.paint, b.paint) && sameSlots(a.slots, b.slots) && JSON.stringify([a.objects, a.plates], snapshotReplacer) === JSON.stringify([b.objects, b.plates], snapshotReplacer);
+  return samePaint(a.paint, b.paint) && a.texture === b.texture && sameSlots(a.slots, b.slots) && JSON.stringify([a.objects, a.plates], snapshotReplacer) === JSON.stringify([b.objects, b.plates], snapshotReplacer);
 }
 
 function refreshHistoryState(): void {
@@ -151,6 +156,7 @@ export function mutate(label: string, fn: () => void, opts: { slice?: boolean; m
 function restore(s: Snapshot): void {
   objects.value = s.objects.map(cloneObj);
   meshPaint.value = s.paint ?? {};
+  meshTexture.value = s.texture ?? {};
   plates.value = s.plates.length ? s.plates.map(clonePlate) : [newPlate()];
   clampActivePlate();
   for (const [k, slot] of slots) if (k in s.slots) slot.restore(s.slots[k]);

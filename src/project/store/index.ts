@@ -44,7 +44,7 @@ export { registerProjectSection, type ProjectSection } from '../persistence/sect
 // ---- state (read; change through the commands) ----
 export {
   objects, selectedIds, selectedPart, projectName, projectRevision, meshRevision, projectLoads,
-  bed, plates, activePlate, plateBedOf, meshPaint,
+  bed, plates, activePlate, plateBedOf, meshPaint, meshTexture,
   uid, getObject, getMesh, addMesh, liveMeshes,
 } from './state';
 
@@ -87,6 +87,7 @@ export {
 
 // ---- paint ----
 export { getMeshPaint, setMeshPaint } from './paint';
+export { getMeshTexture, textureOwner, setTextureStack, setTextureMasks, commitTextureBake, type TextureBakeResult } from './texture';
 
 // ---- engine inputs ----
 export { getSliceObjects, plateSliceSignature } from './sliceInput';
@@ -97,7 +98,7 @@ export {
 
 // ---- persistence ----
 export {
-  loadProjectData, resetProject, serializeObjects, serializePaint, serializePlates, type ProjectData,
+  loadProjectData, resetProject, serializeObjects, serializePaint, serializePlates, serializeTexture, type ProjectData,
 } from './serialize';
 
 // ---- tools ----

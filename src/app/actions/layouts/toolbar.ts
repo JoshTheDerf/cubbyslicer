@@ -1,8 +1,9 @@
 /**
  * Orca's plater toolbar, centred over the 3D view (GLCanvas3D main toolbar +
  * gizmo bar), grouped by task: add, edit, place on the bed, transform, modify
- * the mesh, per-region print adjustments, measure. The four paint gizmos share
- * one menu button (their L / P / N / H keys still toggle them directly).
+ * the mesh, per-region print adjustments, measure. The paint gizmos share one
+ * menu button (their L / P / N / H / D keys still toggle them directly);
+ * Texture displacement comes last there, after the painting gizmos as on desktop.
  * Groups become separators; trailing groups fold into a "More tools" menu when
  * the view is narrow. Camera presets live on the view cube.
  */
@@ -18,7 +19,7 @@ export const PLATE_TOOLBAR: ToolbarLayout = {
     {
       label: 'Print adjustments',
       items: [
-        { menu: 'paint', label: 'Paint', icon: 'i-lucide-paintbrush', items: ['paint.support', 'paint.seam', 'paint.color', 'paint.fuzzy'] },
+        { menu: 'paint', label: 'Paint', icon: 'i-lucide-paintbrush', items: ['paint.support', 'paint.seam', 'paint.color', 'paint.fuzzy', 'tool.texture-displacement'] },
         'layers.edit', 'tool.brim-ears',
       ],
     },

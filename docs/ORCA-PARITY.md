@@ -14,7 +14,14 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 ## Not done
 
 ### Slicer
-- **Texture Displacement** tool and texture painting. Projects that contain texture layers keep them through open and save. The engine can bake geometry (`cs_tool texture_displacement`); the colour output and the UI are not built.
+- **Texture Displacement** (Paint menu, D) has desktop's Standard mode for whole-model layers: up to 8 layers with a built-in or imported texture, Depth, Tile size, Rotation, Midlevel, Smoothing, Edge fade, Invert, Triplanar / Cylindrical / Spherical mapping, Tile (Repeat / Mirrored) and Blend; Select / Erase whole model; the live preview of the real geometry (desktop's Normal view); Bake (one undo step); layers and masks saved and opened in desktop's 3MF layout. Not built yet:
+  - painting a layer onto part of the model (Brush, Face, Connected area) and the paint tint;
+  - a bake keeps the volume's support, seam, colour and fuzzy skin painting on desktop (`transfer_facet_paint`); here it resets it, as other mesh-replacing tools do (the panel says so);
+  - Unwrap (LSCM) with the UV editor, From view / projection frame and Model UV mapping (a layer opened with one of them keeps it and shows its name); the Fast, Checker, Distortion and Wireframe views; Adjust placement (offset); reordering layers;
+  - Colors (printing the texture's colours, Mix filaments, Mixed colors, Denoise);
+  - Pro mode (Subdivision, Remeshing, Result smoothing) and the Quality section (Budget, Resolution): bakes use desktop's automatic values;
+  - your own textures as a library (an imported image belongs to its layer only) and the image adjustment panel;
+  - the bake runs in the single engine worker: a 20 mm cube takes about 15 s (preview and bake each), against a second or two on desktop.
 - **Import of textured / coloured models** (glTF, GLB, FBX) and the Import Model dialog. Work in progress is parked in the engine port: `orcaslicer-wasm/docs/TEXTURE-IMPORT-NOTES.md`.
 - **`.gcode.3mf` export** writes `plate_N.json` (first-layer boxes) for the plates in the export only; desktop also keeps those of other plates sliced earlier in the session. Plate `layer_filament_list` rows come in the engine's hash-map order, which differs between desktop builds too.
 - **Preview:** translucent filaments use desktop's order-independent transparency, its opacity by the path through the extrusion and its cut at the joints, but the cut is in screen space (the toolpaths here are screen-space capsules, not desktop's boxes), so where two segments of very different widths meet the seam can differ slightly from desktop. Without half-float render targets (some phones) the preview falls back to a single blended pass, as desktop's OpenGL ES build does.
@@ -25,7 +32,7 @@ Everything not listed here is meant to behave as desktop does; if it doesn't, th
 - **Internal threads** follow Orca's behaviour, including its failure when the bore equals the thread's minor diameter.
 
 ### Plugins
-- Resource-texture plugins have nothing to feed until Texture Displacement exists.
+- Resource-texture plugins (texture packs) don't feed Texture Displacement's library yet.
 - The plugin worker runs on the app's origin with dangerous globals removed. Moving it to its own origin is a deployment change that has not been made.
 
 ## Deliberate differences

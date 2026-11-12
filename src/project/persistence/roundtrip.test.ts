@@ -12,7 +12,7 @@ import { resolvedConfig } from '../../app/state';
 import type { ConfigOptionDef, ConfigSchema } from '../../engine/types';
 import * as S from '../store';
 import { parseOrca3mf, type OrcaProject } from '../import/orca3mf';
-import { CAD_RECIPE, TEXTURE_JSON, orca25Project3mf, orca25Published3mf } from '../import/__fixtures__/orca25';
+import { CAD_RECIPE, TEXTURE_PNG, orca25Project3mf, orca25Published3mf } from '../import/__fixtures__/orca25';
 import { orcaProjectData, openOrcaProject } from '../orcaOpen';
 import { buildOrca3mf } from './orca3mfWriter';
 import { getOrcaCadRecipe, projectPassthrough, sanitizeProjectPassthrough, setOrcaCadRecipe, setProjectPassthrough } from './passthrough';
@@ -21,7 +21,10 @@ import { createPrimitiveNode, type CadNode } from '../../cad/api';
 import { ensureCadWasm } from '../../cad/build';
 import { platesMayOverrideBedType, resetPlateBedTypes } from '../plates';
 import { MIXED_SLOT_KEYS, slotValues, splitProjectSlots, type MixedDef } from '../../mixed/model';
+import { takeVolumeTexture } from '../../texture/persist';
+import { TEXTURE_DIR, defaultLayerJson, defaultOptions, layerSlot } from '../../texture/model';
 
+const settings_ = (zip: Record<string, Uint8Array>) => strFromU8(zip['Metadata/model_settings.config']);
 const buf = (u: Uint8Array) => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer;
 const fixture = (f: string) => new Uint8Array(readFileSync(resolve(__dirname, '../import/__fixtures__', f)));
 
@@ -37,6 +40,20 @@ const SCHEMA: ConfigSchema = {
   },
 };
 
+/**
+ * A volume's texture displacement as desktop reads it: the stack (layer fields
+ * over desktop's defaults, options over its defaults, the image bytes) and the
+ * masks — independent of the archive names the writer picks.
+ */
+function textureOf(meshMetadata: Array<[string, string]>, attrs: Record<string, Array<[number, string]>> | undefined, files: Record<string, Uint8Array>) {
+  const t = takeVolumeTexture(meshMetadata, attrs, (path) => files[path]);
+  return {
+    meshMetadata: t.meshMetadata, triangleAttrs: t.triangleAttrs, masks: t.texture?.masks,
+    options: t.texture?.stack ? { ...defaultOptions(), ...t.texture.stack.options } : undefined,
+    layers: t.texture?.stack?.layers.map((l) => ({ json: { ...defaultLayerJson(layerSlot(l)), ...l.json }, image: l.image })),
+  };
+}
+
 /** What desktop Orca would open, minus placements (our plate grid differs) and the per-object default extruder our writer adds. */
 function summary(p: OrcaProject) {
   return {
@@ -44,14 +61,17 @@ function summary(p: OrcaProject) {
       // Orca 2.5 writes auto_drop on every object; absent means on.
       name: o.name, config: o.config, keep: { ...o.keep, attrs: o.keep.attrs.filter(([k, v]) => !(k === 'auto_drop' && v === '1')) }, plates: o.instances.map((i) => [i.plate, i.printable]),
       layerHeightProfile: o.layerHeightProfile, layerRanges: o.layerRanges, brimPoints: o.brimPoints, cutInfo: o.cutInfo,
-      volumes: o.volumes.map((v) => ({
-        name: v.name, type: v.type, preciseSeam: v.preciseSeam, triangles: v.indices.length / 3, paint: v.paint,
-        triangleAttrs: v.triangleAttrs, config: v.config, keep: v.keep,
-      })),
+      volumes: o.volumes.map((v) => {
+        const { meshMetadata, triangleAttrs, ...texture } = textureOf(v.keep.meshMetadata, v.triangleAttrs, p.keptFiles);
+        return {
+          name: v.name, type: v.type, preciseSeam: v.preciseSeam, triangles: v.indices.length / 3, paint: v.paint,
+          triangleAttrs, config: v.config, keep: { ...v.keep, meshMetadata }, texture,
+        };
+      }),
     })),
     plates: p.plates.map((pl) => ({ name: pl.name, locked: pl.locked, config: pl.config, keep: pl.keep, customGcodes: pl.customGcodes })),
     modelMetadata: p.modelMetadata,
-    keptFiles: p.keptFiles,
+    keptFiles: Object.fromEntries(Object.entries(p.keptFiles).filter(([k]) => !k.startsWith(TEXTURE_DIR))),
   };
 }
 
@@ -123,7 +143,14 @@ describe('Orca 2.5 project 3MF (synthetic fixture)', () => {
     const zip = unzipSync(saved);
     expect(Object.keys(zip).filter((k) => /plate_\d+\.gcode|filament_sequence|some_future_file|plate_1\.png/.test(k))).toEqual([]);
     expect(zip['Metadata/orca_cad.bin']).toEqual(CAD_RECIPE);
-    expect(strFromU8(zip['Metadata/texture_displacement/7.json'])).toBe(TEXTURE_JSON);
+    // Texture displacement in desktop's layout: the volume's JSON names its image, stored next to it.
+    const texJson = Object.keys(zip).filter((k) => k.startsWith(TEXTURE_DIR) && k.endsWith('.json'));
+    expect(texJson).toHaveLength(1);
+    const written = JSON.parse(strFromU8(zip[texJson[0]]));
+    expect(written.version).toBe(1);
+    expect(written.layers[0]).toMatchObject({ slot: 0, path: 'bricks.png', depth: 0.4, depth_mm: 0.4, tiling_scale: 12.5, projection_method: 0 });
+    expect(zip[written.layers[0].path_in_3mf]).toEqual(TEXTURE_PNG);
+    expect(settings_(zip)).toContain(`<metadata key="texture_displacement" value="${texJson[0]}"/>`);
     // 2.5 layout: auto_drop on the object, not the build item; seam as modifier + type key.
     const settings = strFromU8(zip['Metadata/model_settings.config']);
     expect(settings).toMatch(/<object id="\d+" auto_drop="0">/);
@@ -163,10 +190,17 @@ describe('Orca 2.5 project 3MF (synthetic fixture)', () => {
     const r = await openOrcaProject('again.3mf', buf(first));
     expect(r.own).toBe(true);
     expect(getOrcaCadRecipe()).toEqual(CAD_RECIPE);
-    expect(Object.values(projectPassthrough.value.triangleAttrs)).toEqual([{ paint_texture_0: [[2, '4'], [3, 'C']] }]);
+    // Texture masks and the layer stack are modelled (not passthrough) and come back from desktop's files.
+    expect(Object.values(projectPassthrough.value.triangleAttrs)).toEqual([]);
+    const tex = Object.values(S.meshTexture.value);
+    expect(tex).toHaveLength(1);
+    expect(tex[0].masks).toEqual({ 0: [[2, '4'], [3, 'C']] });
+    expect(tex[0].stack?.layers[0].image).toEqual(TEXTURE_PNG);
     const second = unzipSync(buildOrca3mf());
     const one = unzipSync(first);
-    for (const f of ['Metadata/model_settings.config', '3D/3dmodel.model', '3D/Objects/object_1.model', 'Metadata/orca_cad.bin', 'Metadata/texture_displacement/7_0.png', 'Metadata/layer_config_ranges.xml']) {
+    const texFiles = Object.keys(one).filter((k) => k.startsWith(TEXTURE_DIR));
+    expect(texFiles).toHaveLength(2);
+    for (const f of ['Metadata/model_settings.config', '3D/3dmodel.model', '3D/Objects/object_1.model', 'Metadata/orca_cad.bin', ...texFiles, 'Metadata/layer_config_ranges.xml']) {
       expect(second[f], f).toEqual(one[f]);
     }
   });
@@ -197,7 +231,7 @@ describe('Orca 2.5 project 3MF (synthetic fixture)', () => {
   it('drops mesh-bound passthrough once a volume’s mesh is replaced', () => {
     openForeign(orca25Project3mf());
     const o = S.objects.value[0];
-    // A tool replacing the mesh gives it a new id: the texture key and source file no longer apply.
+    // A tool replacing the mesh gives it a new id: the texture layers / masks (keyed by mesh) and source file no longer apply.
     const m = S.getMesh(o.meshId)!;
     S.replaceVolumeMesh(o.id, null, { positions: m.positions.slice(), indices: m.indices.slice() }, { label: 'Simplify' });
     const settings = strFromU8(unzipSync(buildOrca3mf())['Metadata/model_settings.config']);

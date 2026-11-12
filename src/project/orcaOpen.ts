@@ -31,7 +31,7 @@ import { MAX_PLATES, newPlate, plateOffset, resetPlateBedTypes, type PlateMeta }
 import { printerMayOverrideBedType } from '../app/plateBedTypes';
 import { bed, loadProjectData, objects as liveObjects, projectName, uid, type ProjectData } from './store';
 import type {
-  ElementPassthrough, LayerRange, MeshData, ObjectPart, ObjectPassthrough, ProjectObject, VolumePassthrough,
+  ElementPassthrough, LayerRange, MeshData, MeshTexture, ObjectPart, ObjectPassthrough, ProjectObject, VolumePassthrough,
 } from './types';
 import type { CadNode } from '../cad/api';
 import { keptEntries, parseOrca3mf, unzipProject, type OrcaInstance, type OrcaKeep, type OrcaProject, type OrcaPublished, type OrcaVolume } from './import/orca3mf';
@@ -47,7 +47,9 @@ import {
 import { MODEL_FILE, OWN_MODEL_METADATA, PLATE_KEYS, PRECISE_SEAM_CONFIG_PREFIX, PUBLISHED_METADATA } from './import/orcaFormat';
 import { CUBBY_META } from './persistence/orca3mfWriter';
 import { CUBBY_CAD_META, PROJECT_FORMAT, PROJECT_VERSION, meshFromArrays, sanitizeObjects, sanitizePaint, sanitizePlates, type CadTreesJson, type ProjectJson } from './persistence/format';
-import { setProjectPassthrough, type ProjectPassthrough } from './persistence/passthrough';
+import { setProjectPassthrough, withoutTextureFiles, type ProjectPassthrough } from './persistence/passthrough';
+import { takeVolumeTexture } from '../texture/persist';
+import { TEXTURE_KEY } from '../texture/model';
 import { loadSections } from './persistence/sections';
 import type { BedShape } from '../app/state';
 
@@ -92,11 +94,11 @@ function elementPassthrough(keep: Pick<OrcaKeep, 'metadata'> & Partial<OrcaKeep>
   return Object.keys(out).length ? Object.freeze(out) : undefined;
 }
 
-function volumePassthrough(v: OrcaVolume, meshId: string, unknown: Pairs): VolumePassthrough | undefined {
+function volumePassthrough(v: OrcaVolume, meshId: string, unknown: Pairs, meshMetadata = v.keep.meshMetadata): VolumePassthrough | undefined {
   const base = elementPassthrough(v.keep, unknown) ?? {};
   const out: VolumePassthrough = {
     ...base, meshId,
-    ...(v.keep.meshMetadata.length ? { meshMetadata: v.keep.meshMetadata } : {}), ...(v.keep.subtype ? { subtype: v.keep.subtype } : {}),
+    ...(meshMetadata.length ? { meshMetadata } : {}), ...(v.keep.subtype ? { subtype: v.keep.subtype } : {}),
   };
   return Object.keys(out).length > 1 ? Object.freeze(out) : undefined;
 }
@@ -146,13 +148,20 @@ export function orcaProjectData(proj: OrcaProject, opts: { name: string; schema:
   const meshes: MeshData[] = [];
   const paint: Record<string, PaintLayers> = {};
   const triangleAttrs: Record<string, TriangleAttrs> = {};
+  const texture: Record<string, MeshTexture> = {};
   const objects: ProjectObject[] = [];
   for (const o of proj.objects) {
-    const ids = o.volumes.map((v) => {
+    const meshMeta: Pairs[] = [];
+    const ids = o.volumes.map((v, vi) => {
       const id = uid('m');
       meshes.push(meshData(id, v.positions, v.indices));
       if (Object.keys(v.paint).length) paint[id] = v.paint;
-      if (v.triangleAttrs) triangleAttrs[id] = v.triangleAttrs;
+      // Texture displacement (layer stack + masks) is modelled; the rest of the per-triangle data passes through.
+      const tx = takeVolumeTexture(v.keep.meshMetadata, v.triangleAttrs, (p) => proj.keptFiles[p]);
+      meshMeta[vi] = tx.meshMetadata;
+      if (tx.texture) texture[id] = tx.texture;
+      if (tx.warning) warnings.push(`${o.name}: ${tx.warning}`);
+      if (tx.triangleAttrs) triangleAttrs[id] = tx.triangleAttrs;
       return id;
     });
     const parts: ObjectPart[] = o.volumes.slice(1).map((v, i) => {
@@ -161,7 +170,7 @@ export function orcaProjectData(proj: OrcaProject, opts: { name: string; schema:
       const seam = v.preciseSeam ? Object.freeze({ type: v.preciseSeam.type, config: Object.freeze(seamCfg!.config) }) : undefined;
       // Seam settings this engine doesn't know stay dormant, under their prefixed key.
       const seamUnknown = (seamCfg?.unknown ?? []).map(([k, val]) => [PRECISE_SEAM_CONFIG_PREFIX + k, val] as [string, string]);
-      const passthrough = volumePassthrough(v, ids[i + 1], [...unknown, ...seamUnknown]);
+      const passthrough = volumePassthrough(v, ids[i + 1], [...unknown, ...seamUnknown], meshMeta[i + 1]);
       return {
         id: uid('p'), name: v.name, meshId: ids[i + 1], type: v.type,
         position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1], overrides: config,
@@ -175,7 +184,7 @@ export function orcaProjectData(proj: OrcaProject, opts: { name: string; schema:
     // The object's own volume has no name of its own here: keep it when it differs.
     if (o.volumes[0].name !== o.name) mainCfg.unknown.unshift(['name', o.volumes[0].name]);
     const passthrough: ObjectPassthrough | undefined = nonEmpty({
-      object: elementPassthrough(o.keep, objCfg.unknown), volume: volumePassthrough(o.volumes[0], ids[0], mainCfg.unknown), cutInfo: o.cutInfo,
+      object: elementPassthrough(o.keep, objCfg.unknown), volume: volumePassthrough(o.volumes[0], ids[0], mainCfg.unknown, meshMeta[0]), cutInfo: o.cutInfo,
     });
     // Range settings this engine doesn't know stay with the range (never sliced) and are written back.
     const layerRanges: LayerRange[] = (o.layerRanges ?? []).map((r) => {
@@ -228,8 +237,8 @@ export function orcaProjectData(proj: OrcaProject, opts: { name: string; schema:
   });
 
   return {
-    data: { name: opts.name, objects, meshes, plates, paint },
-    passthrough: { files: proj.keptFiles, modelMetadata: proj.modelMetadata, triangleAttrs },
+    data: { name: opts.name, objects, meshes, plates, paint, texture },
+    passthrough: { files: withoutTextureFiles(proj.keptFiles), modelMetadata: proj.modelMetadata, triangleAttrs },
     warnings,
   };
 }
@@ -240,13 +249,14 @@ export function orcaProjectData(proj: OrcaProject, opts: { name: string; schema:
  */
 function openCubby3mf(files: Archive): OrcaOpenResult | null {
   if (!files[CUBBY_META]) return null;
-  let json: (ProjectJson & { meshSource?: Record<string, string> }) | null = null;
+  let json: (ProjectJson & { meshSource?: Record<string, string>; textureSource?: Record<string, string> }) | null = null;
   try { json = JSON.parse(new TextDecoder().decode(files[CUBBY_META])); } catch { return null; }
   if (json?.format !== PROJECT_FORMAT || typeof json.version !== 'number' || json.version > PROJECT_VERSION) return null;
   const warnings: string[] = [];
   const parts = new Map<string, ReturnType<typeof parseModelPart>>();
   const meshList: MeshData[] = [];
   const triangleAttrs: Record<string, TriangleAttrs> = {};
+  const texture: Record<string, MeshTexture> = {};
   for (const [id, src] of Object.entries(json.meshSource ?? {})) {
     if (!/^[\w-]{1,64}$/.test(id)) continue;
     const hash = src.lastIndexOf('#');
@@ -256,7 +266,12 @@ function openCubby3mf(files: Archive): OrcaOpenResult | null {
     const def = part?.objects.get(sub);
     if (!def?.positions || !def.indices) { warnings.push(`Mesh ${id} is missing from the file.`); continue; }
     meshList.push(meshFromArrays(id, def.positions, def.indices));
-    if (def.triangleAttrs) triangleAttrs[id] = def.triangleAttrs;
+    // Texture displacement: desktop's files (the project JSON names each mesh's) + the paint_texture_N masks.
+    const texPath = json.textureSource?.[id];
+    const tx = takeVolumeTexture(typeof texPath === 'string' ? [[TEXTURE_KEY, texPath]] : [], def.triangleAttrs, (p) => files[p]);
+    if (tx.texture) texture[id] = tx.texture;
+    if (tx.warning) warnings.push(tx.warning);
+    if (tx.triangleAttrs) triangleAttrs[id] = tx.triangleAttrs;
   }
   const ids = new Set(meshList.map((m) => m.id));
   // CubbyCAD trees (Metadata/cubby_cad.json) rejoin their objects.
@@ -273,10 +288,10 @@ function openCubby3mf(files: Archive): OrcaOpenResult | null {
   }
   const objs = sanitizeObjects(json.objects, ids);
   loadProjectData({ name: typeof json.name === 'string' ? json.name : 'Project', objects: objs, meshes: meshList,
-    plates: sanitizePlates(json.plates), paint: sanitizePaint(json.paint, ids) });
+    plates: sanitizePlates(json.plates), paint: sanitizePaint(json.paint, ids), texture });
   const root = findEntry(files, MODEL_FILE);
   setProjectPassthrough({
-    files: keptEntries(files),
+    files: withoutTextureFiles(keptEntries(files)),
     modelMetadata: root ? readModelMetadata(files[root]).filter(([k]) => !OWN_MODEL_METADATA.has(k) && !PUBLISHED_METADATA.has(k)) : [],
     triangleAttrs,
   });

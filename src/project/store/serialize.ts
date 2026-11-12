@@ -2,11 +2,11 @@
 import { toRaw } from 'vue';
 import type { PaintLayers } from '../../engine/types';
 import { MAX_PLATES, clonePlate, newPlate, type PlateMeta } from '../plates';
-import type { MeshData, ProjectObject } from '../types';
+import type { MeshData, MeshTexture, ProjectObject } from '../types';
 import { cloneObj } from './clone';
 import { changed, clearHistory } from './history';
 import {
-  activePlate, addMesh, meshIdsOf, meshPaint, meshRevision, meshes, objects, plates, projectLoads, projectName, selectedIds,
+  activePlate, addMesh, meshIdsOf, meshPaint, meshRevision, meshTexture, meshes, objects, plates, projectLoads, projectName, selectedIds,
 } from './state';
 
 export interface ProjectData {
@@ -15,6 +15,8 @@ export interface ProjectData {
   meshes: MeshData[];
   plates?: PlateMeta[];
   paint?: Record<string, PaintLayers>;
+  /** Texture displacement per mesh id (Orca 2.5). */
+  texture?: Record<string, MeshTexture>;
 }
 
 /** Replace the whole project (clears undo history). */
@@ -32,6 +34,9 @@ export function loadProjectData(data: ProjectData): void {
   const paint: Record<string, PaintLayers> = {};
   for (const [id, layers] of Object.entries(data.paint ?? {})) if (meshes.has(id)) paint[id] = layers;
   meshPaint.value = paint;
+  const texture: Record<string, MeshTexture> = {};
+  for (const [id, t] of Object.entries(data.texture ?? {})) if (meshes.has(id)) texture[id] = t;
+  meshTexture.value = texture;
   projectName.value = data.name || 'Untitled project';
   selectedIds.value = [];
   clearHistory();
@@ -50,6 +55,14 @@ export function serializePaint(): Record<string, PaintLayers> {
   const live = new Set(objects.value.flatMap(meshIdsOf));
   const out: Record<string, PaintLayers> = {};
   for (const [id, layers] of Object.entries(meshPaint.value)) if (live.has(id)) out[id] = layers;
+  return out;
+}
+
+/** Texture displacement of the live meshes (for project files / autosave). */
+export function serializeTexture(): Record<string, MeshTexture> {
+  const live = new Set(objects.value.flatMap(meshIdsOf));
+  const out: Record<string, MeshTexture> = {};
+  for (const [id, t] of Object.entries(meshTexture.value)) if (live.has(id)) out[id] = t;
   return out;
 }
 

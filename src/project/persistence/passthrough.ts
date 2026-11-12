@@ -3,12 +3,13 @@
  * carries that CubbySlicer doesn't model, kept so a save writes it back.
  *
  * - Archive entries desktop Orca keeps (`files`): the Design tab document
- *   (Metadata/orca_cad.bin), texture displacement layers, embossed SVG shapes,
- *   Auxiliaries/ and project-embedded presets.
+ *   (Metadata/orca_cad.bin), embossed SVG shapes, Auxiliaries/ and
+ *   project-embedded presets. Texture displacement is modelled instead
+ *   (meshTexture in the store, src/texture/persist.ts), so its files never sit here.
  * - Model `<metadata name>` items the writer doesn't set itself (designer,
  *   description, licence, MakerLab …).
- * - Per-triangle data we don't paint with (texture displacement masks, BBS
- *   face properties), keyed by mesh id. A mesh id never changes meaning, so
+ * - Per-triangle data we don't paint with (BBS face properties), keyed by
+ *   mesh id. A mesh id never changes meaning, so
  *   these follow undo / redo; a tool that replaces a mesh makes a new id and
  *   the data is simply not written for it.
  *
@@ -23,6 +24,14 @@ import { markRaw, ref, shallowRef, watch } from 'vue';
 import { projectLoads } from '../store';
 import { CAD_RECIPE_FILE, isKeptEntry } from '../import/orcaFormat';
 import type { TriangleAttrs } from '../import/threemf';
+import { isTextureFile } from '../../texture/persist';
+
+/** Kept archive entries without texture displacement files (those are modelled, src/texture). */
+export function withoutTextureFiles(files: Readonly<Record<string, Uint8Array>>): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {};
+  for (const [k, v] of Object.entries(files)) if (!isTextureFile(k)) out[k] = v;
+  return out;
+}
 
 export interface ProjectPassthrough {
   /** Archive path → bytes. */
@@ -80,7 +89,7 @@ export function sanitizeProjectPassthrough(raw: unknown, meshIds?: Set<string>):
   const o = raw as Record<string, unknown>;
   const files: Record<string, Uint8Array> = {};
   if (o.files && typeof o.files === 'object') {
-    for (const [k, v] of Object.entries(o.files as Record<string, unknown>)) if (v instanceof Uint8Array && isKeptEntry(k)) files[k] = v;
+    for (const [k, v] of Object.entries(o.files as Record<string, unknown>)) if (v instanceof Uint8Array && isKeptEntry(k) && !isTextureFile(k)) files[k] = v;
   }
   const triangleAttrs: Record<string, TriangleAttrs> = {};
   if (o.triangleAttrs && typeof o.triangleAttrs === 'object') {
@@ -89,7 +98,7 @@ export function sanitizeProjectPassthrough(raw: unknown, meshIds?: Set<string>):
       if (!attrs || typeof attrs !== 'object') continue;
       const clean: TriangleAttrs = {};
       for (const [name, list] of Object.entries(attrs as Record<string, unknown>)) {
-        if (!/^(paint_texture_\d+|face_property)$/.test(name) || !Array.isArray(list)) continue;
+        if (name !== 'face_property' || !Array.isArray(list)) continue;
         const pairs = list.filter((e): e is [number, string] => Array.isArray(e) && e.length === 2 && Number.isInteger(e[0]) && e[0] >= 0 && typeof e[1] === 'string');
         if (pairs.length) clean[name] = pairs;
       }

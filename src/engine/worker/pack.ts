@@ -24,6 +24,13 @@ export class BlobPacker {
     return { vertexOffset: this.place(positions), vertexCount: positions.length / 3, indexOffset: this.place(indices), triangleCount: indices.length / 3 };
   }
 
+  /** Raw bytes (e.g. a texture image a tool reads from the blob). */
+  bytes(b: Uint8Array): { offset: number; length: number } {
+    let off = this.offsets.get(b);
+    if (off === undefined) { off = this.size; this.size += b.byteLength; this.offsets.set(b, off); this.chunks.push(b); }
+    return { offset: off, length: b.byteLength };
+  }
+
   blob(): Uint8Array {
     const out = new Uint8Array(this.size);
     for (const a of this.chunks) out.set(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), this.offsets.get(a)!);
@@ -61,7 +68,9 @@ export function packJob(job: SliceJob): { json: Uint8Array; blob: Uint8Array } {
 export function packTool(op: string, args: unknown, meshes: ToolMesh[]): { json: Uint8Array; blob: Uint8Array } {
   const pk = new BlobPacker();
   const refs = meshes.map((m) => pk.mesh(m.positions, m.indices));
-  return { json: enc.encode(JSON.stringify({ op, args, meshes: refs })), blob: pk.blob() };
+  // Byte arrays in the arguments (texture images) go into the blob as {offset, length}.
+  const json = JSON.stringify({ op, args, meshes: refs }, (_k, v) => (v instanceof Uint8Array ? pk.bytes(v) : v));
+  return { json: enc.encode(json), blob: pk.blob() };
 }
 
 /** Meshes from a tool reply: `refs` index into `bytes` (bounds-checked). */

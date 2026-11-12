@@ -1,6 +1,7 @@
 /**
  * Tool commands (Orca gizmos + import helpers), keyed like Orca's
- * KBShortcutsDialog: C cut, U measure, T text, B mesh boolean, E brim ears.
+ * KBShortcutsDialog: C cut, U measure, T text, B mesh boolean, E brim ears,
+ * D texture displacement.
  * State is module-level (./state), so actions don't need the context dispatch.
  */
 import type { Action } from '../app/actions/types';
@@ -31,6 +32,9 @@ export function toolActions(): Action[] {
       when: (c) => prepare() && single(c), state: active('simplify'), run: () => toggleTool('simplify') },
     { id: 'tool.boolean', title: 'Mesh boolean', icon: 'i-lucide-squares-subtract', category: 'Object', aliases: ['union', 'difference', 'subtract', 'intersection', 'csg', 'gizmo mesh boolean'],
       binding: { key: 'b', scope: 'prepare' }, when: (c) => prepare() && c.selection.count > 0, state: active('boolean'), run: () => toggleTool('boolean') },
+    { id: 'tool.texture-displacement', title: 'Texture displacement', icon: 'i-lucide-brick-wall', category: 'Object',
+      aliases: ['displacement', 'texture', 'height map', 'bump map', 'knurl', 'surface texture', 'gizmo texture displacement'],
+      binding: { key: 'd', scope: 'prepare' }, when: (c) => prepare() && !!c.selection.single, state: active('texture'), run: () => toggleTool('texture') },
     { id: 'tool.brim-ears', title: 'Brim ears', icon: 'i-lucide-circle-dot', category: 'Object', aliases: ['mouse ears', 'brim', 'gizmo brim ears'],
       binding: { key: 'e', scope: 'prepare' }, when: (c) => prepare() && !!c.selection.single, state: active('brim'), run: () => toggleTool('brim') },
   ];

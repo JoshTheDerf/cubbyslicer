@@ -18,6 +18,7 @@ const panels = {
   brim: defineAsyncComponent(() => import('./brim/BrimPanel.vue')),
   cut: defineAsyncComponent(() => import('./cut/CutPanel.vue')),
   assembly: defineAsyncComponent(() => import('./assembly/AssemblyPanel.vue')),
+  texture: defineAsyncComponent(() => import('../texture/TexturePanel.vue')),
 };
 const ObjColorDialog = defineAsyncComponent(() => import('./objcolor/ObjColorDialog.vue'));
 

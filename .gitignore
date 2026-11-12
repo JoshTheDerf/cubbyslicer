@@ -15,3 +15,6 @@ public/calib/
 
 # Pyodide runtime for Orca Python plugins (scripts/stage-pyodide.mjs).
 public/pyodide/
+
+# Orca texture displacement library (scripts/stage-textures.mjs).
+public/textures/

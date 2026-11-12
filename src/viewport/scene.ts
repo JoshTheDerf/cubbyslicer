@@ -636,7 +636,7 @@ export class PrepareScene {
         e.mesh.quaternion.set(obj.rotation[0], obj.rotation[1], obj.rotation[2], obj.rotation[3]);
         e.mesh.scale.set(obj.scale[0], obj.scale[1], obj.scale[2]);
       }
-      e.mesh.visible = obj.visible && this.inFocus(e, obj.id);
+      e.mesh.visible = obj.visible && !this.toolHidden.has(obj.id) && this.inFocus(e, obj.id);
       this.syncParts(e, it);
       this.styleEntry(e, it);
     }
@@ -808,6 +808,15 @@ export class PrepareScene {
     this.cb.onMassMarker?.(null);
   }
 
+  /** Objects a tool draws itself (texture displacement preview): not drawn while set. */
+  private toolHidden = new Set<string>();
+  setToolHidden(ids: Iterable<string>): void {
+    const next = new Set(ids);
+    if (next.size === this.toolHidden.size && [...next].every((id) => this.toolHidden.has(id))) return;
+    this.toolHidden = next;
+    this.refreshFocus();
+  }
+
   /** Canvas menu "Focus mode": only the current plate (its bed, its objects, the selection) is shown. */
   setFocusMode(on: boolean): void {
     this.focus = on;
@@ -819,7 +828,7 @@ export class PrepareScene {
   private refreshFocus(): void {
     for (const it of this.items) {
       const e = this.entries.get(it.obj.id);
-      if (e) e.mesh.visible = it.obj.visible && this.inFocus(e, it.obj.id);
+      if (e) e.mesh.visible = it.obj.visible && !this.toolHidden.has(it.obj.id) && this.inFocus(e, it.obj.id);
     }
     this.towers.setOnly(this.focus && this.plates.count > 1 ? this.plates.active : null);
     this.updateSection();

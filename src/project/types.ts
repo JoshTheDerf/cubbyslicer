@@ -158,6 +158,37 @@ export interface SvgEmboss {
 
 export type EmbossMeta = TextEmboss | SvgEmboss;
 
+// ---- texture displacement (Orca 2.5, src/texture) ------------------------------
+
+/**
+ * One Orca texture displacement layer (TextureDisplacementLayer). `json` is the
+ * layer as desktop serialises it (texture_displacement_layers_to_json), without
+ * `path_in_3mf`; keys we don't edit (UV islands, seams, view projection, …)
+ * are kept as read. Immutable: replace it, never mutate it.
+ */
+export interface TextureLayer {
+  readonly json: Readonly<Record<string, unknown>>;
+  /** The texture: an encoded 8-bit grey or colour PNG (null = none). Shared, never mutated. */
+  readonly image: Uint8Array | null;
+}
+
+/** A volume's layer stack + desktop's per-volume options (TextureDisplacementOptions, as read). Immutable. */
+export interface TextureStack {
+  readonly layers: readonly TextureLayer[];
+  readonly options: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Texture displacement data of one mesh (keyed by mesh id like paint, so
+ * instances share it): the layer stack (on the object's first model part, as
+ * on desktop) and the per-slot paint masks (`paint_texture_<slot>`). Immutable.
+ */
+export interface MeshTexture {
+  readonly stack?: TextureStack;
+  /** Slot → painted facets in Orca's per-triangle hex format. */
+  readonly masks?: Readonly<Record<string, ReadonlyArray<readonly [number, string]>>>;
+}
+
 /** Orca BrimPoint: a brim ear, in the object's mesh-local frame (mm), with its radius (mm). */
 export interface BrimPoint { pos: Vec3; radius: number }
 

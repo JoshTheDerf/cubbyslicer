@@ -7,7 +7,7 @@ import { Vector3 } from 'three';
 import { onBeforeUnmount, reactive, shallowRef } from 'vue';
 import type { PrepareScene, ToolHandler } from '../viewport/scene';
 
-export type ToolId = 'measure' | 'text' | 'svg' | 'simplify' | 'boolean' | 'brim' | 'cut' | 'assembly';
+export type ToolId = 'measure' | 'text' | 'svg' | 'simplify' | 'boolean' | 'brim' | 'cut' | 'assembly' | 'texture';
 
 export const TOOL_TITLES: Record<ToolId, string> = {
   measure: 'Measure',
@@ -18,6 +18,7 @@ export const TOOL_TITLES: Record<ToolId, string> = {
   brim: 'Brim ears',
   cut: 'Cut',
   assembly: 'Assembly view',
+  texture: 'Texture displacement',
 };
 
 export const toolState = reactive({

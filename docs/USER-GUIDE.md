@@ -54,7 +54,19 @@ Help → Keyboard shortcuts lists every shortcut; type in its search box to find
 
 ## Plate toolbar
 
-Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on face), transform, modify (cut, mesh boolean, text), print adjustments (painting, variable layer height, brim ears) and measure. The four paint tools share the brush button's menu; L, P, N and H still open them directly. In a narrow window the groups that don't fit move into the ⋯ menu at the end.
+Orca's tools, grouped by task: add, edit, place (arrange, auto orient, lay on face), transform, modify (cut, mesh boolean, text), print adjustments (painting, texture displacement, variable layer height, brim ears) and measure. The four paint tools and Texture displacement share the brush button's menu; L, P, N, H and D still open them directly. In a narrow window the groups that don't fit move into the ⋯ menu at the end.
+
+### Texture displacement
+
+Texture displacement (D, or the brush menu) turns a height map into real relief on the selected object, as OrcaSlicer 2.5 does: white lifts the surface by Depth, black leaves it where it is.
+
+1. **Add layer** starts a layer on the first built-in texture. Click its thumbnail to pick another of OrcaSlicer's textures or **Import image…** (PNG, JPEG or BMP; a colour image keeps its colours, a grey one becomes a greyscale height map). An object holds up to 8 layers.
+2. **Select whole model** paints the active layer onto every face (the eraser takes it off again). Painting part of the model with a brush is not available yet.
+3. Set the layer: Depth, Tile size and Rotation; **More settings** adds Midlevel (which grey stays put, so darker greys cut in), Smoothing, Edge fade, Invert, Mapping (Triplanar, Cylindrical, Spherical), Tile (Repeat or Mirrored) and, for every layer after the first, Blend (how it combines with the layers below).
+4. The model shows the result while you work ("Updating preview…" at the bottom of the panel); it is the same geometry Bake will make, so it can take a while on a large model.
+5. **Bake** replaces the object's mesh with the displaced one (Undo takes it back). The layers stay with the object, so you can paint and bake again; baking resets the object's support, seam, colour and fuzzy skin painting. Slicing uses the baked mesh: layers you haven't baked don't change the print.
+
+Layers and their paint are saved in the project in OrcaSlicer's own format, so desktop OrcaSlicer opens them, and projects from desktop open with theirs.
 
 ## Plates
 

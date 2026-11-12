@@ -17,6 +17,7 @@ src/
     rules/      enable / show rules (Orca ConfigManipulation, generated + hand-ported); useRules.ts applies them to rows
   preview/      G-code parser and renderer
   paint/        painting tools (sessions run in the engine's TriangleSelector)
+  texture/      Orca 2.5 Texture Displacement: model.ts (desktop's layer JSON + defaults), persist.ts (3MF layout, autosave records), library.ts + png.ts (built-in / imported textures), bake.ts (engine runs), commands.ts (shared by the panel and the MCP bridge), TexturePanel.vue
   tools/        cut, assembly, measure, text/SVG, boolean, simplify, brim ears, object colours
   layers/       variable layer height, height ranges
   calibration/  Orca calibration menu
@@ -163,6 +164,7 @@ cp -r ../slicers/orcaslicer-wasm/toolchain ../slicers/wasm-deps
 bash scripts/fetch-orca-wasm.sh
 bash scripts/fetch-preflight-wasm.sh
 node scripts/stage-calib.mjs        # calibration + handy models → public/calib/
+node scripts/stage-textures.mjs     # Orca's texture displacement library (44 PNGs, 5.3 MB) → public/textures/displacement/
 node scripts/stage-pyodide.mjs      # Pyodide 0.27.8 (Orca Python plugins) → public/pyodide/, loaded only when a plugin is used
 ```
 
@@ -171,6 +173,10 @@ Optional multi-threaded Orca build: `WASM_THREADS=1 bash build-deps.sh all-mt` i
 `stage-pyodide.mjs` copies the Pyodide core from `node_modules/pyodide` and downloads the default packages (checked against `pyodide-lock.json`). `PYODIDE_PACKAGES=numpy,shapely` picks the packages, `PYODIDE_ALL=1` stages all of them (~250 MB).
 
 The ABI and job format are in [ENGINE-CONTRACT.md](ENGINE-CONTRACT.md). Each port has its own node tests (`tests/`).
+
+### Texture displacement (`src/texture/`)
+
+A layer stack is per mesh, like paint: `meshTexture` in the store (`project/store/texture.ts`) holds, keyed by mesh id, the object's stack (on its own mesh: desktop's first model part) and each model part's masks per slot (`paint_texture_<slot>` strings). It is part of the undo snapshot, the autosave and both 3MF paths. A layer keeps desktop's JSON object (`texture_displacement_layers_to_json`), so fields the panel doesn't edit survive; `model.ts` reads the ones it does with desktop's defaults. On save the writer puts desktop's files (`Metadata/texture_displacement/<id>.json` + `<id>_<slot>.png`, the `texture_displacement` volume key) in the 3MF; the own-project JSON only maps mesh ids to those files (`textureSource`). Preview and Bake call `cs_tool texture_displacement` once per painted part (`bake.ts`; Uint8Array tool arguments travel in the request blob, `packTool`); the preview skips the simplification as desktop's does. Bake replaces the meshes (`commitTextureBake`), moves the stack to the new mesh and drops the masks.
 
 ### Prepare view: Orca 2.5 view options, prime tower, belt purge prism
 

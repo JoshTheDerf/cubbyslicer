@@ -21,7 +21,7 @@ import { isHoleObject } from '../../cad/build';
 import { joinValue } from '../../lib/configValue';
 import { composeTRS, type Quat, type Vec3 } from '../math';
 import {
-  liveMeshes, plateOf, projectName, serializeObjects, serializePaint, serializePlates,
+  liveMeshes, plateOf, projectName, serializeObjects, serializePaint, serializePlates, serializeTexture,
 } from '../store';
 import type { ObjectPart, ProjectObject, VolumePassthrough } from '../types';
 import { escapeAttr, escapeXml } from '../import/xml';
@@ -34,6 +34,8 @@ import { ChunkWriter, MODEL_REL_TYPE, PRODUCTION_NS, CORE_NS, contentTypesXml, n
 import { CUBBY_CAD_META, PROJECT_FORMAT, PROJECT_VERSION, type CadTreesJson, type ProjectJson } from './format';
 import { saveSections } from './sections';
 import { passthroughFor } from './passthrough';
+import { isTextureFile, maskAttrs, textureFiles } from '../../texture/persist';
+import { MASK_ATTR_RE, TEXTURE_KEY } from '../../texture/model';
 import { renderPlateImages, type PlateImages } from '../thumbnails';
 
 export const CUBBY_META = 'Metadata/cubby_slicer.json';
@@ -127,6 +129,7 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   const objects = serializeObjects();
   const meshes = new Map(liveMeshes().map((m) => [m.id, m]));
   const paint = serializePaint();
+  const texture = serializeTexture();
   const plates = serializePlates();
   const orcaEngine = isOrcaConfig(activeEngine.value);
   const thumbs = opts.thumbnails ?? [];
@@ -136,6 +139,8 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   const groups = groupObjects(objects, meshes);
   let subId = 0;
   const subOf = new Map<string, number>(); // meshId → sub-object id (shared meshes written once)
+  const textureOut: Record<string, Uint8Array> = {};
+  const texturePath = new Map<string, string>(); // meshId → its texture displacement JSON
   const header = `<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="${CORE_NS}" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:p="${PRODUCTION_NS}" requiredextensions="p">\n`;
   const sub = new ChunkWriter(); // the objects file
   sub.write(`${header} <resources>\n`);
@@ -150,7 +155,15 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
         for (const [t, s] of map ?? []) extra.set(t, `${extra.get(t) ?? ''} ${name}="${escapeAttr(s)}"`);
       };
       for (const [layer, map] of Object.entries(paint[meshId] ?? {})) add(PAINT_ATTR[layer as keyof typeof PAINT_ATTR], map);
-      for (const [name, map] of Object.entries(keep.triangleAttrs[meshId] ?? {})) add(name, map);
+      // Texture displacement masks (paint_texture_N) and the layer stack's files (add_texture_displacement).
+      for (const [name, map] of maskAttrs(texture[meshId])) add(name, map as Array<[number, string]>);
+      const stack = texture[meshId]?.stack;
+      if (stack) {
+        const tf = textureFiles(stack, id);
+        Object.assign(textureOut, tf.files);
+        texturePath.set(meshId, tf.jsonPath);
+      }
+      for (const [name, map] of Object.entries(keep.triangleAttrs[meshId] ?? {})) if (!MASK_ATTR_RE.test(name)) add(name, map);
       sub.write(`  <object id="${id}" type="model">\n`);
       writeMesh(sub, meshes.get(meshId)!, '   ', extra.size ? (t) => extra.get(t) ?? '' : undefined);
       sub.write('  </object>\n');
@@ -172,9 +185,9 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
     const o = g.first;
     const index = gi + 1; // Orca's 1-based object index (per-object metadata files)
     const id = ++rootId + 100000; // root ids live apart from the sub-object ids
-    const volumes: Array<{ sub: number; part: ObjectPart | null; keep?: VolumePassthrough }> = [
-      { sub: subObject(o.meshId), part: null, keep: liveVolumeKeep(o.passthrough?.volume, o.meshId) },
-      ...(o.parts ?? []).filter((p) => meshes.has(p.meshId)).map((p) => ({ sub: subObject(p.meshId), part: p, keep: liveVolumeKeep(p.passthrough, p.meshId) })),
+    const volumes: Array<{ sub: number; part: ObjectPart | null; keep?: VolumePassthrough; texture?: string }> = [
+      { sub: subObject(o.meshId), part: null, keep: liveVolumeKeep(o.passthrough?.volume, o.meshId), texture: texturePath.get(o.meshId) },
+      ...(o.parts ?? []).filter((p) => meshes.has(p.meshId)).map((p) => ({ sub: subObject(p.meshId), part: p, keep: liveVolumeKeep(p.passthrough, p.meshId), texture: texturePath.get(p.meshId) })),
     ];
     rootXml.push(`  <object id="${id}" type="model">\n   <components>\n`);
     for (const v of volumes) {
@@ -184,7 +197,7 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
     rootXml.push('   </components>\n  </object>\n');
 
     settingsXml.push(objectXml(id, o, orcaEngine));
-    for (const v of volumes) settingsXml.push(volumeXml(v.sub, v.part, o.name, v.keep, orcaEngine));
+    for (const v of volumes) settingsXml.push(volumeXml(v.sub, v.part, o.name, v.keep, orcaEngine, v.texture));
     settingsXml.push('  </object>\n');
 
     g.members.forEach((m, k) => {
@@ -271,7 +284,8 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
   const gcodes = customGcodeXml(plates);
   if (gcodes) files[CUSTOM_GCODE_FILE] = strToU8(gcodes);
   // Kept archive entries (Design tab recipe, texture layers, SVG shapes, Auxiliaries, embedded presets).
-  for (const [path, bytes] of Object.entries(keep.files)) if (!(path in files)) files[path] = [bytes, { level: /\.(png|jpe?g)$/i.test(path) ? 0 : 6 }];
+  for (const [path, bytes] of Object.entries(textureOut)) files[path] = [bytes, { level: /\.png$/i.test(path) ? 0 : 6 }];
+  for (const [path, bytes] of Object.entries(keep.files)) if (!(path in files) && !isTextureFile(path)) files[path] = [bytes, { level: /\.(png|jpe?g)$/i.test(path) ? 0 : 6 }];
 
   // Exact round-trip for CubbySlicer: the project JSON, with meshes pointing into the model file.
   // CubbyCAD trees go to their own file (stock Orca ignores both; it just sees the meshes).
@@ -283,11 +297,12 @@ export function buildOrca3mf(opts: { thumbnails?: PlateImages[] } = {}): Uint8Ar
     return rest;
   });
   if (Object.keys(trees.objects).length) files[CUBBY_CAD_META] = [strToU8(JSON.stringify(trees)), { level: 6 }];
-  const json: ProjectJson & { meshSource: Record<string, string> } = {
+  const json: ProjectJson & { meshSource: Record<string, string>; textureSource?: Record<string, string> } = {
     format: PROJECT_FORMAT, version: PROJECT_VERSION, name: projectName.value, savedAt: new Date().toISOString(),
     objects: plain, meshes: [...subOf.keys()].map((id) => ({ id, vertexCount: meshes.get(id)!.vertexCount, triangleCount: meshes.get(id)!.triangleCount })),
     plates, paint, sections: saveSections(),
     meshSource: Object.fromEntries([...subOf].map(([mesh, sid]) => [mesh, `${OBJECTS_FILE}#${sid}`])),
+    ...(texturePath.size ? { textureSource: Object.fromEntries(texturePath) } : {}),
   };
   files[CUBBY_META] = strToU8(JSON.stringify(json));
   return zipSync(files, { level: 6 });
@@ -344,7 +359,8 @@ function objectXml(id: number, o: ProjectObject, orcaEngine: boolean): string {
 }
 
 /** One `<part>` of an object (the object's own volume when `part` is null). */
-function volumeXml(sub: number, part: ObjectPart | null, objectName: string, keep: VolumePassthrough | undefined, orcaEngine: boolean): string {
+function volumeXml(sub: number, part: ObjectPart | null, objectName: string, keep: VolumePassthrough | undefined, orcaEngine: boolean,
+                   texturePath?: string): string {
   const seam = part?.preciseSeam;
   // An unknown subtype read from the file is written back while the part is still the inert modifier it opened as.
   const subtype = keep?.subtype && part?.type === 'modifier' && !seam ? keep.subtype : SUBTYPE_OF[part?.type ?? 'part'];
@@ -353,12 +369,15 @@ function volumeXml(sub: number, part: ObjectPart | null, objectName: string, kee
   // Older readers must see a plain modifier: the seam type and its settings go in their own keys.
   if (seam) out += meta('      ', PRECISE_SEAM_TYPE_KEY, seam.type);
   out += meta('      ', 'name', part?.name ?? keep?.metadata?.find(([k]) => k === 'name')?.[1] ?? objectName);
-  const written = new Set(['name', PRECISE_SEAM_TYPE_KEY]);
+  // The texture key is ours to write (a stale one from the passthrough would name a file that isn't there).
+  const written = new Set(['name', PRECISE_SEAM_TYPE_KEY, TEXTURE_KEY]);
   const ov = part ? (orcaEngine ? part.overrides : pick(part.overrides, ['extruder'])) : {};
   for (const [k, v] of Object.entries(ov)) { out += meta('      ', k, String(joinValue(v))); written.add(k); }
   for (const [k, v] of Object.entries(seam?.config ?? {})) { out += meta('      ', PRECISE_SEAM_CONFIG_PREFIX + k, String(joinValue(v))); written.add(PRECISE_SEAM_CONFIG_PREFIX + k); }
   out += keptMetadata('      ', keep?.meshMetadata, written);
   out += keptMetadata('      ', keep?.metadata, written);
+  // After the settings, where add_texture_displacement() writes it.
+  if (texturePath) out += meta('      ', TEXTURE_KEY, texturePath);
   for (const e of keep?.elements ?? []) out += `      ${e}\n`;
   return `${out}    </part>\n`;
 }

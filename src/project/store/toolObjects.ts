@@ -13,7 +13,7 @@ import { activePlate, addMesh, getObject, objects, plateBedOf, selectedIds, uid,
 type ToolMeshPatch = { positions: Float32Array; indices: Uint32Array };
 
 /** Point every volume using `from` (the object's own mesh or a part's, on all instances) at mesh `to`. */
-function swapVolumeMesh(objId: string, partId: string | null, to: MeshData, emboss: EmbossMeta | null | undefined): void {
+export function swapVolumeMesh(objId: string, partId: string | null, to: MeshData, emboss: EmbossMeta | null | undefined): void {
   const o = getObject(objId);
   if (!o) return;
   if (partId === null) {

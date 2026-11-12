@@ -1,7 +1,7 @@
 /**
  * Bridge tools for the model tools in src/tools: cut (plane / dovetail,
- * connectors), mesh boolean, simplify, text and SVG emboss, brim ears and
- * the assembly view. They call the same functions as the tool panels; each
+ * connectors), mesh boolean, simplify, text and SVG emboss, brim ears, the
+ * assembly view and texture displacement (src/texture). They call the same functions as the tool panels; each
  * result is one undo step.
  */
 import { SCALAR, valueAt } from '../../lib/configValue';
@@ -25,6 +25,11 @@ import { assemblyUi } from '../../tools/assembly/assembly';
 import { closeTool, openTool, toolState } from '../../tools/state';
 import { resolvedConfig } from '../../app/state';
 import { oneOf, raycastMesh, vec3 } from '../logic';
+import { textureLibrary, libraryImage } from '../../texture/library';
+import {
+  addTextureLayer, bakeTexture, eraseWholeModel, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer,
+} from '../../texture/commands';
+import { BlendMode, MAX_TEXTURE_LAYERS, Projection, TileMethod, bool as jsonBool, enumInt, layerName, layerSlot, num as jsonNum, projectionOf } from '../../texture/model';
 import { bool, num, obj, objectArg, objectDetail, oneOfS, partArg, plateIndexOf, plateOrigin, round, str, vec3s } from './util';
 
 const FACES = ['top', 'bottom', 'front', 'back', 'left', 'right'] as const;
@@ -243,6 +248,98 @@ export function modelToolTools(): BridgeTool[] {
         if (after >= tri) return { data: { ok: false, error: `Nothing to remove: the mesh stays at ${tri} triangles.` } };
         replaceVolumeMesh(o.id, partId, { positions: r.positions, indices: r.indices }, { label: 'Simplify model', emboss: null });
         return { data: { ok: true, before: tri, after, error: round(r.error, 5) } };
+      },
+    },
+
+    {
+      name: 'texture_displacement',
+      description: 'Texture displacement (Orca 2.5): height-map layers (up to 8) on an object, painted onto the whole model, then baked into its mesh (one undo step each). '
+        + 'In one call, in this order: addLayer (a built-in texture by name, see listTextures) → edit the layer `slot` (default the newest) → wholeModel select / erase → removeLayer → bake. '
+        + 'Baking replaces the mesh (other painting on it resets); the layers stay for another bake. Returns the layer stack.',
+      timeoutMs: 10 * 60_000,
+      inputSchema: obj({
+        objectId: str('Object id.'),
+        listTextures: bool('Return the built-in texture names.'),
+        addLayer: str('Add a layer with this built-in texture (name).'),
+        slot: num('Layer slot to edit (0-7; default the layer just added, else the first).'),
+        texture: str('Change the layer\'s texture to this built-in one (name).'),
+        depth: num('Depth mm (0.01-10, default 0.4).'), tileSize: num('Tile size mm (0.2-200, default 12.5).'), rotation: num('Rotation degrees (0-360).'),
+        midlevel: num('Midlevel (0-10; 0.5: mid-grey stays, darker cuts in).'), smoothing: num('Smoothing 0-1.'),
+        invert: bool('Invert the relief.'), edgeFade: bool('Edge fade.'), edgeFadeAmount: num('Edge fade reach 0.02-1.'),
+        mapping: oneOfS(['triplanar', 'cylindrical', 'spherical'], 'Mapping.'), tile: bool('Tile (repeat) the texture.'),
+        tileMethod: oneOfS(['repeat', 'mirrored'], 'How it repeats.'), blend: oneOfS(['add', 'override', 'subtract', 'multiply', 'divide'], 'Blend with the layers below (not the base layer).'),
+        wholeModel: oneOfS(['select', 'erase'], 'Paint the whole model with the layer, or clear its paint.'),
+        removeLayer: bool('Remove the layer (and its paint).'),
+        bake: bool('Bake the painted layers into the mesh.'),
+      }, ['objectId']),
+      async run(args) {
+        const o = objectArg(args);
+        const lib = await textureLibrary();
+        const libTexture = async (name: unknown) => {
+          const n = argString({ name }, 'name') ?? '';
+          const t = lib.find((x) => x.name.toLowerCase() === n.toLowerCase());
+          if (!t) throw new Error(`No built-in texture "${n}". Pass listTextures: true for the names.`);
+          return { name: t.name, path: decodeURIComponent(t.url.split('/').pop() ?? t.name), image: await libraryImage(t) };
+        };
+        let slot = args.slot === undefined ? undefined : argNumber(args, 'slot');
+        if (args.addLayer !== undefined) {
+          slot = addTextureLayer(o.id, await libTexture(args.addLayer));
+          if (slot < 0) throw new Error(`An object holds at most ${MAX_TEXTURE_LAYERS} texture layers.`);
+        }
+        const layers = () => stackOf(getObject(o.id)!)?.layers ?? [];
+        slot ??= layers().length ? layerSlot(layers()[0]) : undefined;
+        const editing = ['texture', 'depth', 'tileSize', 'rotation', 'midlevel', 'smoothing', 'invert', 'edgeFade', 'edgeFadeAmount', 'mapping', 'tile', 'tileMethod', 'blend', 'wholeModel', 'removeLayer']
+          .some((k) => args[k] !== undefined);
+        if (editing && (slot === undefined || !layers().some((l) => layerSlot(l) === slot))) throw new Error('No such texture layer: add one with addLayer, or pass a slot from the stack.');
+        if (slot !== undefined && editing) {
+          const s = slot;
+          const patch: Record<string, unknown> = {};
+          const range = (k: string, key: string, lo: number, hi: number) => {
+            const v = argNumber(args, k, { optional: true });
+            if (v === undefined) return;
+            if (!(v >= lo && v <= hi)) throw new Error(`${k} must be ${lo}-${hi}.`);
+            patch[key] = v;
+          };
+          range('depth', 'depth_mm', 0.01, 10); range('tileSize', 'tiling_scale', 0.2, 200); range('rotation', 'rotation_deg', 0, 360);
+          range('midlevel', 'midlevel', 0, 10); range('smoothing', 'smoothing', 0, 1); range('edgeFadeAmount', 'edge_smoothing_amount', 0.02, 1);
+          if (args.invert !== undefined) patch.invert = args.invert === true;
+          if (args.edgeFade !== undefined) patch.edge_smoothing = args.edgeFade === true;
+          if (args.tile !== undefined) patch.tile_enabled = args.tile === true;
+          if (args.mapping !== undefined) patch.projection_method = { triplanar: Projection.Triplanar, cylindrical: Projection.Cylindrical, spherical: Projection.Spherical }[oneOf(args.mapping, ['triplanar', 'cylindrical', 'spherical'] as const, 'mapping')];
+          if (args.tileMethod !== undefined) patch.tile_method = oneOf(args.tileMethod, ['repeat', 'mirrored'] as const, 'tileMethod') === 'repeat' ? TileMethod.Repeat : TileMethod.MirroredRepeat;
+          if (args.blend !== undefined) {
+            if (layerSlot(layers()[0]) === s) throw new Error('The base layer has nothing beneath it to combine with, so it always adds.');
+            patch.blend_mode = { add: BlendMode.Add, override: BlendMode.Override, subtract: BlendMode.Subtract, multiply: BlendMode.Multiply, divide: BlendMode.Divide }[oneOf(args.blend, ['add', 'override', 'subtract', 'multiply', 'divide'] as const, 'blend')];
+          }
+          const texture = args.texture !== undefined ? await libTexture(args.texture) : undefined;
+          if (Object.keys(patch).length || texture) updateTextureLayer(o.id, s, patch, texture ? { texture } : {});
+          if (args.wholeModel !== undefined) (oneOf(args.wholeModel, ['select', 'erase'] as const, 'wholeModel') === 'select' ? selectWholeModel : eraseWholeModel)(o.id, s);
+          if (args.removeLayer === true) removeTextureLayer(o.id, s);
+        }
+        let baked: unknown;
+        if (args.bake === true) {
+          const r = await bakeTexture(o.id);
+          if (!r.ok) throw new Error(r.message ?? 'The bake failed.');
+          baked = { parts: r.parts, budgetLimited: !!r.budgetLimited };
+        }
+        const cur = getObject(o.id)!;
+        const painted = paintedSlotsOf(cur);
+        return {
+          data: {
+            ok: true,
+            ...(baked ? { baked } : {}),
+            layers: layers().map((l) => ({
+              slot: layerSlot(l), name: layerName(l), hasImage: !!l.image?.length, painted: painted.has(layerSlot(l)),
+              depth: jsonNum(l.json, 'depth_mm', 0.4), tileSize: jsonNum(l.json, 'tiling_scale', 12.5), rotation: jsonNum(l.json, 'rotation_deg', 0),
+              midlevel: jsonNum(l.json, 'midlevel', 0), smoothing: jsonNum(l.json, 'smoothing', 0), invert: jsonBool(l.json, 'invert', false),
+              edgeFade: jsonBool(l.json, 'edge_smoothing', false), edgeFadeAmount: jsonNum(l.json, 'edge_smoothing_amount', 0.5),
+              mapping: ['triplanar', 'cylindrical', 'spherical', 'unwrap', 'from view'][projectionOf(l)],
+              tile: jsonBool(l.json, 'tile_enabled', true), tileMethod: enumInt(l.json, 'tile_method', 0) === TileMethod.MirroredRepeat ? 'mirrored' : 'repeat',
+              blend: ['add', 'subtract', 'multiply', 'divide', 'override'][enumInt(l.json, 'blend_mode', 0)] ?? 'add',
+            })),
+            ...(args.listTextures === true ? { textures: lib.map((t) => t.name) } : {}),
+          },
+        };
       },
     },
 
