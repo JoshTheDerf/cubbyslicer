@@ -89,22 +89,40 @@ function workerStopped(w: Worker | null): void {
   for (const d of e.detach) { try { d(); } catch { /* ignore */ } }
 }
 
+/**
+ * Engine lanes. 'main' runs slices, painting sessions and the quick tools.
+ * 'background' is a second, single-threaded Orca instance for long tool runs
+ * (texture displacement preview / bake, 10-20 s each): they don't hold up a
+ * slice or a brush stroke queued on the main lane, and cancelling one only
+ * terminates this lane's worker. Single-threaded because the texture op gains
+ * nothing from the pthreads build (measured: the same 13-17 s on both for a
+ * 20 mm cube), and a second thread pool would compete with slicing.
+ */
+export type EngineLane = 'main' | 'background';
+
 class EngineWorker {
   private worker: Worker | null = null;
   /** The multi-threaded engine stalled once this session: new workers start single-threaded. */
   noMt = false;
+  /** Terminate the worker once nothing is pending (frees its instance's heap). */
+  releaseWhenIdle = false;
+  /** How long the last warm-up (a fresh worker's first, cheap request) took: the engine's startup, ms. */
+  startupMs = 0;
   private seq = 0;
   private pending = new Map<number, Pending>();
 
-  constructor(readonly engine: EngineId) {}
+  constructor(readonly engine: EngineId, readonly lane: EngineLane = 'main') {}
 
   private ensure(): Worker {
     if (this.worker) return this.worker;
     const w = new Worker(new URL('./engine.worker.ts', import.meta.url), {
       type: 'module',
-      name: `cubby-engine-${this.engine}`,
+      name: this.lane === 'main' ? `cubby-engine-${this.engine}` : `cubby-engine-${this.engine}-${this.lane}`,
     });
-    w.postMessage({ type: 'init', engine: this.engine, base: new URL(artifactBase(this.engine), location.href).href, noMt: this.noMt, threads: engineThreadsPref() });
+    w.postMessage({
+      type: 'init', engine: this.engine, base: new URL(artifactBase(this.engine), location.href).href, noMt: this.noMt,
+      threads: this.lane === 'main' ? engineThreadsPref() : 1,
+    });
     w.onmessage = (ev: MessageEvent<WorkerResponse>) => {
       const msg = ev.data;
       const p = this.pending.get(msg.id);
@@ -112,6 +130,7 @@ class EngineWorker {
       if (msg.type === 'progress') { p.onProgress?.({ percent: msg.percent, message: msg.message }); return; }
       this.pending.delete(msg.id);
       p.resolve(msg);
+      if (this.releaseWhenIdle && !this.pending.size) this.reset(null);
     };
     w.onerror = (ev) => {
       // A load-level failure (bad artifact URL, syntax error). Fail everything
@@ -125,8 +144,10 @@ class EngineWorker {
   }
 
   get idle(): boolean { return this.pending.size === 0; }
+  get started(): boolean { return this.worker !== null; }
 
   reset(reason: unknown): void {
+    this.releaseWhenIdle = false;
     this.worker?.terminate();
     workerStopped(this.worker);
     this.worker = null;
@@ -138,6 +159,7 @@ class EngineWorker {
   request(req: WorkerRequest, transfer: Transferable[] = [], onProgress?: (p: SliceProgress) => void,
           signal?: AbortSignal): Promise<WorkerResponse> {
     if (signal?.aborted) return Promise.reject(new SliceCancelled());
+    this.releaseWhenIdle = false;
     const w = this.ensure();
     return new Promise((resolve, reject) => {
       this.pending.set(req.id, { resolve, reject, onProgress });
@@ -151,11 +173,38 @@ class EngineWorker {
   nextId(): number { return ++this.seq; }
 }
 
-const workers = new Map<EngineId, EngineWorker>();
-function workerFor(engine: EngineId): EngineWorker {
-  let w = workers.get(engine);
-  if (!w) { w = new EngineWorker(engine); workers.set(engine, w); }
+const workers = new Map<string, EngineWorker>();
+function workerFor(engine: EngineId, lane: EngineLane = 'main'): EngineWorker {
+  const key = lane === 'main' ? engine : `${engine}:${lane}`;
+  let w = workers.get(key);
+  if (!w) { w = new EngineWorker(engine, lane); workers.set(key, w); }
   return w;
+}
+
+/**
+ * Start a lane's engine instance ahead of its first request (a cheap tool
+ * call), so a run queued right after a cancel doesn't also pay the startup.
+ */
+export function warmEngineLane(lane: EngineLane): void {
+  const w = workerFor('orca', lane);
+  if (w.started) return;
+  const t0 = performance.now();
+  void w.request({ type: 'tool', id: w.nextId(), op: 'paint_from_states', args: { states: [[0, 1]] }, meshes: [TRIANGLE] })
+    .then(() => { w.startupMs = performance.now() - t0; }).catch(() => {});
+}
+const TRIANGLE: ToolMesh = { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) };
+
+/** What starting the lane's engine took last time (ms; 0 = not measured yet). */
+export function engineLaneStartupMs(lane: EngineLane): number {
+  return workers.get(lane === 'main' ? 'orca' : `orca:${lane}`)?.startupMs ?? 0;
+}
+
+/** Let a lane's worker go once its queue is empty (the tool that used it closed). */
+export function releaseEngineLane(lane: EngineLane): void {
+  if (lane === 'main') return;
+  const w = workers.get(`orca:${lane}`);
+  if (!w?.started) return;
+  if (w.idle) w.reset(null); else w.releaseWhenIdle = true;
 }
 
 /**
@@ -273,11 +322,13 @@ export async function orcaArrange(config: FlatConfig, objects: SliceObjectInput[
 /**
  * Run an engine tool (see docs/ENGINE-CONTRACT.md "Tools", ops in tools.ts).
  * Tools run on a long-lived Orca instance in the worker (painting sessions
- * keep state there); mesh arrays are copied, callers keep theirs.
+ * keep state there); mesh arrays are copied, callers keep theirs. `signal`
+ * cancels by terminating the lane's worker (painting sessions on it go too,
+ * so long cancellable runs use the 'background' lane).
  */
 export async function engineTool<K extends ToolOp>(op: K, args: ToolArgs<K>, meshes: ToolMesh[] = [],
-                                                   signal?: AbortSignal): Promise<{ result: ToolResult<K>; meshes: ToolMesh[] }> {
-  const w = workerFor('orca');
+                                                   signal?: AbortSignal, lane: EngineLane = 'main'): Promise<{ result: ToolResult<K>; meshes: ToolMesh[] }> {
+  const w = workerFor('orca', lane);
   const res = await w.request({ type: 'tool', id: w.nextId(), op, args, meshes }, [], undefined, signal);
   if (res.type === 'tool') return { result: res.result as ToolResult<K>, meshes: res.meshes };
   throw new SliceError(res.type === 'error' ? res.message : `${op} failed`, null, res.type === 'error' && res.fatal);

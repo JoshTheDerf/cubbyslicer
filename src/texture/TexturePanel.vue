@@ -3,14 +3,16 @@
  * Texture displacement (Orca 2.5 GLGizmoTextureDisplacement, Standard mode):
  * the selected object's layer stack — texture, depth, tiling, rotation,
  * midlevel, smoothing, edge fade, invert, mapping, tile, blend — painted onto
- * the whole model, previewed live as real geometry (desktop's Normal view)
- * and baked into the mesh. Brush painting, the UV editor, From view / Model UV
- * mapping, colours, Pro mode and the Quality section aren't built yet.
+ * painted with Brush / Face / Connected area or onto the whole model,
+ * previewed live as real geometry (desktop's Normal view) and baked into the
+ * mesh. The UV editor, From view / Model UV mapping, colours, Pro mode and the
+ * Quality section aren't built yet.
  */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { BufferAttribute, BufferGeometry, Mesh, MeshStandardMaterial } from 'three';
 import { getMeshPaint, getObject, meshTexture, objects, selectedIds, selectedPart } from '../project/store';
 import type { TextureLayer } from '../project/types';
+import { SliceCancelled, engineLaneStartupMs, releaseEngineLane, warmEngineLane } from '../engine/client';
 import { toast } from '../ui';
 import ToolPanel from '../tools/ToolPanel.vue';
 import { closeTool, toolScene } from '../tools/state';
@@ -20,6 +22,8 @@ import {
   addTextureLayer, anyPartPainted, bakeTexture, eraseWholeModel, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer, type LayerTexture,
 } from './commands';
 import { importTextureFile, libraryImage, textureLibrary, type LibraryTexture } from './library';
+import { ANGLE_MAX, ANGLE_MIN, RADIUS_MAX, RADIUS_MIN, TextureMaskPainter, maskUi, type MaskTool } from './paint';
+import { touch } from '../app/shell/uiState';
 import { BlendMode, MAX_TEXTURE_LAYERS, Projection, TileMethod, bool, enumInt, layerName, layerSlot, num, projectionOf } from './model';
 
 const objId = computed(() => selectedPart.value?.objectId ?? (selectedIds.value.length === 1 ? selectedIds.value[0] : null));
@@ -148,9 +152,28 @@ const BLENDS = [
 const clamp = (v: number, r: NumRow) => Math.min(r.max, Math.max(r.min, v));
 const fmt = (l: TextureLayer, r: NumRow) => num(l.json, r.key, r.def);
 
-// ---- paint (whole model) ----------------------------------------------------------------
+// ---- paint (brush / face / connected area, whole model) ------------------------------------
 
 const busy = computed(() => baking.value);
+const painter = new TextureMaskPainter(() => objId.value, () => activeSlot.value);
+// Sessions are per part and slot; the tint follows the stored masks (strokes, undo, whole model, bridge).
+watch([objId, activeSlot], () => painter.reset());
+watch(() => [!!active.value && !busy.value, toolScene.value] as const, ([on]) => { painter.setEnabled(false); painter.setEnabled(on); }, { immediate: true });
+const MASK_TOOLS: Array<{ id: MaskTool; icon: string; label: string; tip: string }> = [
+  { id: 'brush', icon: 'i-lucide-brush', label: 'Brush', tip: 'Brush - paint over the surface by dragging' },
+  { id: 'face', icon: 'i-lucide-triangle', label: 'Face', tip: 'Face - click individual triangles' },
+  { id: 'area', icon: 'i-lucide-paint-bucket', label: 'Connected area',
+    tip: 'Connected area - flood-fill the region reachable without crossing an edge sharper than the angle threshold' },
+];
+const paintLegend = computed(() => {
+  const press = touch.value ? 'Drag on the model' : 'Left mouse';
+  const wheel = maskUi.tool === 'brush' ? 'Brush size' : maskUi.tool === 'area' ? 'Angle threshold' : '';
+  return [
+    [press, maskUi.erase ? 'Erase' : 'Paint'],
+    ...(touch.value ? [] : [['Right mouse', maskUi.erase ? 'Paint' : 'Erase'], ['Shift + left mouse', 'Erase']]),
+    ...(wheel && !touch.value ? [['Ctrl / Alt + wheel', wheel]] : []),
+  ];
+});
 function selectAll(): void { if (objId.value && active.value) selectWholeModel(objId.value, activeSlot.value); }
 function eraseAll(): void { if (objId.value && active.value) eraseWholeModel(objId.value, activeSlot.value); }
 const selectAllNa = computed(() => (busy.value ? 'Wait for the bake to finish.' : !active.value ? 'Add a layer first.' : ''));
@@ -161,10 +184,31 @@ const eraseAllNa = computed(() => (busy.value ? 'Wait for the bake to finish.' :
 
 const overlay = new ToolOverlay('texture');
 const previewMaterial = new MeshStandardMaterial({ color: 0xc0c0c0, roughness: 0.75, metalness: 0.05 });
+/** Raised by every change the preview depends on; a run that finishes under an older one is dropped. */
 let generation = 0;
+let unmounted = false;
 let running = false;
-let pending = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
+/** The run in flight: cancelling it terminates the background engine lane. */
+let runAbort: AbortController | null = null;
+let runStart = 0;
+/** Duration of the last finished preview: a run is only cancelled when restarting the engine is cheaper than letting it finish. */
+let lastRunMs = Infinity;
+/** What restarting the background engine lane costs: measured on its last start (8-11 s on a loaded 6-core machine), else a guess. */
+const restartMs = () => engineLaneStartupMs('background') || 5000;
+/** Seconds the current preview / bake has been running, and its part (multi-part objects). */
+const elapsed = ref(0);
+const partNote = ref('');
+let ticker: ReturnType<typeof setInterval> | null = null;
+function startTicker(): void {
+  const t0 = performance.now();
+  elapsed.value = 0;
+  partNote.value = '';
+  if (ticker) clearInterval(ticker);
+  ticker = setInterval(() => { elapsed.value = Math.floor((performance.now() - t0) / 1000); }, 500);
+}
+function stopTicker(): void { if (ticker) clearInterval(ticker); ticker = null; }
+const onPart = (i: number, n: number) => { partNote.value = n > 1 ? `part ${i + 1} of ${n}` : ''; };
 
 function setHidden(ids: string[]): void { toolScene.value?.setToolHidden(ids); }
 
@@ -212,33 +256,50 @@ function tokenOf(v: object | undefined): number {
   return t;
 }
 
+/**
+ * A change: the run in flight is now stale (desktop raises its preview
+ * generation and the job aborts mid-run). Ours can only stop by terminating
+ * the background engine, so it does when the run is likely to take longer
+ * than restarting the engine; otherwise it finishes, is dropped, and the
+ * newest state runs next. Never more than one run queued.
+ */
 function schedulePreview(): void {
   generation++;
+  if (running && runAbort && lastRunMs - (performance.now() - runStart) > restartMs()) runAbort.abort();
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => { timer = null; void runPreview(); }, 350);
 }
 
 async function runPreview(): Promise<void> {
-  // One run at a time; changes meanwhile collapse into one follow-up (desktop's preview job).
-  if (running) { pending = true; return; }
+  if (running || baking.value) return; // the run in flight starts the next one when it ends
   const id = objId.value, o = obj.value;
   if (!id || !o || !stack.value?.layers.length || !anyPartPainted(o)) { clearPreview(); return; }
   const my = generation;
+  const ac = new AbortController();
   running = true;
+  runAbort = ac;
+  runStart = performance.now();
   previewing.value = true;
+  startTicker();
   try {
-    const r = await runBake(id, { preview: true, stale: () => my !== generation });
-    if (r && my === generation && objId.value === id) showPreview(id, r.filter((x) => x.indices.length));
+    const r = await runBake(id, { preview: true, stale: () => my !== generation, signal: ac.signal, onPart });
+    if (r && my === generation && objId.value === id) {
+      lastRunMs = performance.now() - runStart;
+      showPreview(id, r.filter((x) => x.indices.length));
+    }
   } catch (e) {
-    if (my === generation) toast.error('The texture displacement preview failed.', { detail: (e as Error)?.message });
+    if (e instanceof SliceCancelled) warmEngineLane('background');
+    else if (my === generation) toast.error('The texture displacement preview failed.', { detail: (e as Error)?.message });
   } finally {
     running = false;
+    runAbort = null;
     previewing.value = false;
-    if (pending || my !== generation) { pending = false; if (!timer) void runPreview(); }
+    stopTicker();
+    if (my !== generation && !timer && !unmounted) void runPreview();
   }
 }
 
-watch(previewKey, schedulePreview);
+watch(previewKey, () => { schedulePreview(); void painter.refreshTint(); });
 watch(toolScene, () => { overlay.attach(); render(); });
 
 // ---- bake --------------------------------------------------------------------------------
@@ -252,30 +313,50 @@ const paintWarning = computed(() => {
 });
 const bakeNa = computed(() => (!obj.value ? '' : !layers.value.length || !painted.value.size ? 'Nothing is painted yet.' : ''));
 
+let bakeAbort: AbortController | null = null;
+
 async function bake(): Promise<void> {
   const id = objId.value;
   if (!id || baking.value || bakeNa.value) return;
   baking.value = true;
   generation++; // a preview finishing now is stale
+  runAbort?.abort(); // and the bake shouldn't wait behind it
+  const ac = new AbortController();
+  bakeAbort = ac;
+  startTicker();
   try {
-    const r = await bakeTexture(id);
-    if (!r.ok) toast.error(r.message ?? 'The bake failed.');
+    const r = await bakeTexture(id, { signal: ac.signal, onPart });
+    if (r.cancelled) toast.info('Bake cancelled.');
+    else if (!r.ok) toast.error(r.message ?? 'The bake failed.');
     else if (r.budgetLimited) toast.warn('The triangle budget limited the detail of the bake.');
   } catch (e) {
     toast.error('The bake failed.', { detail: (e as Error)?.message });
   } finally {
     baking.value = false;
-    schedulePreview();
+    bakeAbort = null;
+    stopTicker();
+    if (!unmounted) schedulePreview();
   }
 }
 
+/** Desktop's bake job can be cancelled from its progress bar. */
+function cancelBake(): void { bakeAbort?.abort(); }
+
 onMounted(() => {
   void textureLibrary().then((l) => { library.value = l; });
+  // The background engine starts while the user picks a texture and paints, not on the first preview.
+  warmEngineLane('background');
   schedulePreview();
 });
 onBeforeUnmount(() => {
+  unmounted = true;
   if (timer) clearTimeout(timer);
+  stopTicker();
   generation++;
+  runAbort?.abort();
+  // A bake still running finishes (and commits) first; the lane's instance goes after.
+  releaseEngineLane('background');
+  painter.dispose();
   overlay.dispose();
   previewMaterial.dispose();
   setHidden([]);
@@ -292,15 +373,53 @@ onBeforeUnmount(() => {
         <div class="td__head">
           <h3>Paint</h3>
           <span class="td__into">{{ active ? `into ${layerName(active)}` : 'add a layer to paint' }}</span>
+          <UTooltip text="Paint - add the active layer where you click or drag. The right button erases, and so does holding Shift.">
+            <UButton size="xs" icon="i-lucide-plus" aria-label="Paint" :aria-pressed="!maskUi.erase" :variant="!maskUi.erase ? 'soft' : 'ghost'"
+                     :color="!maskUi.erase ? 'primary' : 'neutral'" @click="maskUi.erase = false" />
+          </UTooltip>
+          <UTooltip text="Erase - remove the active layer where you click or drag. The right button paints.">
+            <UButton size="xs" icon="i-lucide-minus" aria-label="Erase" :aria-pressed="maskUi.erase" :variant="maskUi.erase ? 'soft' : 'ghost'"
+                     :color="maskUi.erase ? 'primary' : 'neutral'" @click="maskUi.erase = true" />
+          </UTooltip>
         </div>
-        <div class="flex gap-2">
+        <div class="td__tools" role="radiogroup" aria-label="Paint tool">
+          <UTooltip v-for="t in MASK_TOOLS" :key="t.id" :text="t.tip">
+            <UButton size="sm" :icon="t.icon" :aria-label="t.label" role="radio" :aria-checked="maskUi.tool === t.id"
+                     :variant="maskUi.tool === t.id ? 'soft' : 'ghost'" :color="maskUi.tool === t.id ? 'primary' : 'neutral'" @click="maskUi.tool = t.id" />
+          </UTooltip>
+          <span class="td__vsep" aria-hidden="true" />
           <UTooltip :text="selectAllNa || 'Select whole model - paint every face of the model with the active layer'">
-            <UButton size="sm" variant="soft" color="neutral" icon="i-lucide-box-select" label="Select whole model" :disabled="!!selectAllNa" @click="selectAll" />
+            <UButton size="sm" variant="ghost" color="neutral" icon="i-lucide-box-select" aria-label="Select whole model" :disabled="!!selectAllNa" @click="selectAll" />
           </UTooltip>
           <UTooltip :text="eraseAllNa || 'Erase whole model - clear the active layer\'s paint from every face'">
             <UButton size="sm" variant="ghost" color="neutral" icon="i-lucide-eraser" aria-label="Erase whole model" :disabled="!!eraseAllNa" @click="eraseAll" />
           </UTooltip>
+          <UIcon v-if="maskUi.busy" name="i-lucide-loader-circle" class="size-3.5 animate-spin text-dimmed ml-auto" />
         </div>
+        <div v-if="maskUi.tool === 'brush'" class="td__ctl">
+          <UTooltip text="Brush size"><span class="td__lbl td__lbl--w">Size</span></UTooltip>
+          <USlider v-model="maskUi.radius" :min="RADIUS_MIN" :max="RADIUS_MAX" :step="0.05" size="sm" class="flex-1" aria-label="Brush size" />
+          <UInputNumber v-model="maskUi.radius" :min="RADIUS_MIN" :max="RADIUS_MAX" :step="0.2" :step-snapping="false" size="xs" class="w-20"
+                        :format-options="{ maximumFractionDigits: 2 }" aria-label="Brush size (mm)" />
+          <UTooltip text="Circle - paints everything under the brush as seen from the camera">
+            <UButton size="xs" icon="i-lucide-circle" aria-label="Circle" :aria-pressed="maskUi.cursor === 'circle'"
+                     :variant="maskUi.cursor === 'circle' ? 'soft' : 'ghost'" :color="maskUi.cursor === 'circle' ? 'primary' : 'neutral'" @click="maskUi.cursor = 'circle'" />
+          </UTooltip>
+          <UTooltip text="Sphere - paints only within a ball around the point under the cursor">
+            <UButton size="xs" icon="i-lucide-globe" aria-label="Sphere" :aria-pressed="maskUi.cursor === 'sphere'"
+                     :variant="maskUi.cursor === 'sphere' ? 'soft' : 'ghost'" :color="maskUi.cursor === 'sphere' ? 'primary' : 'neutral'" @click="maskUi.cursor = 'sphere'" />
+          </UTooltip>
+        </div>
+        <div v-else-if="maskUi.tool === 'area'" class="td__ctl">
+          <UTooltip text="Angle threshold - the fill stops at edges sharper than this"><span class="td__lbl td__lbl--w">Angle</span></UTooltip>
+          <USlider v-model="maskUi.angle" :min="ANGLE_MIN" :max="ANGLE_MAX" :step="1" size="sm" class="flex-1" aria-label="Angle threshold" />
+          <UInputNumber v-model="maskUi.angle" :min="ANGLE_MIN" :max="ANGLE_MAX" :step="1" size="xs" class="w-20" aria-label="Angle threshold (°)" />
+        </div>
+        <p v-else class="text-xs text-muted m-0">Click a triangle to paint it.</p>
+        <dl v-if="active" class="td__legend">
+          <template v-for="[k, v] in paintLegend" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></template>
+        </dl>
+        <p v-if="maskUi.error" class="td__warn">{{ maskUi.error }}</p>
       </section>
 
       <section class="td__sec" aria-label="Texture layers">
@@ -432,8 +551,12 @@ onBeforeUnmount(() => {
     <p v-else class="text-sm text-muted">Select one object to add a texture to it.</p>
 
     <template #footer>
-      <span v-if="previewing && !baking" class="td__status"><UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" /> Updating preview…</span>
-      <UButton size="sm" variant="ghost" label="Close" @click="closeTool()" />
+      <span v-if="previewing && !baking" class="td__status" role="status">
+        <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" /> Updating preview… {{ elapsed }} s{{ partNote ? ` · ${partNote}` : '' }}
+      </span>
+      <span v-else-if="baking" class="td__status" role="status">{{ elapsed }} s{{ partNote ? ` · ${partNote}` : '' }}</span>
+      <UButton v-if="baking" size="sm" variant="ghost" color="neutral" label="Cancel" @click="cancelBake" />
+      <UButton v-else size="sm" variant="ghost" label="Close" @click="closeTool()" />
       <UTooltip :text="bakeNa || 'Turn the painted height maps into real geometry. The area you painted is refined, displaced and simplified in one run; Undo takes it back.'">
         <UButton size="sm" color="primary" :label="baking ? 'Baking...' : 'Bake'" :loading="baking" :disabled="!obj || baking || !!bakeNa" @click="bake" />
       </UTooltip>
@@ -464,5 +587,10 @@ onBeforeUnmount(() => {
 .td__ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .td__full, .td__warn { grid-column: 1 / -1; }
 .td__warn { margin: 0; font-size: var(--fs-xs); color: var(--ui-warning, #d97706); }
+.td__tools { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.td__vsep { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--line); }
+.td__lbl--w { width: 34px; flex: none; }
+.td__legend { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 0; font-size: var(--fs-xs); color: var(--fg-2, var(--fg-1)); }
+.td__legend dd { margin: 0; }
 .td__status { margin-right: auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--fg-1); }
 </style>

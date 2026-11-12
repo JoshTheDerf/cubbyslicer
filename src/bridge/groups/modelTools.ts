@@ -27,7 +27,7 @@ import { resolvedConfig } from '../../app/state';
 import { oneOf, raycastMesh, vec3 } from '../logic';
 import { textureLibrary, libraryImage } from '../../texture/library';
 import {
-  addTextureLayer, bakeTexture, eraseWholeModel, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer,
+  addTextureLayer, bakeTexture, eraseWholeModel, paintTextureArea, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer,
 } from '../../texture/commands';
 import { BlendMode, MAX_TEXTURE_LAYERS, Projection, TileMethod, bool as jsonBool, enumInt, layerName, layerSlot, num as jsonNum, projectionOf } from '../../texture/model';
 import { bool, num, obj, objectArg, objectDetail, oneOfS, partArg, plateIndexOf, plateOrigin, round, str, vec3s } from './util';
@@ -253,8 +253,10 @@ export function modelToolTools(): BridgeTool[] {
 
     {
       name: 'texture_displacement',
-      description: 'Texture displacement (Orca 2.5): height-map layers (up to 8) on an object, painted onto the whole model, then baked into its mesh (one undo step each). '
-        + 'In one call, in this order: addLayer (a built-in texture by name, see listTextures) → edit the layer `slot` (default the newest) → wholeModel select / erase → removeLayer → bake. '
+      description: 'Texture displacement (Orca 2.5): height-map layers (up to 8) on an object, painted where they go (the whole model or areas), then baked into its mesh (one undo step each). '
+        + 'In one call, in this order: addLayer (a built-in texture by name, see listTextures) → edit the layer `slot` (default the newest) → wholeModel select / erase → paint an area of the layer → removeLayer → bake. '
+        + 'paint: sphere (within `radius` mm of `point`), smart_fill (the connected area at `point` up to edges sharper than `angle`°), facing (faces within `angle`° of `direction`, e.g. [0, 0, 1] = tops); erase: true removes paint there. '
+        + 'Points are bed coordinates (mm) of the object’s plate; sphere / smart_fill act on the model part nearest the point. Only painted areas are displaced. '
         + 'Baking replaces the mesh (other painting on it resets); the layers stay for another bake. Returns the layer stack.',
       timeoutMs: 10 * 60_000,
       inputSchema: obj({
@@ -269,6 +271,10 @@ export function modelToolTools(): BridgeTool[] {
         mapping: oneOfS(['triplanar', 'cylindrical', 'spherical'], 'Mapping.'), tile: bool('Tile (repeat) the texture.'),
         tileMethod: oneOfS(['repeat', 'mirrored'], 'How it repeats.'), blend: oneOfS(['add', 'override', 'subtract', 'multiply', 'divide'], 'Blend with the layers below (not the base layer).'),
         wholeModel: oneOfS(['select', 'erase'], 'Paint the whole model with the layer, or clear its paint.'),
+        paint: oneOfS(['sphere', 'smart_fill', 'facing'], 'Paint an area of the layer (after wholeModel).'),
+        point: vec3s('paint sphere / smart_fill: a point on or near the surface (bed coordinates).'), radius: num('paint sphere: mm (default 5).'),
+        angle: num('paint smart_fill / facing: degrees (default 30; facing 45).'), direction: vec3s('paint facing: world direction, e.g. [0, 0, 1].'),
+        erase: bool('paint: remove the layer’s paint in the area instead.'),
         removeLayer: bool('Remove the layer (and its paint).'),
         bake: bool('Bake the painted layers into the mesh.'),
       }, ['objectId']),
@@ -282,13 +288,14 @@ export function modelToolTools(): BridgeTool[] {
           return { name: t.name, path: decodeURIComponent(t.url.split('/').pop() ?? t.name), image: await libraryImage(t) };
         };
         let slot = args.slot === undefined ? undefined : argNumber(args, 'slot');
+        let paintNote: string | undefined;
         if (args.addLayer !== undefined) {
           slot = addTextureLayer(o.id, await libTexture(args.addLayer));
           if (slot < 0) throw new Error(`An object holds at most ${MAX_TEXTURE_LAYERS} texture layers.`);
         }
         const layers = () => stackOf(getObject(o.id)!)?.layers ?? [];
         slot ??= layers().length ? layerSlot(layers()[0]) : undefined;
-        const editing = ['texture', 'depth', 'tileSize', 'rotation', 'midlevel', 'smoothing', 'invert', 'edgeFade', 'edgeFadeAmount', 'mapping', 'tile', 'tileMethod', 'blend', 'wholeModel', 'removeLayer']
+        const editing = ['texture', 'depth', 'tileSize', 'rotation', 'midlevel', 'smoothing', 'invert', 'edgeFade', 'edgeFadeAmount', 'mapping', 'tile', 'tileMethod', 'blend', 'wholeModel', 'paint', 'removeLayer']
           .some((k) => args[k] !== undefined);
         if (editing && (slot === undefined || !layers().some((l) => layerSlot(l) === slot))) throw new Error('No such texture layer: add one with addLayer, or pass a slot from the stack.');
         if (slot !== undefined && editing) {
@@ -314,6 +321,18 @@ export function modelToolTools(): BridgeTool[] {
           const texture = args.texture !== undefined ? await libTexture(args.texture) : undefined;
           if (Object.keys(patch).length || texture) updateTextureLayer(o.id, s, patch, texture ? { texture } : {});
           if (args.wholeModel !== undefined) (oneOf(args.wholeModel, ['select', 'erase'] as const, 'wholeModel') === 'select' ? selectWholeModel : eraseWholeModel)(o.id, s);
+          if (args.paint !== undefined) {
+            const mode = oneOf(args.paint, ['sphere', 'smart_fill', 'facing'] as const, 'paint');
+            const [ox, oy] = plateOrigin(plateIndexOf(o.id));
+            const p = vec3(args.point, 'point');
+            const radius = argNumber(args, 'radius', { optional: true });
+            if (radius !== undefined && !(radius > 0 && radius <= 500)) throw new Error('radius must be 0-500 mm.');
+            const r = await paintTextureArea(o.id, s, {
+              mode, point: p ? [p[0] + ox, p[1] + oy, p[2]] : undefined, radius, angle: argNumber(args, 'angle', { optional: true }),
+              direction: vec3(args.direction, 'direction') ?? undefined, erase: args.erase === true,
+            });
+            if (r.distance !== undefined && r.distance > 1) paintNote = `The point is ${r.distance.toFixed(1)} mm off the surface; the closest surface point was used.`;
+          }
           if (args.removeLayer === true) removeTextureLayer(o.id, s);
         }
         let baked: unknown;
@@ -328,6 +347,7 @@ export function modelToolTools(): BridgeTool[] {
           data: {
             ok: true,
             ...(baked ? { baked } : {}),
+            ...(paintNote ? { note: paintNote } : {}),
             layers: layers().map((l) => ({
               slot: layerSlot(l), name: layerName(l), hasImage: !!l.image?.length, painted: painted.has(layerSlot(l)),
               depth: jsonNum(l.json, 'depth_mm', 0.4), tileSize: jsonNum(l.json, 'tiling_scale', 12.5), rotation: jsonNum(l.json, 'rotation_deg', 0),

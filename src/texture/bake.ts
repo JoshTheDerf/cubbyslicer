@@ -98,14 +98,30 @@ export function meshMoved(base: MeshData, positions: Float32Array, indices: Uint
 
 export interface PartResult { part: TexturePart; positions: Float32Array; indices: Uint32Array; budgetLimited: boolean }
 
-/** Run the requests one part after another. `stale()` stops between parts (a newer preview superseded this one). */
-export async function runBake(objectId: string, opts: { preview?: boolean; stale?: () => boolean } = {}): Promise<PartResult[] | null> {
+export interface RunOptions {
+  preview?: boolean;
+  /** Stops between parts (a newer preview superseded this one). */
+  stale?: () => boolean;
+  /** Cancels the part running now (terminates the background engine lane: rejects with SliceCancelled). */
+  signal?: AbortSignal;
+  /** Called before each part: `index` of `count` painted parts. */
+  onPart?: (index: number, count: number) => void;
+}
+
+/**
+ * Run the requests one part after another on the engine's background lane
+ * (desktop runs them as a background job), so slicing and painting don't
+ * wait behind a 10-20 s run.
+ */
+export async function runBake(objectId: string, opts: RunOptions = {}): Promise<PartResult[] | null> {
   const o = getObject(objectId);
   if (!o) return null;
   const out: PartResult[] = [];
-  for (const { part, args } of bakeRequests(o, opts)) {
-    if (opts.stale?.()) return null;
-    const r = await engineTool('texture_displacement', args, [{ positions: part.mesh.positions, indices: part.mesh.indices }]);
+  const reqs = bakeRequests(o, opts);
+  for (const [i, { part, args }] of reqs.entries()) {
+    if (opts.stale?.() || opts.signal?.aborted) return null;
+    opts.onPart?.(i, reqs.length);
+    const r = await engineTool('texture_displacement', args, [{ positions: part.mesh.positions, indices: part.mesh.indices }], opts.signal, 'background');
     const m = r.meshes[0];
     if (m) out.push({ part, positions: m.positions, indices: m.indices, budgetLimited: !!r.result.budgetLimited });
   }

@@ -9,9 +9,7 @@
  * Orca's plater; support / seam / fuzzy only while their tool is open.
  */
 import { watch } from 'vue';
-import {
-  BufferAttribute, BufferGeometry, DoubleSide, Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, RingGeometry, Vector3,
-} from 'three';
+import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial } from 'three';
 import { engineCaps, type PaintLayer, type ToolMesh } from '../engine/types';
 import {
   getMesh, getMeshPaint, getObject, meshPaint, objects, selectedIds, setMeshPaint, setObjectOverride,
@@ -21,6 +19,7 @@ import { filamentColourOf, filamentColours } from '../mixed/store';
 import { closeTool, toolScene } from '../tools/state';
 import type { ToolHandler, ToolPointerEvent } from '../viewport/scene';
 import { toast } from '../ui';
+import { BrushCursor } from './cursor';
 import { applyToSession, closeSession, decodePaint, openSession, sessionPaint } from './session';
 import { paintUi, stateFor } from './state';
 
@@ -33,7 +32,7 @@ let session: Session | null = null;
 let inFlight: Promise<void> | null = null;
 let pending: (() => Promise<void>) | null = null;
 let stroke: { button: number; shift: boolean; prev: number[] | null; changed: boolean } | null = null;
-let cursor: Mesh | null = null;
+const cursor = new BrushCursor();
 
 function scene() { return toolScene.value; }
 
@@ -137,19 +136,7 @@ function placeCursor(e: ToolPointerEvent): void {
   const sc = scene();
   if (!sc) return;
   const onTarget = !!e.hit && e.hit.objectId === session?.objectId && !e.hit.partId;
-  const brush = paintUi.tool === 'circle' || paintUi.tool === 'sphere';
-  if (!cursor) {
-    cursor = new Mesh(new RingGeometry(0.92, 1, 48), new MeshBasicMaterial({ color: 0xffffff, side: DoubleSide, depthTest: false, transparent: true, opacity: 0.85 }));
-    cursor.renderOrder = 10;
-    sc.scene.add(cursor);
-  }
-  cursor.visible = onTarget && brush;
-  if (onTarget && brush && e.hit) {
-    cursor.position.copy(e.hit.point).addScaledVector(e.hit.normal, 0.05);
-    cursor.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), e.hit.normal);
-    cursor.scale.setScalar(paintUi.radius);
-  }
-  sc.requestRender();
+  cursor.place(sc, e.hit, paintUi.radius, onTarget && (paintUi.tool === 'circle' || paintUi.tool === 'sphere'));
 }
 
 const handler: ToolHandler = {
@@ -245,7 +232,7 @@ export async function closePaint(): Promise<void> {
   paintUi.objectId = null;
   const sc = scene();
   sc?.renderer.domElement.removeEventListener('wheel', onWheel, { capture: true });
-  if (cursor) { cursor.removeFromParent(); cursor.geometry.dispose(); (cursor.material as MeshBasicMaterial).dispose(); cursor = null; }
+  cursor.dispose();
   if (s) {
     closeSession(s.handle);
     if (s.layer !== 'color') for (const o of objects.value) if (o.meshId === s.meshId) sc?.setObjectOverlay(o.id, `paint-${s.layer}`, null);

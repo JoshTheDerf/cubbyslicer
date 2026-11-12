@@ -97,6 +97,15 @@ export function wholeMask(triangles: number): Array<[number, string]> {
   return out;
 }
 
+/**
+ * A mask recorded for another mesh indexes triangles it doesn't have; the
+ * selector would load it empty and the next stroke would write that back over
+ * the mask (desktop's m_selectors_stale check). Such a mask isn't edited.
+ */
+export function maskFits(mask: ReadonlyArray<readonly [number, string]> | undefined, triangles: number): boolean {
+  return !mask || mask.every(([t]) => Number.isInteger(t) && t >= 0 && t < triangles);
+}
+
 // ---- 3MF JSON ------------------------------------------------------------------
 
 /**

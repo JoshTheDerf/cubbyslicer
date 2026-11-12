@@ -60,7 +60,13 @@ export function stateFor(layer: PaintLayer, button: number, shift: boolean): num
 /** Colour states are filament numbers: Orca 2.5's TriangleSelector stops at EnforcerBlockerType::ExtruderMax = 32. */
 export const MAX_COLOR_STATE = 32;
 
+/**
+ * What an engine painting session paints: one of the paint gizmos' layers, or
+ * a texture displacement layer's mask (src/texture: one state, ENFORCER = painted).
+ */
+export type PaintTarget = PaintLayer | 'texture';
+
 /** Highest engine state a layer uses (TriangleSelector serialisation range). */
-export function maxStateFor(layer: PaintLayer): number {
-  return layer === 'color' ? MAX_COLOR_STATE : layer === 'fuzzy' ? 1 : 2;
+export function maxStateFor(layer: PaintTarget): number {
+  return layer === 'color' ? MAX_COLOR_STATE : layer === 'fuzzy' || layer === 'texture' ? 1 : 2;
 }

@@ -1048,8 +1048,11 @@ export class PrepareScene {
 
   pick(clientX: number, clientY: number): Intersection | null {
     this.setNdc(clientX, clientY);
-    const hits = this.raycaster.intersectObjects(this.visibleMeshes(), true);
-    return hits[0] ?? null;
+    // An object a tool draws itself (texture displacement preview) is still what the tool paints on.
+    const hidden = [...this.toolHidden].map((id) => this.entries.get(id)?.mesh).filter((m): m is Mesh<BufferGeometry, MeshStandardMaterial> => !!m && !m.visible);
+    const hits = this.raycaster.intersectObjects(hidden.length ? [...this.visibleMeshes(), ...hidden] : this.visibleMeshes(), true);
+    // What the section view cuts away isn't there to pick (desktop's painters raycast with the clipping plane).
+    return hits.find((h) => !this.section.clips(h.point)) ?? null;
   }
 
   /** Cheap hover pick: exact for small meshes, bounding box for huge ones. */

@@ -12,7 +12,8 @@ import { BRIDGE_ABI } from './capabilities';
 import type { MixedPreviewResult, MixedValidateResult, RepairMeshResult, ResolveVariantsResult, WipeTowerFootprintResult } from './tools';
 import type { FlatConfig, SliceJob, SliceObjectInput, SliceReport, ToolMesh } from './types';
 import { allocWords, callJson, copyOut, decodeJson, safeFree, u32, writeIn, type EngineModule } from './worker/heap';
-import { packJob, packTool } from './worker/pack';
+import { packJob, packTool, unpackMeshes } from './worker/pack';
+import { encodeTexturePng } from '../texture/png';
 
 const DIR = resolve(__dirname, '../../public/wasm/orca');
 const version = existsSync(join(DIR, 'version.json')) ? JSON.parse(readFileSync(join(DIR, 'version.json'), 'utf8')) as { version: string; bridge: number } : null;
@@ -27,6 +28,15 @@ function tool<T>(op: string, args: unknown, meshes: ToolMesh[] = []): T {
   const reply = r.json as { ok: boolean; error?: string; result: T };
   if (!reply?.ok) throw new Error(reply?.error ?? `${op} failed`);
   return reply.result;
+}
+
+/** A tool call that also returns the reply's meshes. */
+function toolMeshes<T>(op: string, args: unknown, meshes: ToolMesh[] = []): { result: T; meshes: ToolMesh[] } {
+  const { json, blob } = packTool(op, args, meshes);
+  const r = callJson(mod, [json, blob], true, (a) => mod._cs_tool!(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]));
+  const reply = r.json as { ok: boolean; error?: string; result: T; meshes?: unknown };
+  if (!reply?.ok) throw new Error(reply?.error ?? `${op} failed`);
+  return { result: reply.result, meshes: unpackMeshes(reply.meshes, r.blob) };
 }
 
 function slice(job: SliceJob): { rc: number; gcode: string; report: SliceReport } {
@@ -157,4 +167,34 @@ describe.skipIf(!staged)('OrcaSlicer 2.5 engine (staged)', () => {
     expect(r.triangles).toBeGreaterThanOrEqual(12);
     expect(r.paint?.color?.length).toBeGreaterThan(0);
   });
+
+  it('texture displacement: a brush-painted mask (one-state TriangleSelector) limits the relief to the painted area', () => {
+    const cube = box(20, 20, 20);
+    // Texture mask painting: a session with one state, a sphere of 4 mm on the top face (triangles 2, 3 are z = 20).
+    const { handle } = tool<{ handle: number }>('paint_open', { paint: [], maxState: 1 }, [cube]);
+    tool('paint_apply', { handle, kind: 'sphere', facet: 2, point: [10, 10, 20], camera: [10, 10, 200], state: 1, radius: 4, trafo: at(0, 0) });
+    const { paint } = tool<{ paint: Array<[number, string]> }>('paint_get', { handle });
+    tool('paint_close', { handle });
+    expect(paint.length).toBeGreaterThan(0);
+    expect(paint.every(([t]) => t === 2 || t === 3)).toBe(true);
+    expect(paint.some(([, h]) => h !== '4')).toBe(true); // split triangles, not whole ones
+    // A noisy height map so the relief is non-zero almost everywhere.
+    const n = 64, rgba = new Uint8Array(n * n * 4);
+    for (let i = 0; i < n * n; i++) { const v = 128 + Math.round(127 * Math.sin(i * 0.37) * Math.cos(i * 0.11)); rgba.set([v, v, v, 255], i * 4); }
+    const r = toolMeshes<{ triangles: number }>('texture_displacement', {
+      layers: { version: 1, options: { pipeline_v2: true, v2_max_triangles_k: 0, v2_refine_mm: 0.5 }, layers: [{ slot: 0, depth_mm: 1, tiling_scale: 8 }] },
+      images: { 0: encodeTexturePng(n, n, rgba) }, paint: { 0: paint }, transform: at(0, 0), anchor: [10, 10, 0], restingDrop: 0,
+    }, [cube]);
+    const p = r.meshes[0].positions;
+    let raised = 0, maxZ = 0, farthest = 0, outside = 0;
+    for (let i = 0; i < p.length; i += 3) {
+      const [x, y, z] = [p[i], p[i + 1], p[i + 2]];
+      if (x < -1e-3 || x > 20.001 || y < -1e-3 || y > 20.001 || z < -1e-3) outside++;
+      if (z > 20.01) { raised++; maxZ = Math.max(maxZ, z); farthest = Math.max(farthest, Math.hypot(x - 10, y - 10)); }
+    }
+    expect(raised).toBeGreaterThan(10);
+    expect(maxZ).toBeGreaterThan(20.2);
+    expect(farthest).toBeLessThan(5); // the 4 mm sphere plus a refinement edge
+    expect(outside).toBe(0); // sides and bottom untouched
+  }, 120_000);
 });

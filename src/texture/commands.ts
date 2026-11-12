@@ -5,8 +5,13 @@
  */
 import { commitTextureBake, getMeshTexture, getObject, meshTexture, setTextureMasks, setTextureStack, textureOwner } from '../project/store';
 import type { ProjectObject, TextureLayer, TextureStack } from '../project/types';
-import { isPainted, meshMoved, runBake, textureParts } from './bake';
-import { defaultLayerJson, defaultOptions, freeSlot, layerSlot, MAX_TEXTURE_LAYERS, wholeMask, withFields } from './model';
+import { Matrix4, Vector3 } from 'three';
+import { SliceCancelled, paintFromStates } from '../engine/client';
+import type { PaintMap } from '../engine/types';
+import { mergePaint, nearestTriangle, trianglesFacing } from '../bridge/logic';
+import { paintWith } from '../paint/session';
+import { isPainted, meshMoved, runBake, textureParts, type PartResult, type RunOptions, type TexturePart } from './bake';
+import { defaultLayerJson, defaultOptions, freeSlot, layerSlot, maskFits, MAX_TEXTURE_LAYERS, wholeMask, withFields } from './model';
 
 export const stackOf = (o: ProjectObject): TextureStack | undefined => getMeshTexture(textureOwner(o)).stack;
 
@@ -84,19 +89,26 @@ export function paintedSlotsOf(o: ProjectObject): Set<number> {
 
 export const anyPartPainted = (o: ProjectObject) => textureParts(o).some((p) => isPainted(p.texture));
 
-export interface BakeOutcome { ok: boolean; message?: string; parts?: number; budgetLimited?: boolean }
+export interface BakeOutcome { ok: boolean; message?: string; cancelled?: boolean; parts?: number; budgetLimited?: boolean }
 
 /**
  * bake(): every painted part displaced, committed as one undo step. Parts
  * whose bake moved nothing are left as they were; when none moved, nothing
  * changes and the paint is kept (desktop's finalize()).
  */
-export async function bakeTexture(objectId: string): Promise<BakeOutcome> {
+export async function bakeTexture(objectId: string, opts: Pick<RunOptions, 'signal' | 'onPart'> = {}): Promise<BakeOutcome> {
   const o = getObject(objectId);
   if (!o) return { ok: false, message: 'No such object.' };
   if (!anyPartPainted(o)) return { ok: false, message: 'Nothing is painted, there is nothing to bake.' };
   const before = new Map(textureParts(o).map((p) => [p.partId, p.mesh.id]));
-  const results = await runBake(objectId);
+  let results: PartResult[] | null;
+  try {
+    results = await runBake(objectId, opts);
+  } catch (e) {
+    if (e instanceof SliceCancelled) return { ok: false, cancelled: true, message: 'The bake was cancelled.' };
+    throw e;
+  }
+  if (opts.signal?.aborted) return { ok: false, cancelled: true, message: 'The bake was cancelled.' };
   if (!results) return { ok: false, message: 'The object changed while baking.' };
   // A part whose mesh changed meanwhile (undo, another tool) is skipped, like desktop's stale-volume check.
   const now = getObject(objectId);
@@ -107,4 +119,73 @@ export async function bakeTexture(objectId: string): Promise<BakeOutcome> {
   }
   commitTextureBake(objectId, moved.map((r) => ({ partId: r.part.partId, positions: r.positions, indices: r.indices })));
   return { ok: true, parts: moved.length, budgetLimited: moved.some((r) => r.budgetLimited) };
+}
+
+export type TexturePaintMode = 'sphere' | 'smart_fill' | 'facing';
+export interface TexturePaintSpec {
+  mode: TexturePaintMode;
+  /** sphere / smart_fill: a world (bed) point on or near the surface. */
+  point?: [number, number, number];
+  /** sphere: mm. */
+  radius?: number;
+  /** smart_fill: the angle threshold; facing: the cone around `direction` (degrees). */
+  angle?: number;
+  /** facing: world direction. */
+  direction?: [number, number, number];
+  erase?: boolean;
+}
+
+/**
+ * Scripted painting of a layer's mask (the bridge; the panel paints with the
+ * pointer, src/texture/paint.ts): a sphere or a connected area at a point, on
+ * the model part nearest to it, or every face of every part facing a
+ * direction. One undo step.
+ */
+export async function paintTextureArea(objectId: string, slot: number, spec: TexturePaintSpec): Promise<{ paintedTriangles: number; distance?: number }> {
+  const o = getObject(objectId);
+  if (!o) throw new Error('No such object.');
+  if (!stackOf(o)?.layers.some((l) => layerSlot(l) === slot)) throw new Error('No such texture layer.');
+  const parts = textureParts(o);
+  const state = spec.erase ? 0 : 1;
+  const key = String(slot);
+  const changes: Array<{ meshId: string; slot: number; mask: PaintMap | null }> = [];
+  let distance: number | undefined;
+  for (const p of parts) {
+    if (!maskFits(p.texture.masks?.[key], p.mesh.triangleCount)) throw new Error('This layer’s paint was recorded for a different mesh; erase it (wholeModel: "erase") first.');
+  }
+  if (spec.mode === 'facing') {
+    if (!spec.direction) throw new Error('mode "facing" needs direction [x, y, z].');
+    for (const p of parts) {
+      const tris = trianglesFacing(p.mesh.positions, p.mesh.indices, p.matrix, spec.direction, spec.angle ?? 45);
+      if (!tris.length) continue;
+      const cur = p.texture.masks?.[key] as PaintMap | undefined;
+      const tm = { positions: p.mesh.positions, indices: p.mesh.indices };
+      const next = state === 0 ? mergePaint(cur, [], tris) : mergePaint(cur, await paintFromStates(tm, tris.map((t): [number, number] => [t, 1])));
+      changes.push({ meshId: p.mesh.id, slot, mask: next.length ? next : null });
+    }
+  } else {
+    if (!spec.point) throw new Error(`mode "${spec.mode}" needs point [x, y, z].`);
+    let best: { part: TexturePart; tri: number; point: [number, number, number]; distance: number } | null = null;
+    for (const p of parts) {
+      const h = nearestTriangle(p.mesh.positions, p.mesh.indices, p.matrix, spec.point);
+      if (h && (!best || h.distance < best.distance)) best = { part: p, tri: h.tri, point: h.point, distance: h.distance };
+    }
+    if (!best) throw new Error('The object has no triangles.');
+    distance = best.distance;
+    const m = best.part.matrix;
+    const inv = new Matrix4().fromArray(m).invert();
+    const local = new Vector3(...best.point).applyMatrix4(inv).toArray();
+    const cam = new Vector3(0, 0, 10_000).applyMatrix4(inv).toArray();
+    const tm = { positions: best.part.mesh.positions, indices: best.part.mesh.indices };
+    const cur = best.part.texture.masks?.[key] as PaintMap | undefined;
+    const radius = spec.radius ?? 5;
+    const next = await paintWith(tm, 'texture', cur, spec.mode === 'sphere'
+      ? { kind: 'sphere', facet: best.tri, point: local, camera: cam, radius, trafo: m, state }
+      : { kind: 'fill', facet: best.tri, point: local, camera: cam, angle: spec.angle ?? 30, trafo: m, state });
+    changes.push({ meshId: best.part.mesh.id, slot, mask: next.length ? next : null });
+  }
+  if (changes.length) setTextureMasks(changes, state ? 'Paint texture displacement' : 'Erase texture displacement paint');
+  const now = getObject(objectId);
+  const painted = now ? textureParts(now).reduce((n, p) => n + (p.texture.masks?.[key]?.length ?? 0), 0) : 0;
+  return { paintedTriangles: painted, distance };
 }

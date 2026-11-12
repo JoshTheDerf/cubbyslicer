@@ -9,7 +9,9 @@ import { buildOrca3mf } from '../project/persistence/orca3mfWriter';
 import { packTool } from '../engine/worker/pack';
 import { bakeRequests, meshMoved } from './bake';
 import { addTextureLayer, eraseWholeModel, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer } from './commands';
-import { TEXTURE_DIR, defaultLayerJson, freeSlot, layerSlot, stackFromJson, stackToJson, wholeMask } from './model';
+import { TEXTURE_DIR, defaultLayerJson, freeSlot, layerSlot, maskFits, stackFromJson, stackToJson, wholeMask } from './model';
+import { RADIUS_MAX, RADIUS_MIN, maskUi, pressPaints, toolKind, wheelStep } from './paint';
+import { maxStateFor } from '../paint/state';
 import { sanitizeTexture, takeVolumeTexture } from './persist';
 import { encodeTexturePng, isDecodable8bitPng, pngInfo } from './png';
 
@@ -213,3 +215,64 @@ describe('store commands', () => {
     expect(paintedSlotsOf(o)).toEqual(new Set([0]));
   });
 });
+
+describe('mask painting', () => {
+  it('buttons: the right button does the opposite of Paint / Erase, Shift always erases', () => {
+    expect(pressPaints(0, false, false)).toBe(true);
+    expect(pressPaints(2, false, false)).toBe(false);
+    expect(pressPaints(0, true, false)).toBe(false);
+    expect(pressPaints(0, false, true)).toBe(false);
+    expect(pressPaints(2, false, true)).toBe(true);
+    expect(pressPaints(2, true, true)).toBe(false);
+  });
+
+  it('tools map to the engine operations; masks use one state', () => {
+    expect(toolKind('brush', 'circle')).toBe('circle');
+    expect(toolKind('brush', 'sphere')).toBe('sphere');
+    expect(toolKind('face', 'circle')).toBe('pointer');
+    expect(toolKind('area', 'sphere')).toBe('fill');
+    expect(maxStateFor('texture')).toBe(1);
+  });
+
+  it('Ctrl / Alt + wheel steps the brush size and the angle within desktop\'s limits', () => {
+    maskUi.radius = 1; maskUi.angle = 30;
+    wheelStep('brush', true);
+    expect(maskUi.radius).toBe(1.2);
+    for (let i = 0; i < 100; i++) wheelStep('brush', true);
+    expect(maskUi.radius).toBe(RADIUS_MAX);
+    for (let i = 0; i < 100; i++) wheelStep('brush', false);
+    expect(maskUi.radius).toBe(RADIUS_MIN);
+    wheelStep('area', false);
+    expect(maskUi.angle).toBe(29);
+    for (let i = 0; i < 100; i++) wheelStep('area', true);
+    expect(maskUi.angle).toBe(90);
+    wheelStep('face', true);
+    expect(maskUi.angle).toBe(90);
+  });
+
+  it('a mask recorded for another mesh is not edited', () => {
+    expect(maskFits(undefined, 12)).toBe(true);
+    expect(maskFits([[0, '4'], [11, '1C']], 12)).toBe(true);
+    expect(maskFits([[12, '4']], 12)).toBe(false);
+  });
+
+  it('a partial (split) mask is saved as paint_texture_N, read back, and only its parts go to the engine', async () => {
+    S.resetProject();
+    const id = addCube();
+    addTextureLayer(id, tex());
+    const meshId = S.getObject(id)!.meshId;
+    // As a brush stroke leaves it: two split triangles of one face.
+    S.setTextureMasks([{ meshId, slot: 0, mask: [[2, '1C1C0'], [3, '2C']] }], 'Paint texture displacement');
+    expect(S.historyState.value.undo).toBe('Paint texture displacement');
+    const [req] = bakeRequests(S.getObject(id)!, { preview: true });
+    expect(req.args.paint['0']).toEqual([[2, '1C1C0'], [3, '2C']]);
+    const model = strFromU8(unzipSync(buildOrca3mf())['3D/Objects/object_1.model']);
+    expect(model.match(/paint_texture_0="[^"]+"/g)).toEqual(['paint_texture_0="1C1C0"', 'paint_texture_0="2C"']);
+    const saved = buildOrca3mf();
+    S.resetProject();
+    await openOrcaProject('again.3mf', buf(saved));
+    const o = S.objects.value[0];
+    expect(S.getMeshTexture(o.meshId).masks?.['0']).toEqual([[2, '1C1C0'], [3, '2C']]);
+  });
+});
+

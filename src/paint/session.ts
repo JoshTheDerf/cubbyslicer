@@ -5,9 +5,9 @@
  * overlays use one-shot sessions.
  */
 import { engineTool } from '../engine/client';
-import type { PaintLayer, PaintMap, ToolMesh } from '../engine/types';
+import type { PaintMap, ToolMesh } from '../engine/types';
 import type { PaintApplyArgs } from '../engine/tools';
-import { maxStateFor } from './state';
+import { maxStateFor, type PaintTarget } from './state';
 
 export interface PaintFacets {
   /** Painted state of each output mesh. */
@@ -19,7 +19,7 @@ export interface PaintFacets {
 export interface PaintSession extends PaintFacets { handle: number }
 
 /** Open a session over a mesh's current paint of `layer`. */
-export async function openSession(mesh: ToolMesh, layer: PaintLayer, paint: PaintMap | undefined): Promise<PaintSession> {
+export async function openSession(mesh: ToolMesh, layer: PaintTarget, paint: PaintMap | undefined): Promise<PaintSession> {
   const r = await engineTool('paint_open', { paint: paint ?? [], maxState: maxStateFor(layer) }, [mesh]);
   return { handle: r.result.handle, states: r.result.states, meshes: r.meshes };
 }
@@ -41,14 +41,14 @@ export function closeSession(handle: number): void {
 }
 
 /** Paint strings → painted facets per state (a one-shot session). */
-export async function decodePaint(mesh: ToolMesh, layer: PaintLayer, paint: PaintMap): Promise<PaintFacets> {
+export async function decodePaint(mesh: ToolMesh, layer: PaintTarget, paint: PaintMap): Promise<PaintFacets> {
   const s = await openSession(mesh, layer, paint);
   closeSession(s.handle);
   return { states: s.states, meshes: s.meshes };
 }
 
 /** Apply one operation to `paint` in a one-shot session; returns the new paint strings. */
-export async function paintWith(mesh: ToolMesh, layer: PaintLayer, paint: PaintMap | undefined, op: Omit<PaintApplyArgs, 'handle'>): Promise<PaintMap> {
+export async function paintWith(mesh: ToolMesh, layer: PaintTarget, paint: PaintMap | undefined, op: Omit<PaintApplyArgs, 'handle'>): Promise<PaintMap> {
   const s = await openSession(mesh, layer, paint);
   try {
     await applyToSession(s.handle, op);
