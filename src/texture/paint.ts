@@ -81,8 +81,35 @@ export class TextureMaskPainter {
   private tintSeq = 0;
   private enabled = false;
   private disposed = false;
+  private strokeOnlyTint = false;
+  /** Called after the tint was rebuilt (a stroke step, a commit, undo, a slot change): the active patch may differ. */
+  onTint: (() => void) | null = null;
 
   constructor(private readonly objectId: () => string | null, private readonly slot: () => number) {}
+
+  /**
+   * Desktop draws the paint feedback over a preview only while a mouse button
+   * is down (the Fast view's shading sits exactly on the surface the tint
+   * would cover). True: the tint shows during strokes only.
+   */
+  setStrokeOnlyTint(on: boolean): void {
+    this.strokeOnlyTint = on;
+    this.syncTintVisibility();
+  }
+
+  private syncTintVisibility(): void {
+    const v = !this.strokeOnlyTint || !!this.stroke;
+    if (this.overlay.group.visible !== v) { this.overlay.group.visible = v; render(); }
+  }
+
+  /** The active slot's painted facets of a part: the live stroke's, else the stored mask's (mesh frame). */
+  async patchOf(part: TexturePart): Promise<ToolMesh | null> {
+    const lv = this.live.get(part.mesh.id);
+    if (lv !== undefined) return lv;
+    const mask = getMeshTexture(part.mesh.id).masks?.[String(this.slot())];
+    if (!mask?.length || !maskFits(mask, part.mesh.triangleCount)) return null;
+    return this.decode(part, mask);
+  }
 
   /** Paint while the tool is open and a layer is active. */
   setEnabled(on: boolean): void {
@@ -175,7 +202,9 @@ export class TextureMaskPainter {
       m.renderOrder = 5;
       this.overlay.add(m);
     }
+    this.syncTintVisibility();
     render();
+    this.onTint?.();
   }
 
   // ---- engine sessions ----------------------------------------------------------------------
@@ -300,6 +329,7 @@ export class TextureMaskPainter {
         const paints = pressPaints(e.button ?? 0, e.shift, maskUi.erase);
         const args = this.args(e, paints);
         this.stroke = { paints, button: e.button ?? 0, prev: args.point, meshId: part.mesh.id };
+        this.syncTintVisibility();
         this.schedule({ kind: 'apply', part, args });
         return true;
       }
@@ -320,6 +350,7 @@ export class TextureMaskPainter {
       if (e.kind === 'up') {
         const st = this.stroke;
         this.stroke = null;
+        this.syncTintVisibility();
         if (st) this.schedule({ kind: 'commit', paints: st.paints });
         return true;
       }

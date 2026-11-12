@@ -56,7 +56,7 @@ function minWorldZ(mesh: MeshData, m: number[]): number {
  * colour / fuzzy painting, which the engine carries onto the baked mesh
  * (desktop's commit, transfer_facet_paint).
  */
-export function bakeRequests(o: ProjectObject, opts: { preview?: boolean } = {}): Array<{ part: TexturePart; args: TextureDisplacementArgs }> {
+export function bakeRequests(o: ProjectObject, opts: { preview?: boolean; images?: Readonly<Record<string, Uint8Array>> } = {}): Array<{ part: TexturePart; args: TextureDisplacementArgs }> {
   const stack: TextureStack | undefined = getMeshTexture(textureOwner(o)).stack;
   if (!stack?.layers.length) return [];
   const parts = textureParts(o);
@@ -70,6 +70,8 @@ export function bakeRequests(o: ProjectObject, opts: { preview?: boolean } = {})
   if (opts.preview && options.pipeline_v2 !== false) options.v2_max_triangles_k = 0;
   const images: Record<string, Uint8Array> = {};
   for (const l of stack.layers) if (l.image?.length) images[String(layerSlot(l))] = l.image;
+  // The image-adjustment panel's live edit stands in for its layer's image (desktop's preview_adjust).
+  for (const [k, v] of Object.entries(opts.images ?? {})) if (images[k] && v.length) images[k] = v;
   const out: Array<{ part: TexturePart; args: TextureDisplacementArgs }> = [];
   parts.forEach((part, i) => {
     if (!isPainted(part.texture)) return;
@@ -109,6 +111,8 @@ export interface PartResult {
 
 export interface RunOptions {
   preview?: boolean;
+  /** Per-slot images replacing the layers' own (the adjustment panel's live result). */
+  images?: Readonly<Record<string, Uint8Array>>;
   /** Stops between parts (a newer preview superseded this one). */
   stale?: () => boolean;
   /**

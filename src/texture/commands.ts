@@ -11,7 +11,9 @@ import type { PaintMap } from '../engine/types';
 import { mergePaint, nearestTriangle, trianglesFacing } from '../bridge/logic';
 import { paintWith } from '../paint/session';
 import { isPainted, meshMoved, runBake, textureParts, type PartResult, type RunOptions, type TexturePart } from './bake';
-import { defaultLayerJson, defaultOptions, freeSlot, layerSlot, maskFits, MAX_TEXTURE_LAYERS, wholeMask, withFields } from './model';
+import { applyTextureAdjustments, decodeLayerImage, encodeHeightPng, isIdentity, type TextureAdjustments } from './image';
+import { saveUserTexture, type UserTexture } from './userLibrary';
+import { defaultLayerJson, defaultOptions, freeSlot, layerSlot, str, maskFits, MAX_TEXTURE_LAYERS, wholeMask, withFields } from './model';
 
 export const stackOf = (o: ProjectObject): TextureStack | undefined => getMeshTexture(textureOwner(o)).stack;
 
@@ -64,6 +66,68 @@ export function removeTextureLayer(objectId: string, slot: number): void {
     { meshId: textureOwner(o), stack: next });
 }
 
+/**
+ * The new slot of each layer when the layer in `slot` moves to `toIndex` of
+ * the slot-ordered stack (move_texture_layer: an insertion index that counts
+ * the moved layer's own position). Layers in between shift by one and keep
+ * their order. Empty when nothing moves.
+ */
+export function reorderedSlots(slots: readonly number[], slot: number, toIndex: number): Map<number, number> {
+  const sorted = [...slots].sort((a, b) => a - b);
+  const from = sorted.indexOf(slot);
+  if (from < 0) return new Map();
+  const to = Math.min(Math.max(toIndex > from ? toIndex - 1 : toIndex, 0), sorted.length - 1);
+  if (to === from) return new Map();
+  const order = [...sorted];
+  order.splice(from, 1);
+  order.splice(to, 0, slot);
+  const out = new Map<number, number>();
+  order.forEach((old, i) => { if (old !== sorted[i]) out.set(old, sorted[i]); });
+  return out;
+}
+
+/**
+ * move_texture_layer: the layers' order is their slot order (the first sits
+ * on the bare surface, each next one blends onto those before), so moving a
+ * layer exchanges slots, and every model part's masks move with them. One
+ * undo step. Returns the old → new slot map (empty when nothing moved).
+ */
+export function moveTextureLayer(objectId: string, slot: number, toIndex: number): Map<number, number> {
+  const o = getObject(objectId);
+  const stack = o && stackOf(o);
+  if (!o || !stack) return new Map();
+  const map = reorderedSlots(stack.layers.map(layerSlot), slot, toIndex);
+  if (!map.size) return map;
+  const layers = stack.layers.map((l) => (map.has(layerSlot(l)) ? withFields(l, { slot: map.get(layerSlot(l)) }) : l));
+  const active = Number(stack.options.active_slot ?? -1);
+  const options = map.has(active) ? Object.freeze({ ...stack.options, active_slot: map.get(active) }) : stack.options;
+  const changes: Array<{ meshId: string; slot: number; mask: ReadonlyArray<readonly [number, string]> | null }> = [];
+  for (const p of textureParts(o)) {
+    const masks = p.texture.masks ?? {};
+    for (const [from, to] of map) changes.push({ meshId: p.mesh.id, slot: to, mask: masks[String(from)] ?? null });
+  }
+  setTextureMasks(changes, 'Reorder texture displacement layers', { meshId: textureOwner(o), stack: Object.freeze({ layers: Object.freeze(layers), options }) });
+  return map;
+}
+
+/**
+ * commit_image_adjust: the layer's image with `adj` applied, saved to My
+ * textures as a copy (named after the layer, made unique), and the layer
+ * pointed at it - the only way an adjustment becomes permanent (desktop never
+ * stores the adjustment itself). Null when nothing changes.
+ */
+export async function saveAdjustedCopy(objectId: string, slot: number, adj: TextureAdjustments): Promise<UserTexture | null> {
+  const o = getObject(objectId);
+  const l = o && stackOf(o)?.layers.find((x) => layerSlot(x) === slot);
+  if (!l?.image) throw new Error('The layer has no image to adjust.');
+  if (isIdentity(adj)) return null;
+  const src = decodeLayerImage(l.image);
+  if (!src) throw new Error('Could not load the selected texture.');
+  const saved = await saveUserTexture(str(l.json, 'name') || 'texture', encodeHeightPng(applyTextureAdjustments(src, adj)));
+  updateTextureLayer(objectId, slot, {}, { texture: { name: saved.name, path: `${saved.name}.png`, image: saved.image } });
+  return saved;
+}
+
 /** select_whole_model: every facet of every model part painted with the layer in `slot`. */
 export function selectWholeModel(objectId: string, slot: number): void {
   const o = getObject(objectId);
@@ -96,7 +160,7 @@ export interface BakeOutcome { ok: boolean; message?: string; cancelled?: boolea
  * whose bake moved nothing are left as they were; when none moved, nothing
  * changes and the paint is kept (desktop's finalize()).
  */
-export async function bakeTexture(objectId: string, opts: Pick<RunOptions, 'signal' | 'onPart' | 'onProgress'> = {}): Promise<BakeOutcome> {
+export async function bakeTexture(objectId: string, opts: Pick<RunOptions, 'signal' | 'onPart' | 'onProgress' | 'images'> = {}): Promise<BakeOutcome> {
   const o = getObject(objectId);
   if (!o) return { ok: false, message: 'No such object.' };
   if (!anyPartPainted(o)) return { ok: false, message: 'Nothing is painted, there is nothing to bake.' };

@@ -27,9 +27,13 @@ import { resolvedConfig } from '../../app/state';
 import { oneOf, raycastMesh, vec3 } from '../logic';
 import { textureLibrary, libraryImage } from '../../texture/library';
 import {
-  addTextureLayer, bakeTexture, eraseWholeModel, paintTextureArea, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer,
+  addTextureLayer, bakeTexture, eraseWholeModel, moveTextureLayer, paintTextureArea, paintedSlotsOf, removeTextureLayer, saveAdjustedCopy, selectWholeModel, stackOf,
+  updateTextureLayer,
 } from '../../texture/commands';
-import { BlendMode, MAX_TEXTURE_LAYERS, Projection, TileMethod, bool as jsonBool, enumInt, layerName, layerSlot, num as jsonNum, projectionOf } from '../../texture/model';
+import { BlendMode, MAX_TEXTURE_LAYERS, Projection, TileMethod, bool as jsonBool, enumInt, layerName, layerSlot, num as jsonNum, orderedLayers, projectionOf } from '../../texture/model';
+import { loadUserTextures, removeUserTexture, touchUserTexture } from '../../texture/userLibrary';
+import { offsetOf } from '../../texture/fastView';
+import { textureUi } from '../../texture/viewState';
 import { bool, num, obj, objectArg, objectDetail, oneOfS, partArg, plateIndexOf, plateOrigin, round, str, vec3s } from './util';
 
 const FACES = ['top', 'bottom', 'front', 'back', 'left', 'right'] as const;
@@ -257,14 +261,23 @@ export function modelToolTools(): BridgeTool[] {
         + 'In one call, in this order: addLayer (a built-in texture by name, see listTextures) → edit the layer `slot` (default the newest) → wholeModel select / erase → paint an area of the layer → removeLayer → bake. '
         + 'paint: sphere (within `radius` mm of `point`), smart_fill (the connected area at `point` up to edges sharper than `angle`°), facing (faces within `angle`° of `direction`, e.g. [0, 0, 1] = tops); erase: true removes paint there. '
         + 'Points are bed coordinates (mm) of the object’s plate; sphere / smart_fill act on the model part nearest the point. Only painted areas are displaced. '
-        + 'Baking replaces the mesh; its support, seam, color and fuzzy skin painting is carried onto the baked surface; the layers stay for another bake. Returns the layer stack.',
+        + 'Layers apply in stack order (the first sits on the bare surface, each next one blends onto those before); moveTo reorders one (its paint moves with it). offset slides the texture (desktop’s Adjust placement), in texture tiles. '
+        + 'adjust (brightness / contrast / sharpness / blur / hue) writes an adjusted copy of the layer’s image to My textures and puts it on the layer (the only way desktop keeps an adjustment). texture may name a built-in or one of My textures; removeTexture deletes one of My textures. '
+        + 'view / wireframe set the tool’s viewport view (normal = the real geometry, fast = the relief shaded on; the tool must be open to see it). '
+        + 'Baking replaces the mesh; its support, seam, color and fuzzy skin painting is carried onto the baked surface; the layers stay for another bake. Returns the layer stack in order.',
       timeoutMs: 10 * 60_000,
       inputSchema: obj({
         objectId: str('Object id.'),
-        listTextures: bool('Return the built-in texture names.'),
+        listTextures: bool('Return the built-in texture names and My textures.'),
         addLayer: str('Add a layer with this built-in texture (name).'),
         slot: num('Layer slot to edit (0-7; default the layer just added, else the first).'),
-        texture: str('Change the layer\'s texture to this built-in one (name).'),
+        texture: str('Change the layer\'s texture to this one: a built-in name, else one of My textures.'),
+        moveTo: num('Move the layer to this position in the stack (0 = the base layer).'),
+        offset: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Texture offset [u, v] in tiles (Adjust placement; [0, 0] = unshifted).' },
+        adjust: obj({ brightness: num('-1..1'), contrast: num('-1..1'), sharpness: num('0..1'), blur: num('0..1'), hue: num('-180..180°, colour images only') }),
+        removeTexture: str('Delete this texture from My textures (layers using it keep their image).'),
+        view: oneOfS(['normal', 'fast'], 'The tool\'s view: the real geometry (normal) or the relief shaded on (fast).'),
+        wireframe: bool('Overlay the mesh edges in the tool\'s view.'),
         depth: num('Depth mm (0.01-10, default 0.4).'), tileSize: num('Tile size mm (0.2-200, default 12.5).'), rotation: num('Rotation degrees (0-360).'),
         midlevel: num('Midlevel (0-10; 0.5: mid-grey stays, darker cuts in).'), smoothing: num('Smoothing 0-1.'),
         invert: bool('Invert the relief.'), edgeFade: bool('Edge fade.'), edgeFadeAmount: num('Edge fade reach 0.02-1.'),
@@ -281,21 +294,34 @@ export function modelToolTools(): BridgeTool[] {
       async run(args) {
         const o = objectArg(args);
         const lib = await textureLibrary();
+        let mine = await loadUserTextures();
         const libTexture = async (name: unknown) => {
           const n = argString({ name }, 'name') ?? '';
           const t = lib.find((x) => x.name.toLowerCase() === n.toLowerCase());
-          if (!t) throw new Error(`No built-in texture "${n}". Pass listTextures: true for the names.`);
-          return { name: t.name, path: decodeURIComponent(t.url.split('/').pop() ?? t.name), image: await libraryImage(t) };
+          if (t) return { name: t.name, path: decodeURIComponent(t.url.split('/').pop() ?? t.name), image: await libraryImage(t) };
+          const u = mine.find((x) => x.name.toLowerCase() === n.toLowerCase());
+          if (!u) throw new Error(`No texture "${n}". Pass listTextures: true for the names.`);
+          touchUserTexture(u.id);
+          return { name: u.name, path: `${u.name}.png`, image: u.image };
         };
+        if (args.removeTexture !== undefined) {
+          const n = argString(args, 'removeTexture') ?? '';
+          const u = mine.find((x) => x.name.toLowerCase() === n.toLowerCase());
+          if (!u) throw new Error(`"${n}" is not one of My textures.`);
+          await removeUserTexture(u.id);
+          mine = await loadUserTextures();
+        }
+        if (args.view !== undefined) textureUi.view = oneOf(args.view, ['normal', 'fast'] as const, 'view');
+        if (args.wireframe !== undefined) textureUi.wireframe = args.wireframe === true;
         let slot = args.slot === undefined ? undefined : argNumber(args, 'slot');
         let paintNote: string | undefined;
         if (args.addLayer !== undefined) {
           slot = addTextureLayer(o.id, await libTexture(args.addLayer));
           if (slot < 0) throw new Error(`An object holds at most ${MAX_TEXTURE_LAYERS} texture layers.`);
         }
-        const layers = () => stackOf(getObject(o.id)!)?.layers ?? [];
+        const layers = () => orderedLayers(stackOf(getObject(o.id)!));
         slot ??= layers().length ? layerSlot(layers()[0]) : undefined;
-        const editing = ['texture', 'depth', 'tileSize', 'rotation', 'midlevel', 'smoothing', 'invert', 'edgeFade', 'edgeFadeAmount', 'mapping', 'tile', 'tileMethod', 'blend', 'wholeModel', 'paint', 'removeLayer']
+        const editing = ['texture', 'moveTo', 'offset', 'adjust', 'depth', 'tileSize', 'rotation', 'midlevel', 'smoothing', 'invert', 'edgeFade', 'edgeFadeAmount', 'mapping', 'tile', 'tileMethod', 'blend', 'wholeModel', 'paint', 'removeLayer']
           .some((k) => args[k] !== undefined);
         if (editing && (slot === undefined || !layers().some((l) => layerSlot(l) === slot))) throw new Error('No such texture layer: add one with addLayer, or pass a slot from the stack.');
         if (slot !== undefined && editing) {
@@ -318,8 +344,24 @@ export function modelToolTools(): BridgeTool[] {
             if (layerSlot(layers()[0]) === s) throw new Error('The base layer has nothing beneath it to combine with, so it always adds.');
             patch.blend_mode = { add: BlendMode.Add, override: BlendMode.Override, subtract: BlendMode.Subtract, multiply: BlendMode.Multiply, divide: BlendMode.Divide }[oneOf(args.blend, ['add', 'override', 'subtract', 'multiply', 'divide'] as const, 'blend')];
           }
+          const off = args.offset;
+          if (off !== undefined) {
+            if (!Array.isArray(off) || off.length !== 2 || !off.every((v) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1e4)) throw new Error('offset must be [u, v] numbers.');
+            patch.offset = [off[0], off[1]];
+          }
           const texture = args.texture !== undefined ? await libTexture(args.texture) : undefined;
           if (Object.keys(patch).length || texture) updateTextureLayer(o.id, s, patch, texture ? { texture } : {});
+          if (args.adjust !== undefined) {
+            const a = (args.adjust ?? {}) as Record<string, unknown>;
+            const v = (k: string, lo: number, hi: number) => {
+              const x = a[k];
+              if (x === undefined) return 0;
+              if (typeof x !== 'number' || !(x >= lo && x <= hi)) throw new Error(`adjust.${k} must be ${lo}-${hi}.`);
+              return x;
+            };
+            const saved = await saveAdjustedCopy(o.id, s, { brightness: v('brightness', -1, 1), contrast: v('contrast', -1, 1), sharpness: v('sharpness', 0, 1), blur: v('blur', 0, 1), hue_deg: v('hue', -180, 180) });
+            if (saved) { paintNote = `Saved the adjusted image to My textures as "${saved.name}".`; mine = await loadUserTextures(); }
+          }
           if (args.wholeModel !== undefined) (oneOf(args.wholeModel, ['select', 'erase'] as const, 'wholeModel') === 'select' ? selectWholeModel : eraseWholeModel)(o.id, s);
           if (args.paint !== undefined) {
             const mode = oneOf(args.paint, ['sphere', 'smart_fill', 'facing'] as const, 'paint');
@@ -333,7 +375,14 @@ export function modelToolTools(): BridgeTool[] {
             });
             if (r.distance !== undefined && r.distance > 1) paintNote = `The point is ${r.distance.toFixed(1)} mm off the surface; the closest surface point was used.`;
           }
-          if (args.removeLayer === true) removeTextureLayer(o.id, s);
+          if (args.moveTo !== undefined) {
+            const to = argNumber(args, 'moveTo') ?? -1;
+            const from = layers().findIndex((l) => layerSlot(l) === s);
+            if (!(Number.isInteger(to) && to >= 0 && to < layers().length)) throw new Error(`moveTo must be 0-${layers().length - 1}.`);
+            const moved = moveTextureLayer(o.id, s, to > from ? to + 1 : to);
+            if (moved.has(s)) slot = moved.get(s)!;
+          }
+          if (args.removeLayer === true) removeTextureLayer(o.id, slot ?? s);
         }
         let baked: unknown;
         if (args.bake === true) {
@@ -356,8 +405,10 @@ export function modelToolTools(): BridgeTool[] {
               mapping: ['triplanar', 'cylindrical', 'spherical', 'unwrap', 'from view'][projectionOf(l)],
               tile: jsonBool(l.json, 'tile_enabled', true), tileMethod: enumInt(l.json, 'tile_method', 0) === TileMethod.MirroredRepeat ? 'mirrored' : 'repeat',
               blend: ['add', 'subtract', 'multiply', 'divide', 'override'][enumInt(l.json, 'blend_mode', 0)] ?? 'add',
+              offset: offsetOf(l),
             })),
-            ...(args.listTextures === true ? { textures: lib.map((t) => t.name) } : {}),
+            view: textureUi.view, wireframe: textureUi.wireframe,
+            ...(args.listTextures === true ? { textures: lib.map((t) => t.name), myTextures: mine.map((t) => t.name) } : {}),
           },
         };
       },

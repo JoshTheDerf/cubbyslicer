@@ -70,6 +70,11 @@ export const layerName = (l: TextureLayer): string => str(l.json, 'name') || `La
 /** projection_method as the reader clamps it (0..4; ModelUV is never read back). */
 export const projectionOf = (l: TextureLayer): number => Math.min(4, Math.max(0, enumInt(l.json, 'projection_method', Projection.Triplanar)));
 
+/** The layers in stack order: by slot (the lowest is the base layer; the bake combines them in slot order). */
+export function orderedLayers(stack: TextureStack | undefined): TextureLayer[] {
+  return [...(stack?.layers ?? [])].sort((a, b) => layerSlot(a) - layerSlot(b));
+}
+
 /** A layer with some fields changed (layers are immutable). */
 export function withFields(l: TextureLayer, patch: Record<string, unknown>, image?: Uint8Array | null): TextureLayer {
   return Object.freeze({ json: Object.freeze({ ...l.json, ...patch }), image: image === undefined ? l.image : image });
