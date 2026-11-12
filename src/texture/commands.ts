@@ -96,7 +96,7 @@ export interface BakeOutcome { ok: boolean; message?: string; cancelled?: boolea
  * whose bake moved nothing are left as they were; when none moved, nothing
  * changes and the paint is kept (desktop's finalize()).
  */
-export async function bakeTexture(objectId: string, opts: Pick<RunOptions, 'signal' | 'onPart'> = {}): Promise<BakeOutcome> {
+export async function bakeTexture(objectId: string, opts: Pick<RunOptions, 'signal' | 'onPart' | 'onProgress'> = {}): Promise<BakeOutcome> {
   const o = getObject(objectId);
   if (!o) return { ok: false, message: 'No such object.' };
   if (!anyPartPainted(o)) return { ok: false, message: 'Nothing is painted, there is nothing to bake.' };
@@ -117,7 +117,7 @@ export async function bakeTexture(objectId: string, opts: Pick<RunOptions, 'sign
   if (!moved.length) {
     return { ok: false, message: 'The bake produced no displacement, so nothing was changed and the paint was kept. Check that the painted layer has a texture and a non-zero depth.' };
   }
-  commitTextureBake(objectId, moved.map((r) => ({ partId: r.part.partId, positions: r.positions, indices: r.indices })));
+  commitTextureBake(objectId, moved.map((r) => ({ partId: r.part.partId, positions: r.positions, indices: r.indices, paint: r.paint })));
   return { ok: true, parts: moved.length, budgetLimited: moved.some((r) => r.budgetLimited) };
 }
 

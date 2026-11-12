@@ -273,6 +273,8 @@ export class TextureMaskPainter {
       kind: toolKind(maskUi.tool, maskUi.cursor), facet: hit.faceIndex,
       point: hit.point.clone().applyMatrix4(inv).toArray(), camera: sc.camera.position.clone().applyMatrix4(inv).toArray(),
       state: paints ? 1 : 0, radius: maskUi.radius, angle: maskUi.angle, trafo: mw.elements.slice(),
+      // Desktop's painters pass the object clipper's plane: the section view's cut-away side isn't painted.
+      clip: sc.sectionClip(mw),
     };
   }
 

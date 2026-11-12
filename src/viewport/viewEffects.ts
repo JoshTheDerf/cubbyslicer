@@ -14,7 +14,7 @@
 import {
   BackSide, Box3, Color, DecrementWrapStencilOp, DoubleSide, FrontSide, Group, IncrementWrapStencilOp, Mesh, MeshBasicMaterial,
   MeshLambertMaterial, NotEqualStencilFunc, Plane, PlaneGeometry, SphereGeometry, Vector3, AlwaysStencilFunc, ReplaceStencilOp,
-  BufferGeometry, Float32BufferAttribute, SRGBColorSpace, type Camera, type Material, type MeshStandardMaterial,
+  BufferGeometry, Float32BufferAttribute, SRGBColorSpace, type Camera, type Material, type Matrix4, type MeshStandardMaterial,
 } from 'three';
 import { MARKER_RADII, centerOf, type MassMarker } from './massProps';
 
@@ -56,6 +56,22 @@ export function applyXrayState(mat: MeshStandardMaterial, on: boolean, base: { t
 /** No clipping (desktop's ClipsNothing): far beyond any bed. */
 const CLIPS_NOTHING = 1e9;
 
+/**
+ * A world plane that cuts away where n·p > offset, in the frame `meshToWorld`
+ * maps from: [nx, ny, nz, offset] with the same convention (Orca's
+ * TriangleSelector::ClippingPlane; desktop's get_clipping_plane_in_volume_coordinates).
+ */
+export function clipPlaneIn(n: Vector3, offset: number, meshToWorld: Matrix4): number[] {
+  // p_w = A p + t:  n·(A p + t) > offset  ⇔  (Aᵀn)·p > offset − n·t
+  const e = meshToWorld.elements;
+  return [
+    e[0] * n.x + e[1] * n.y + e[2] * n.z,
+    e[4] * n.x + e[5] * n.y + e[6] * n.z,
+    e[8] * n.x + e[9] * n.y + e[10] * n.z,
+    offset - (n.x * e[12] + n.y * e[13] + n.z * e[14]),
+  ];
+}
+
 export class SectionView {
   /** Shared by every clipped material; three keeps points where normal·p + constant ≥ 0. */
   readonly plane = new Plane(new Vector3(0, 0, -1), CLIPS_NOTHING);
@@ -87,6 +103,12 @@ export class SectionView {
   }
 
   get isActive(): boolean { return this.active; }
+
+  /** The cut in a mesh frame for the engine's painting (PaintApplyArgs.clip); undefined while the section view is off. */
+  clipIn(meshToWorld: Matrix4): number[] | undefined {
+    // three keeps −n·p + offset ≥ 0, so the cut-away side is n·p > offset with n = −plane.normal.
+    return this.active ? clipPlaneIn(this.plane.normal.clone().negate(), this.plane.constant, meshToWorld) : undefined;
+  }
 
   /**
    * Place the plane: `normal` faces the camera it was aimed from, `ratio` 0..1 sweeps

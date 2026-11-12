@@ -257,7 +257,7 @@ export function modelToolTools(): BridgeTool[] {
         + 'In one call, in this order: addLayer (a built-in texture by name, see listTextures) → edit the layer `slot` (default the newest) → wholeModel select / erase → paint an area of the layer → removeLayer → bake. '
         + 'paint: sphere (within `radius` mm of `point`), smart_fill (the connected area at `point` up to edges sharper than `angle`°), facing (faces within `angle`° of `direction`, e.g. [0, 0, 1] = tops); erase: true removes paint there. '
         + 'Points are bed coordinates (mm) of the object’s plate; sphere / smart_fill act on the model part nearest the point. Only painted areas are displaced. '
-        + 'Baking replaces the mesh (other painting on it resets); the layers stay for another bake. Returns the layer stack.',
+        + 'Baking replaces the mesh; its support, seam, color and fuzzy skin painting is carried onto the baked surface; the layers stay for another bake. Returns the layer stack.',
       timeoutMs: 10 * 60_000,
       inputSchema: obj({
         objectId: str('Object id.'),

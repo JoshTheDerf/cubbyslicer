@@ -29,6 +29,12 @@ export interface PaintApplyArgs {
   zWorld?: number;
   /** Support painting on overhangs only: overhang angle (degrees, 0 = off). */
   overhang?: number;
+  /**
+   * The section view's plane in the mesh frame, [nx, ny, nz, offset]: triangles with
+   * n·p > offset are cut away and not painted (TriangleSelector::ClippingPlane, desktop's
+   * get_clipping_plane_in_volume_coordinates). Omitted when the section view is off.
+   */
+  clip?: number[];
 }
 
 /** Facets of a session, one output mesh per painted state (`states[i]` ↔ `meshes[i]`). */
@@ -202,7 +208,7 @@ export interface ToolOps {
   /** Desktop "Fix model": CGAL repair of one volume's mesh (meshes[0] in, repaired meshes[0] out). */
   repair_mesh: { args: RepairMeshArgs; result: RepairMeshResult };
   /** Orca 2.5 texture displacement bake of one volume (meshes[0] = base mesh → displaced mesh). */
-  texture_displacement: { args: TextureDisplacementArgs; result: { triangles: number; budgetLimited: boolean } };
+  texture_displacement: { args: TextureDisplacementArgs; result: TextureDisplacementResult };
 }
 
 /**
@@ -222,7 +228,17 @@ export interface TextureDisplacementArgs {
   anchor?: [number, number, number];
   /** How far the object's lowest point lies below this part's (mm). */
   restingDrop?: number;
+  /**
+   * The part's support / seam / colour / fuzzy painting on the base mesh, carried onto the
+   * result (desktop's bake commit, transfer_facet_paint) and returned as `paint`.
+   */
+  carryPaint?: PaintLayers;
 }
+
+/** `cancelled`: the run stopped at the host's request (no mesh). `paint`: the carried channels still painted. */
+export type TextureDisplacementResult =
+  | { triangles: number; budgetLimited: boolean; paint?: PaintLayers; cancelled?: undefined }
+  | { cancelled: true; triangles?: undefined; budgetLimited?: undefined; paint?: undefined };
 
 export type ToolOp = keyof ToolOps;
 export type ToolArgs<K extends ToolOp> = ToolOps[K]['args'];

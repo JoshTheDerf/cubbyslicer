@@ -9,7 +9,8 @@ import { Matrix4 } from 'three';
 import { engineTool } from '../engine/client';
 import type { TextureDisplacementArgs } from '../engine/tools';
 import { composeTRS, type Quat, type Vec3 } from '../project/math';
-import { getMesh, getMeshTexture, getObject, textureOwner } from '../project/store';
+import { getMesh, getMeshPaint, getMeshTexture, getObject, textureOwner } from '../project/store';
+import type { PaintLayers } from '../engine/types';
 import type { MeshData, MeshTexture, ProjectObject, TextureStack } from '../project/types';
 import { defaultLayerJson, defaultOptions, layerSlot, paintedSlots } from './model';
 
@@ -51,7 +52,9 @@ function minWorldZ(mesh: MeshData, m: number[]): number {
 /**
  * The engine arguments for each painted part. `preview`: skip the
  * simplification (desktop's preview sets v2_max_triangles_k = 0), as it is
- * looked at, not printed.
+ * looked at, not printed. A bake also hands over the part's support / seam /
+ * colour / fuzzy painting, which the engine carries onto the baked mesh
+ * (desktop's commit, transfer_facet_paint).
  */
 export function bakeRequests(o: ProjectObject, opts: { preview?: boolean } = {}): Array<{ part: TexturePart; args: TextureDisplacementArgs }> {
   const stack: TextureStack | undefined = getMeshTexture(textureOwner(o)).stack;
@@ -76,12 +79,14 @@ export function bakeRequests(o: ProjectObject, opts: { preview?: boolean } = {})
       if (i > 0) { j.lscm_seam_edges = []; j.islands = []; j.island_groups = []; j.lscm_uv_overrides = []; }
       return j;
     });
+    const carry = opts.preview ? {} : getMeshPaint(part.mesh.id);
     out.push({
       part,
       args: {
         layers: { version: 1, options, layers }, images,
         paint: { ...(part.texture.masks ?? {}) },
         transform: part.matrix, anchor, restingDrop: bottoms[i] - objectBottom,
+        ...(Object.keys(carry).length ? { carryPaint: carry } : {}),
       },
     });
   });
@@ -96,16 +101,33 @@ export function meshMoved(base: MeshData, positions: Float32Array, indices: Uint
   return false;
 }
 
-export interface PartResult { part: TexturePart; positions: Float32Array; indices: Uint32Array; budgetLimited: boolean }
+export interface PartResult {
+  part: TexturePart; positions: Float32Array; indices: Uint32Array; budgetLimited: boolean;
+  /** The part's other painting on the baked mesh (bake only; channels left unpainted are absent). */
+  paint: PaintLayers;
+}
 
 export interface RunOptions {
   preview?: boolean;
   /** Stops between parts (a newer preview superseded this one). */
   stale?: () => boolean;
-  /** Cancels the part running now (terminates the background engine lane: rejects with SliceCancelled). */
+  /**
+   * Cancels the part running now (rejects with SliceCancelled): the engine stops at its next
+   * progress check, or without cross-origin isolation the background lane's worker is terminated.
+   */
   signal?: AbortSignal;
   /** Called before each part: `index` of `count` painted parts. */
   onPart?: (index: number, count: number) => void;
+  /**
+   * The run's progress, 0..100 over all parts (desktop's bake job: each part gets its own
+   * slice of the range, and the shown value only moves forward).
+   */
+  onProgress?: (percent: number) => void;
+}
+
+/** Desktop TextureDisplacementBakeJob's overall percentage for part `index` of `count` at the part's `percent`. */
+export function overallPercent(index: number, count: number, percent: number): number {
+  return Math.floor((index * 100 + Math.max(0, Math.min(100, percent))) / Math.max(1, count));
 }
 
 /**
@@ -118,12 +140,18 @@ export async function runBake(objectId: string, opts: RunOptions = {}): Promise<
   if (!o) return null;
   const out: PartResult[] = [];
   const reqs = bakeRequests(o, opts);
+  let shown = -1;
   for (const [i, { part, args }] of reqs.entries()) {
     if (opts.stale?.() || opts.signal?.aborted) return null;
     opts.onPart?.(i, reqs.length);
-    const r = await engineTool('texture_displacement', args, [{ positions: part.mesh.positions, indices: part.mesh.indices }], opts.signal, 'background');
+    const onProgress = opts.onProgress && ((p: { percent: number }) => {
+      const overall = overallPercent(i, reqs.length, p.percent);
+      if (overall > shown) { shown = overall; opts.onProgress!(overall); }
+    });
+    const r = await engineTool('texture_displacement', args, [{ positions: part.mesh.positions, indices: part.mesh.indices }],
+      opts.signal, 'background', onProgress || undefined);
     const m = r.meshes[0];
-    if (m) out.push({ part, positions: m.positions, indices: m.indices, budgetLimited: !!r.result.budgetLimited });
+    if (m) out.push({ part, positions: m.positions, indices: m.indices, budgetLimited: !!r.result.budgetLimited, paint: r.result.paint ?? {} });
   }
   return out;
 }

@@ -6,7 +6,7 @@
  * requests, one at a time.
  */
 import type { ArrangeArgs, ConfigSchema, EngineId, FlatConfig, SliceJob, SliceReport, WorkerRequest, WorkerResponse } from './types';
-import { allocWords, callJson, copyOut, decodeJson, enc, isObject, okReply, safeFree, u32, writeIn, type EngineModule } from './worker/heap';
+import { allocWords, callJson, callJsonAsync, copyOut, decodeJson, enc, isObject, okReply, safeFree, u32, writeIn, type EngineModule } from './worker/heap';
 import { packJob, packPayload, packTool, unpackMeshes } from './worker/pack';
 import { ctx, EngineStall, forgetMt, longLived, maybeRecycle, moduleFor, rt, waitForSlice } from './worker/runtime';
 import { installPluginHooks } from '../plugins/runtime/hookClient';
@@ -139,13 +139,72 @@ function runTool(mod: EngineModule, what: string, json: Uint8Array, blob: Uint8A
   return { result: r.result, meshes: unpackMeshes(r.meshes, out.blob) };
 }
 
-async function doTool(id: number, op: string, args: unknown, meshes: Parameters<typeof packTool>[2]): Promise<void> {
+/**
+ * cs_tool_start (multi-threaded build): the op runs on an engine thread with Orca's TBB loops
+ * while this worker's event loop stays free (progress, cancel messages, TBB's worker startup).
+ * `cancelFlag` is an int32 in the engine's shared memory the op polls; `poll` runs while waiting.
+ */
+async function runToolThreaded(mod: EngineModule, what: string, json: Uint8Array, blob: Uint8Array, poll?: () => void) {
+  const start = mod._cs_tool_start!, tool = mod._cs_tool!;
+  const out = await callJsonAsync(mod, [json, blob], true, async (a) => {
+    const state = allocWords(mod, 2);
+    try {
+      if (start.call(mod, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], state) !== 0) return tool.call(mod, a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+      return await waitForSlice(mod, state, poll);
+    } finally { safeFree(mod, state); }
+  });
+  const r = okReply(out.json, what);
+  return { result: r.result, meshes: unpackMeshes(r.meshes, out.blob) };
+}
+
+/** Tool ops that run long enough to report progress and be cancelled mid-run (ENGINE-CONTRACT "Texture displacement"). */
+const LONG_TOOLS = new Set(['texture_displacement']);
+
+/** The cancel of the long tool request running now (a `cancel` message fires it). */
+let activeCancel: { id: number; fire: () => void } | null = null;
+
+async function doTool(id: number, op: string, args: unknown, meshes: Parameters<typeof packTool>[2], cancel?: SharedArrayBuffer): Promise<void> {
   const mod = await longLived(toolSlot);
-  const { json, blob } = packTool(op, args, meshes);
-  const r = runTool(mod, op, json, blob);
-  const transfer: Transferable[] = [];
-  for (const m of r.meshes) transfer.push(m.positions.buffer, m.indices.buffer);
-  post({ type: 'tool', id, result: r.result, meshes: r.meshes }, transfer);
+  const long = LONG_TOOLS.has(op);
+  const flag = long && cancel ? new Int32Array(cancel) : null;
+  // Cancelled while it waited in the queue: nothing to run.
+  if (flag && Atomics.load(flag, 0)) { post({ type: 'tool', id, result: { cancelled: true }, meshes: [] }); return; }
+  let lastPct = -1, flagPtr = 0;
+  if (long) {
+    rt.progressSink = (pct, message) => {
+      rt.lastProgressAt = performance.now();
+      rt.sawProgress = true;
+      if (pct === lastPct) return;
+      lastPct = pct;
+      post({ type: 'progress', id, percent: pct, message });
+    };
+  }
+  try {
+    let r: ReturnType<typeof runTool>;
+    if (long && typeof mod._cs_tool_start === 'function' && typeof mod._cs_tool === 'function') {
+      if (flag) {
+        flagPtr = allocWords(mod, 1);
+        const fire = () => { mod.csSyncHeap?.(); Atomics.store(mod.HEAP32, flagPtr >>> 2, 1); };
+        activeCancel = { id, fire };
+        if (Atomics.load(flag, 0)) fire();
+      }
+      const { json, blob } = packTool(op, flagPtr ? { ...(args as Record<string, unknown>), cancelFlag: flagPtr } : args, meshes);
+      r = await runToolThreaded(mod, op, json, blob, flag ? () => { if (Atomics.load(flag, 0)) activeCancel?.fire(); } : undefined);
+    } else {
+      // Single-threaded: this worker is blocked for the whole op, so the engine asks the page's flag itself.
+      if (flag) mod.csCancelled = () => Atomics.load(flag, 0) !== 0;
+      const { json, blob } = packTool(op, args, meshes);
+      r = runTool(mod, op, json, blob);
+    }
+    const transfer: Transferable[] = [];
+    for (const m of r.meshes) transfer.push(m.positions.buffer, m.indices.buffer);
+    post({ type: 'tool', id, result: r.result, meshes: r.meshes }, transfer);
+  } finally {
+    if (long) rt.progressSink = undefined;
+    activeCancel = null;
+    if (flag) mod.csCancelled = undefined;
+    safeFree(mod, flagPtr);
+  }
 }
 
 // Orca auto arrange: a cs_tool call whose request also carries the slice-job
@@ -163,7 +222,7 @@ async function handle(msg: WorkerRequest): Promise<void> {
     else if (msg.type === 'describe') await doDescribe(msg.id);
     else if (msg.type === 'evalCondition') await doCondition(msg.id, msg.expr, msg.config);
     else if (msg.type === 'orient') await doOrient(msg.id, msg.object);
-    else if (msg.type === 'tool') await doTool(msg.id, msg.op, msg.args, msg.meshes);
+    else if (msg.type === 'tool') await doTool(msg.id, msg.op, msg.args, msg.meshes, msg.cancel);
     else if (msg.type === 'arrange') await doArrange(msg.id, msg.config, msg.objects, msg.args);
   } catch (e) {
     if (e instanceof EngineStall) {
@@ -202,11 +261,15 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest | { type: 'init'; engine: Engine
   }
   // The plugin runtime's HookChannel for Module.csHook (src/plugins/runtime/hookClient.ts).
   if ((msg as { type: string }).type === 'pluginHooks') { installPluginHooks(msg as unknown as Parameters<typeof installPluginHooks>[0]); return; }
+  // Not queued: it is for the request running now (multi-threaded build; the single-threaded
+  // engine reads the request's shared flag itself, as this worker is blocked meanwhile).
+  if (msg.type === 'cancel') { if (activeCancel?.id === msg.id) activeCancel.fire(); return; }
   // A request that never settles (e.g. an engine instance that never finishes
   // starting) must not hold up everything queued behind it: non-slice
-  // requests get a deadline; slices have their own stall watchdog.
+  // requests get a deadline; slices and long tool runs (progress, cancel,
+  // the MT stall watchdog) don't.
   const run = () => {
-    if (msg.type === 'slice') return handle(msg);
+    if (msg.type === 'slice' || (msg.type === 'tool' && LONG_TOOLS.has(msg.op))) return handle(msg);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<void>((resolve) => {
       timer = setTimeout(() => {

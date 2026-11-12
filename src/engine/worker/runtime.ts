@@ -228,10 +228,11 @@ const waitAsync = (Atomics as unknown as { waitAsync?: WaitAsync }).waitAsync;
 
 /**
  * Wait (without blocking this worker's event loop — Emscripten needs it to
- * start pthread Workers and to deliver progress) until cs_slice_start's
- * state[0] flips to 1; resolves with state[1] (cs_slice's return code).
+ * start pthread Workers and to deliver progress) until cs_slice_start's (or
+ * cs_tool_start's) state[0] flips to 1; resolves with state[1] (the call's
+ * return code). `poll` runs on every wake-up (at least every 500 ms).
  */
-export function waitForSlice(mod: EngineModule, state: number): Promise<number> {
+export function waitForSlice(mod: EngineModule, state: number, poll?: () => void): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     let settled = false;
     const finish = (err: Error | null, rc = 0) => {
@@ -255,6 +256,7 @@ export function waitForSlice(mod: EngineModule, state: number): Promise<number> 
     rt.lastProgressKey = '';
     void (async () => {
       while (!settled) {
+        poll?.();
         mod.csSyncHeap?.();
         const heap = mod.HEAP32;
         if (Atomics.load(heap, i) !== 0) { finish(null, Atomics.load(heap, i + 1)); return; }

@@ -269,7 +269,11 @@ export type WorkerRequest =
   | { type: 'evalCondition'; id: number; expr: string; config: FlatConfig }
   | { type: 'orient'; id: number; object: SliceObjectInput }
   /** Engine tools (cs_tool): painting sessions, cut, layer height profiles, … (see tools.ts) */
-  | { type: 'tool'; id: number; op: ToolOp; args: unknown; meshes: ToolMesh[] }
+  | { type: 'tool'; id: number; op: ToolOp; args: unknown; meshes: ToolMesh[];
+      /** Cooperative cancel (texture_displacement): an Int32 the page sets to 1; see client.ts. */
+      cancel?: SharedArrayBuffer }
+  /** Cancel a running cooperative tool request now (the engine also polls `cancel`). */
+  | { type: 'cancel'; id: number }
   /** Orca auto arrange (cs_tool "arrange"): the objects as in a slice job. */
   | { type: 'arrange'; id: number; config: FlatConfig; objects: SliceObjectInput[]; args: ArrangeArgs };
 

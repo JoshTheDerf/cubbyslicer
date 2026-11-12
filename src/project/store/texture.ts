@@ -4,8 +4,10 @@
  * part), every model part has a paint mask per layer slot. Both are keyed by
  * mesh id, so instances share them and they follow undo / redo.
  */
+import type { PaintLayer, PaintLayers, PaintMap } from '../../engine/types';
 import type { MeshTexture, ProjectObject, TextureStack } from '../types';
 import { mutate } from './history';
+import { writeMeshPaint } from './paint';
 import { swapVolumeMesh } from './toolObjects';
 import { addMesh, getObject, meshTexture } from './state';
 
@@ -54,14 +56,17 @@ export interface TextureBakeResult {
   partId: string | null;
   positions: Float32Array;
   indices: Uint32Array;
+  /** The volume's support / seam / colour / fuzzy paint on the baked mesh (engine carryPaint). */
+  paint?: PaintLayers;
 }
 
 /**
  * Desktop's TextureDisplacementBakeJob commit: each baked volume gets its
- * displaced mesh (one undo step), the layer stack moves to the new owner mesh
- * and the baked volumes' masks are cleared (the default pipeline rebuilds the
- * topology, so no mask still applies). Other paint of a baked volume resets,
- * as with any mesh-replacing tool.
+ * displaced mesh (one undo step) with its other painting carried across
+ * (`paint`, transfer_facet_paint in the engine; a channel absent there is
+ * left unpainted, as desktop resets it), the layer stack moves to the new
+ * owner mesh and the baked volumes' masks are cleared (the default pipeline
+ * rebuilds the topology, so no mask still applies).
  */
 export function commitTextureBake(objectId: string, results: TextureBakeResult[], label = 'Bake texture displacement'): void {
   const o = getObject(objectId);
@@ -70,6 +75,7 @@ export function commitTextureBake(objectId: string, results: TextureBakeResult[]
     const stack = getMeshTexture(textureOwner(o)).stack;
     for (const r of results) {
       const m = addMesh(r.positions, r.indices);
+      for (const [layer, map] of Object.entries(r.paint ?? {}) as Array<[PaintLayer, PaintMap]>) writeMeshPaint(m.id, layer, map);
       swapVolumeMesh(objectId, r.partId, m, null);
       if (r.partId === null && stack) write(m.id, { stack });
     }

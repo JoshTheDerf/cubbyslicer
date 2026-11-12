@@ -129,6 +129,7 @@ function brushArgs(e: ToolPointerEvent, state: number): (BrushArgs & { point: nu
     radius: tool === 'height' ? paintUi.height : paintUi.radius, trafo: mw.elements.slice(),
     angle: paintUi.angle, zWorld: e.hit.point.z,
     overhang: s.layer === 'support' && paintUi.onOverhangsOnly ? paintUi.overhang : 0,
+    clip: sc.sectionClip(mw),
   };
 }
 

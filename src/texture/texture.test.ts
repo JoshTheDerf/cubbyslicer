@@ -7,7 +7,7 @@ import { parseOrca3mf } from '../project/import/orca3mf';
 import { orcaProjectData, openOrcaProject } from '../project/orcaOpen';
 import { buildOrca3mf } from '../project/persistence/orca3mfWriter';
 import { packTool } from '../engine/worker/pack';
-import { bakeRequests, meshMoved } from './bake';
+import { bakeRequests, meshMoved, overallPercent } from './bake';
 import { addTextureLayer, eraseWholeModel, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer } from './commands';
 import { TEXTURE_DIR, defaultLayerJson, freeSlot, layerSlot, maskFits, stackFromJson, stackToJson, wholeMask } from './model';
 import { RADIUS_MAX, RADIUS_MIN, maskUi, pressPaints, toolKind, wheelStep } from './paint';
@@ -179,6 +179,42 @@ describe('store commands', () => {
     S.undo();
     expect(S.getObject(id)!.meshId).toBe(before);
     expect(paintedSlotsOf(S.getObject(id)!)).toEqual(new Set([0]));
+  });
+
+  it('a bake carries the part\'s other painting (desktop transfer_facet_paint); undo restores mesh and paint', () => {
+    const id = addCube();
+    addTextureLayer(id, tex());
+    selectWholeModel(id, 0);
+    const before = S.getObject(id)!.meshId;
+    const support = [[0, '1'], [1, '1']] as Array<[number, string]>;
+    const color = [[2, '8']] as Array<[number, string]>;
+    S.setMeshPaint(before, 'support', support, 'Paint supports');
+    S.setMeshPaint(before, 'color', color, 'Paint color');
+    const o = S.getObject(id)!;
+    // The preview never carries paint; the bake hands over every painted channel.
+    expect(bakeRequests(o, { preview: true })[0].args.carryPaint).toBeUndefined();
+    expect(bakeRequests(o)[0].args.carryPaint).toEqual({ support, color });
+
+    const moved = cube(22);
+    const carried = { support: [[5, '1']] as Array<[number, string]>, color: [[7, '8'], [8, '8']] as Array<[number, string]> };
+    S.commitTextureBake(id, [{ partId: null, ...moved, paint: carried }]);
+    const after = S.getObject(id)!.meshId;
+    expect(after).not.toBe(before);
+    expect(S.getMeshPaint(after)).toEqual(carried);
+    S.undo();
+    expect(S.getObject(id)!.meshId).toBe(before);
+    expect(S.getMeshPaint(before)).toEqual({ support, color });
+    expect(paintedSlotsOf(S.getObject(id)!)).toEqual(new Set([0]));
+    S.redo();
+    expect(S.getMeshPaint(S.getObject(id)!.meshId)).toEqual(carried);
+  });
+
+  it('bake progress: one 0..100 range over all parts, like desktop\'s bake job', () => {
+    expect(overallPercent(0, 1, 42)).toBe(42);
+    expect(overallPercent(0, 2, 100)).toBe(50);
+    expect(overallPercent(1, 2, 50)).toBe(75);
+    expect(overallPercent(2, 3, 150)).toBe(100);
+    expect(overallPercent(0, 0, -5)).toBe(0);
   });
 
   it('saves in desktop’s layout and opens back (Orca reader and our own project)', async () => {

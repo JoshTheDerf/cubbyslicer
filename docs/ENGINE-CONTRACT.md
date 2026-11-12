@@ -80,7 +80,8 @@ int  cs_orient(const char* job_json, int job_len, const uint8_t* blob, int blob_
 // described by args); output JSON {"ok","error","result","meshes":[{vertexOffset,
 // vertexCount,indexOffset,triangleCount}]} + an output mesh blob. Ops:
 //   paint_open / paint_apply / paint_get / paint_close  TriangleSelector painting
-//     sessions (circle, sphere, pointer, height, smart fill, bucket, clear)
+//     sessions (circle, sphere, pointer, height, smart fill, bucket, clear); paint_apply
+//     clip?:[nx,ny,nz,offset] (mesh frame) skips what a section view cuts away (n·p > offset)
 //   paint_from_states     per-triangle states → paint strings (OBJ colours)
 //   layer_profile_adaptive / layer_profile_smooth   variable layer height
 //   cut                   Orca Cut: plane or groove, connectors (plug/dowel/snap)
@@ -456,10 +457,28 @@ the slicer itself sees an ordinary mesh. Hosts call `cs_tool`
 `args {layers: <Orca's texture_displacement_layers_to_json text or object>,
 images: {"<slot>": {offset, length}} (PNG bytes in the request blob),
 paint: {"<slot>": [[triangle, hex], …]} (the layer's paint mask), transform?: [16]
-mesh→world, anchor?: [x,y,z], restingDrop?: mm}` → `meshes[0]` = baked mesh,
-`result {triangles, budgetLimited}`. Then slice that mesh. Not available: the
+mesh→world, anchor?: [x,y,z], restingDrop?: mm, carryPaint?: {support?, seam?, color?,
+fuzzy?: [[triangle, hex], …]}, cancelFlag?: address}` → `meshes[0]` = baked mesh,
+`result {triangles, budgetLimited, paint?}`. Then slice that mesh. Not available: the
 bake's colour output (`color_enabled` layers; it needs the GUI's palette
 quantizer).
+
+* `carryPaint`: the volume's other painting on the base mesh. The engine carries it
+  onto the result as desktop's bake commit does (`TextureDisplacementBakeJob::finalize`:
+  `transfer_facet_paint` per channel when the topology changed — the default pipeline
+  always changes it — each baked triangle taking the state of the nearest painted
+  sub-triangle of the base; unchanged channels otherwise) and returns the channels that
+  are still painted as `result.paint` (same keys; a channel left out is unpainted).
+* Progress: `Module.csProgress(percent, "Baking texture displacement")` while it runs —
+  the bake's own 0..100, which restarts per pipeline stage (desktop's job reports the
+  same numbers; its bar only moves forward, one slice of the range per part).
+* Cancel: the op checks at every progress report (desktop's `still_wanted` /
+  `was_canceled`) and returns `result {cancelled: true}` with no mesh. Two ways to ask:
+  `Module.csCancelled()` (polled on the main runtime thread: the single-threaded build
+  blocks its host, which answers from a `SharedArrayBuffer` the page writes) and
+  `args.cancelFlag` (the byte address of an `int32` in the engine's memory, nonzero =
+  cancel; for the multi-threaded build, whose memory is shared and whose host is free
+  while `cs_tool_start` runs the op).
 
 ## Prime tower (orca)
 
@@ -671,6 +690,9 @@ are shared). Additional exports:
   Emscripten can only start a pthread requested by another pthread (TBB
   workers) when the main runtime thread returns to its event loop. Plain
   `cs_slice` / `cs_orient` on the main runtime thread still work, serially.
+* `int cs_tool_start(<cs_tool args>, int32_t* state)`: the same for `cs_tool` (used for
+  `texture_displacement`, whose TBB loops only run in parallel off the main runtime
+  thread). Same `state` protocol; -1 → call `cs_tool`.
 * `int cs_thread_count()` returns the number of threads a slice uses (pthread pool size).
 * JS: `Module.csThreads` (optional override), `Module.csSyncHeap()` (refresh
   `HEAP*` after another thread grew memory, so call it before every heap read),
@@ -685,7 +707,9 @@ The page never touches engine memory. `EngineClient` owns a dedicated Worker
 per engine; the worker compiles `slicer.wasm` once (`WebAssembly.compile`) and
 **instantiates a fresh module for every slice**, so heap fragmentation, global
 state and any trap from one slice cannot leak into the next. Cancel = terminate
-the worker (it is recreated lazily).
+the worker (it is recreated lazily) — except a long tool op (`texture_displacement`)
+on a cross-origin-isolated page, which is stopped in place through its `cancel` flag
+and the worker carries on with what is queued.
 
 When the page is cross-origin isolated and `mt/` loads, the worker uses the
 multi-threaded build instead and keeps **one** instance for all requests (an
@@ -701,6 +725,8 @@ worker falls back to the single-threaded build.
 { type: 'slice', id, job: SliceJob }            // meshes as transferable ArrayBuffers
 { type: 'describe', id }
 { type: 'evalCondition', id, expr, config }
+{ type: 'tool', id, op, args, meshes, cancel?: SharedArrayBuffer }  // cancel: Int32 the page sets to 1
+{ type: 'cancel', id }                          // a running long tool op: stop now (not queued)
 // worker -> page
 { type: 'progress', id, percent, message }
 { type: 'result', id, gcode: ArrayBuffer, report: SliceReport }

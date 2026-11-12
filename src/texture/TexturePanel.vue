@@ -10,14 +10,14 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { BufferAttribute, BufferGeometry, Mesh, MeshStandardMaterial } from 'three';
-import { getMeshPaint, getObject, meshTexture, objects, selectedIds, selectedPart } from '../project/store';
+import { getObject, meshTexture, selectedIds, selectedPart } from '../project/store';
 import type { TextureLayer } from '../project/types';
-import { SliceCancelled, engineLaneStartupMs, releaseEngineLane, warmEngineLane } from '../engine/client';
+import { SliceCancelled, engineLaneStartupMs, releaseEngineLane, toolCancelsInPlace, warmEngineLane } from '../engine/client';
 import { toast } from '../ui';
 import ToolPanel from '../tools/ToolPanel.vue';
 import { closeTool, toolScene } from '../tools/state';
 import { ToolOverlay, render } from '../tools/overlay';
-import { isPainted, runBake, textureParts, type PartResult } from './bake';
+import { runBake, textureParts, type PartResult } from './bake';
 import {
   addTextureLayer, anyPartPainted, bakeTexture, eraseWholeModel, paintedSlotsOf, removeTextureLayer, selectWholeModel, stackOf, updateTextureLayer, type LayerTexture,
 } from './commands';
@@ -189,26 +189,20 @@ let generation = 0;
 let unmounted = false;
 let running = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
-/** The run in flight: cancelling it terminates the background engine lane. */
+/** The run in flight: aborting it stops the engine mid-run (or, without cross-origin isolation, terminates the background lane). */
 let runAbort: AbortController | null = null;
 let runStart = 0;
-/** Duration of the last finished preview: a run is only cancelled when restarting the engine is cheaper than letting it finish. */
+/** Duration of the last finished preview: without in-place cancel, a run is only cancelled when restarting the engine is cheaper than letting it finish. */
 let lastRunMs = Infinity;
 /** What restarting the background engine lane costs: measured on its last start (8-11 s on a loaded 6-core machine), else a guess. */
 const restartMs = () => engineLaneStartupMs('background') || 5000;
-/** Seconds the current preview / bake has been running, and its part (multi-part objects). */
-const elapsed = ref(0);
+/** The engine's progress of the current preview / bake (desktop's bake job percentage; null = not reported yet), and its part. */
+const progress = ref<number | null>(null);
 const partNote = ref('');
-let ticker: ReturnType<typeof setInterval> | null = null;
-function startTicker(): void {
-  const t0 = performance.now();
-  elapsed.value = 0;
-  partNote.value = '';
-  if (ticker) clearInterval(ticker);
-  ticker = setInterval(() => { elapsed.value = Math.floor((performance.now() - t0) / 1000); }, 500);
-}
-function stopTicker(): void { if (ticker) clearInterval(ticker); ticker = null; }
+function startProgress(): void { progress.value = null; partNote.value = ''; }
 const onPart = (i: number, n: number) => { partNote.value = n > 1 ? `part ${i + 1} of ${n}` : ''; };
+const onProgress = (p: number) => { progress.value = p; };
+const progressNote = computed(() => [progress.value === null ? '' : `${progress.value} %`, partNote.value].filter(Boolean).join(' · '));
 
 function setHidden(ids: string[]): void { toolScene.value?.setToolHidden(ids); }
 
@@ -258,14 +252,15 @@ function tokenOf(v: object | undefined): number {
 
 /**
  * A change: the run in flight is now stale (desktop raises its preview
- * generation and the job aborts mid-run). Ours can only stop by terminating
- * the background engine, so it does when the run is likely to take longer
- * than restarting the engine; otherwise it finishes, is dropped, and the
- * newest state runs next. Never more than one run queued.
+ * generation and the job aborts mid-run through still_wanted()). The engine
+ * stops at its next progress check when the page is cross-origin isolated;
+ * otherwise stopping means terminating the background engine, done only when
+ * the run is likely to take longer than restarting it (else it finishes and
+ * is dropped). The newest state runs next; never more than one run queued.
  */
 function schedulePreview(): void {
   generation++;
-  if (running && runAbort && lastRunMs - (performance.now() - runStart) > restartMs()) runAbort.abort();
+  if (running && runAbort && (toolCancelsInPlace('texture_displacement') || lastRunMs - (performance.now() - runStart) > restartMs())) runAbort.abort();
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => { timer = null; void runPreview(); }, 350);
 }
@@ -280,21 +275,20 @@ async function runPreview(): Promise<void> {
   runAbort = ac;
   runStart = performance.now();
   previewing.value = true;
-  startTicker();
+  startProgress();
   try {
-    const r = await runBake(id, { preview: true, stale: () => my !== generation, signal: ac.signal, onPart });
+    const r = await runBake(id, { preview: true, stale: () => my !== generation, signal: ac.signal, onPart, onProgress });
     if (r && my === generation && objId.value === id) {
       lastRunMs = performance.now() - runStart;
       showPreview(id, r.filter((x) => x.indices.length));
     }
   } catch (e) {
-    if (e instanceof SliceCancelled) warmEngineLane('background');
+    if (e instanceof SliceCancelled) warmEngineLane('background'); // restarts the lane if the cancel terminated it
     else if (my === generation) toast.error('The texture displacement preview failed.', { detail: (e as Error)?.message });
   } finally {
     running = false;
     runAbort = null;
     previewing.value = false;
-    stopTicker();
     if (my !== generation && !timer && !unmounted) void runPreview();
   }
 }
@@ -304,13 +298,6 @@ watch(toolScene, () => { overlay.attach(); render(); });
 
 // ---- bake --------------------------------------------------------------------------------
 
-/** Other painting a bake resets (desktop carries it across; not built yet). */
-const paintWarning = computed(() => {
-  const o = obj.value;
-  if (!o) return false;
-  void objects.value;
-  return textureParts(o).some((p) => isPainted(p.texture) && Object.keys(getMeshPaint(p.mesh.id)).length > 0);
-});
 const bakeNa = computed(() => (!obj.value ? '' : !layers.value.length || !painted.value.size ? 'Nothing is painted yet.' : ''));
 
 let bakeAbort: AbortController | null = null;
@@ -323,9 +310,9 @@ async function bake(): Promise<void> {
   runAbort?.abort(); // and the bake shouldn't wait behind it
   const ac = new AbortController();
   bakeAbort = ac;
-  startTicker();
+  startProgress();
   try {
-    const r = await bakeTexture(id, { signal: ac.signal, onPart });
+    const r = await bakeTexture(id, { signal: ac.signal, onPart, onProgress });
     if (r.cancelled) toast.info('Bake cancelled.');
     else if (!r.ok) toast.error(r.message ?? 'The bake failed.');
     else if (r.budgetLimited) toast.warn('The triangle budget limited the detail of the bake.');
@@ -334,7 +321,6 @@ async function bake(): Promise<void> {
   } finally {
     baking.value = false;
     bakeAbort = null;
-    stopTicker();
     if (!unmounted) schedulePreview();
   }
 }
@@ -351,7 +337,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unmounted = true;
   if (timer) clearTimeout(timer);
-  stopTicker();
   generation++;
   runAbort?.abort();
   // A bake still running finishes (and commits) first; the lane's instance goes after.
@@ -546,15 +531,14 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <p v-if="paintWarning" class="td__warn">Baking resets this object’s support, seam, color and fuzzy skin painting.</p>
     </template>
     <p v-else class="text-sm text-muted">Select one object to add a texture to it.</p>
 
     <template #footer>
       <span v-if="previewing && !baking" class="td__status" role="status">
-        <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" /> Updating preview… {{ elapsed }} s{{ partNote ? ` · ${partNote}` : '' }}
+        <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" /> Updating preview…{{ progressNote ? ` ${progressNote}` : '' }}
       </span>
-      <span v-else-if="baking" class="td__status" role="status">{{ elapsed }} s{{ partNote ? ` · ${partNote}` : '' }}</span>
+      <span v-else-if="baking" class="td__status" role="status">{{ progressNote || 'Starting…' }}</span>
       <UButton v-if="baking" size="sm" variant="ghost" color="neutral" label="Cancel" @click="cancelBake" />
       <UButton v-else size="sm" variant="ghost" label="Close" @click="closeTool()" />
       <UTooltip :text="bakeNa || 'Turn the painted height maps into real geometry. The area you painted is refined, displaced and simplified in one run; Undo takes it back.'">

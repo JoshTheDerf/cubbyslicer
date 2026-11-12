@@ -29,7 +29,11 @@ export interface EngineModule {
   // Multi-threaded build only (wasm/mt_post.js + cs_bridge.cpp in orcaslicer-wasm).
   _cs_slice_start?(job: number, jobLen: number, blob: number, blobLen: number,
                    outG: number, outGLen: number, outR: number, outRLen: number, state: number): number;
+  _cs_tool_start?(job: number, jobLen: number, blob: number, blobLen: number,
+                  outJ: number, outJLen: number, outB: number, outBLen: number, state: number): number;
   _cs_thread_count?(): number;
+  /** Polled by long tool runs on the main runtime thread (single-threaded build): true = stop. */
+  csCancelled?: () => boolean;
   csTerminateThreads?(): void;
   csSyncHeap?(): void;
 }
@@ -95,27 +99,49 @@ export function callJson(
   mod: EngineModule, inputs: Uint8Array[], withBlob: boolean,
   call: (args: number[]) => number,
 ): { rc: number; json: unknown; blob: Uint8Array | null } {
-  const owned: number[] = [];
-  let outs = 0, pj = 0, pb = 0;
-  try {
-    const args: number[] = [];
-    for (const b of inputs) { const p = writeIn(mod, b); owned.push(p); args.push(p, b.byteLength); }
-    outs = allocWords(mod, withBlob ? 4 : 2);
-    args.push(outs, outs + 4);
-    if (withBlob) args.push(outs + 8, outs + 12);
-    const rc = call(args);
-    pj = u32(mod, outs);
-    if (withBlob) pb = u32(mod, outs + 8);
+  const c = new JsonCall(mod, inputs, withBlob);
+  try { return c.collect(call(c.args)); } finally { c.free(); }
+}
+
+/** callJson for an entry point that runs on an engine thread (cs_tool_start): `call` resolves with its return code. */
+export async function callJsonAsync(
+  mod: EngineModule, inputs: Uint8Array[], withBlob: boolean,
+  call: (args: number[]) => Promise<number>,
+): Promise<{ rc: number; json: unknown; blob: Uint8Array | null }> {
+  const c = new JsonCall(mod, inputs, withBlob);
+  try { return c.collect(await call(c.args)); } finally { c.free(); }
+}
+
+class JsonCall {
+  readonly args: number[] = [];
+  private owned: number[] = [];
+  private outs = 0;
+  private pj = 0;
+  private pb = 0;
+  constructor(private mod: EngineModule, inputs: Uint8Array[], private withBlob: boolean) {
+    try {
+      for (const b of inputs) { const p = writeIn(mod, b); this.owned.push(p); this.args.push(p, b.byteLength); }
+      this.outs = allocWords(mod, withBlob ? 4 : 2);
+    } catch (e) { this.free(); throw e; }
+    this.args.push(this.outs, this.outs + 4);
+    if (withBlob) this.args.push(this.outs + 8, this.outs + 12);
+  }
+  collect(rc: number): { rc: number; json: unknown; blob: Uint8Array | null } {
+    const { mod, outs } = this;
+    this.pj = u32(mod, outs);
+    if (this.withBlob) this.pb = u32(mod, outs + 8);
     const jsonLen = u32(mod, outs + 4);
-    const json = pj && jsonLen ? decodeJson(copyOut(mod, pj, jsonLen)) : null;
-    const blobLen = withBlob ? u32(mod, outs + 12) : 0;
-    const blob = pb && blobLen ? copyOut(mod, pb, blobLen) : null;
+    const json = this.pj && jsonLen ? decodeJson(copyOut(mod, this.pj, jsonLen)) : null;
+    const blobLen = this.withBlob ? u32(mod, outs + 12) : 0;
+    const blob = this.pb && blobLen ? copyOut(mod, this.pb, blobLen) : null;
     return { rc, json, blob };
-  } finally {
-    safeFree(mod, pj, true);
-    safeFree(mod, pb, true);
-    safeFree(mod, outs);
-    for (const p of owned) safeFree(mod, p);
+  }
+  free(): void {
+    safeFree(this.mod, this.pj, true);
+    safeFree(this.mod, this.pb, true);
+    safeFree(this.mod, this.outs);
+    for (const p of this.owned) safeFree(this.mod, p);
+    this.owned = []; this.outs = this.pj = this.pb = 0;
   }
 }
 

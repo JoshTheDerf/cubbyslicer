@@ -1296,6 +1296,12 @@ export class PrepareScene {
     this.requestRender();
   }
 
+  /**
+   * The section view's cut in the frame `meshToWorld` maps from, for painting tools
+   * (PaintApplyArgs.clip: what the section view cuts away isn't painted); undefined when off.
+   */
+  sectionClip(meshToWorld: Matrix4): number[] | undefined { return this.section.clipIn(meshToWorld); }
+
   /** World matrix of an object's mesh-local frame (null if not in the scene). */
   objectMatrixWorld(objectId: string): Matrix4 | null {
     const e = this.entries.get(objectId);

@@ -91,12 +91,13 @@ function workerStopped(w: Worker | null): void {
 
 /**
  * Engine lanes. 'main' runs slices, painting sessions and the quick tools.
- * 'background' is a second, single-threaded Orca instance for long tool runs
- * (texture displacement preview / bake, 10-20 s each): they don't hold up a
- * slice or a brush stroke queued on the main lane, and cancelling one only
- * terminates this lane's worker. Single-threaded because the texture op gains
- * nothing from the pthreads build (measured: the same 13-17 s on both for a
- * 20 mm cube), and a second thread pool would compete with slicing.
+ * 'background' is a second Orca instance for long tool runs (texture
+ * displacement preview / bake): they don't hold up a slice or a brush stroke
+ * queued on the main lane. It runs the multi-threaded build like 'main' when
+ * the page is cross-origin isolated (the op then runs on an engine thread with
+ * Orca's TBB loops, cs_tool_start), and a running op is cancelled in place
+ * through a shared flag; without isolation it is single-threaded and
+ * cancelling terminates this lane's worker.
  */
 export type EngineLane = 'main' | 'background';
 
@@ -121,7 +122,7 @@ class EngineWorker {
     });
     w.postMessage({
       type: 'init', engine: this.engine, base: new URL(artifactBase(this.engine), location.href).href, noMt: this.noMt,
-      threads: this.lane === 'main' ? engineThreadsPref() : 1,
+      threads: engineThreadsPref(),
     });
     w.onmessage = (ev: MessageEvent<WorkerResponse>) => {
       const msg = ev.data;
@@ -161,10 +162,20 @@ class EngineWorker {
     if (signal?.aborted) return Promise.reject(new SliceCancelled());
     this.releaseWhenIdle = false;
     const w = this.ensure();
+    const flag = req.type === 'tool' && req.cancel ? new Int32Array(req.cancel) : null;
     return new Promise((resolve, reject) => {
       this.pending.set(req.id, { resolve, reject, onProgress });
       signal?.addEventListener('abort', () => {
-        if (this.pending.has(req.id)) this.reset(new SliceCancelled());
+        if (!this.pending.has(req.id)) return;
+        if (flag) {
+          // Cooperative: the engine stops at its next progress check and the worker carries on with
+          // what is queued behind; the late reply finds no pending entry and is dropped.
+          Atomics.store(flag, 0, 1);
+          w.postMessage({ type: 'cancel', id: req.id } satisfies WorkerRequest);
+          this.pending.delete(req.id);
+          reject(new SliceCancelled());
+          if (this.releaseWhenIdle && !this.pending.size) this.reset(null);
+        } else this.reset(new SliceCancelled());
       }, { once: true });
       w.postMessage(req, transfer);
     });
@@ -319,18 +330,37 @@ export async function orcaArrange(config: FlatConfig, objects: SliceObjectInput[
 
 // ---- engine tools (cs_tool) --------------------------------------------------------
 
+/** Tool ops the engine can stop mid-run and that report progress (ENGINE-CONTRACT "Texture displacement"). */
+const COOPERATIVE_TOOLS: ReadonlySet<ToolOp> = new Set<ToolOp>(['texture_displacement']);
+
+/**
+ * Whether a running `op` can be cancelled without restarting its worker: the engine polls a
+ * shared flag (SharedArrayBuffer, so the page must be cross-origin isolated).
+ */
+export function toolCancelsInPlace(op: ToolOp): boolean {
+  return COOPERATIVE_TOOLS.has(op) && engineThreadsAvailable();
+}
+
 /**
  * Run an engine tool (see docs/ENGINE-CONTRACT.md "Tools", ops in tools.ts).
  * Tools run on a long-lived Orca instance in the worker (painting sessions
  * keep state there); mesh arrays are copied, callers keep theirs. `signal`
- * cancels by terminating the lane's worker (painting sessions on it go too,
- * so long cancellable runs use the 'background' lane).
+ * cancels: a long op (texture_displacement) stops at its next progress check
+ * when the page is cross-origin isolated (toolCancelsInPlace); otherwise the
+ * lane's worker is terminated (painting sessions on it go too, so long
+ * cancellable runs use the 'background' lane). `onProgress` gets a long op's
+ * progress reports.
  */
 export async function engineTool<K extends ToolOp>(op: K, args: ToolArgs<K>, meshes: ToolMesh[] = [],
-                                                   signal?: AbortSignal, lane: EngineLane = 'main'): Promise<{ result: ToolResult<K>; meshes: ToolMesh[] }> {
+                                                   signal?: AbortSignal, lane: EngineLane = 'main',
+                                                   onProgress?: (p: SliceProgress) => void): Promise<{ result: ToolResult<K>; meshes: ToolMesh[] }> {
   const w = workerFor('orca', lane);
-  const res = await w.request({ type: 'tool', id: w.nextId(), op, args, meshes }, [], undefined, signal);
-  if (res.type === 'tool') return { result: res.result as ToolResult<K>, meshes: res.meshes };
+  const cancel = toolCancelsInPlace(op) ? new SharedArrayBuffer(4) : undefined;
+  const res = await w.request({ type: 'tool', id: w.nextId(), op, args, meshes, ...(cancel ? { cancel } : {}) }, [], onProgress, signal);
+  if (res.type === 'tool') {
+    if ((res.result as { cancelled?: unknown } | null)?.cancelled === true) throw new SliceCancelled();
+    return { result: res.result as ToolResult<K>, meshes: res.meshes };
+  }
   throw new SliceError(res.type === 'error' ? res.message : `${op} failed`, null, res.type === 'error' && res.fatal);
 }
 
