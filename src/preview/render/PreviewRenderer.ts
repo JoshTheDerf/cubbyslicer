@@ -18,6 +18,8 @@ import { buildBed, disposeObject3D as disposeObject } from '../../viewport/bed';
 import { buildCarriageBoxes, headMatrix } from '../../viewport/imexLayer';
 import type { CarriageBox } from '../../plates/imex';
 import { readViewportTheme } from '../../viewport/tokens';
+import { MassMarkerLayer } from '../../viewport/viewEffects';
+import type { MassMarker } from '../../viewport/massProps';
 import { GcodeChunks, createSharedUniforms, DEFAULT_CHUNK_SIZE, TRANSLUCENT_LAYER } from './chunks';
 import { OitTargets } from './oit';
 import type { SharedUniforms } from './chunks';
@@ -32,6 +34,8 @@ export interface RendererCallbacks {
   onContextLost?(lost: boolean): void;
   /** Alt + wheel: move the section plane (Orca 2.5). */
   onSectionWheel?(dir: 1 | -1): void;
+  /** A centre-of-mass marker was clicked (null: its details close), with its screen position (client px). */
+  onMassMarker?(m: { marker: MassMarker; x: number; y: number } | null): void;
 }
 
 /**
@@ -116,6 +120,9 @@ export class PreviewRenderer {
 
     // Orca 2.5: Alt + wheel moves the section plane instead of zooming.
     canvas.addEventListener('wheel', this.onWheelCapture, { capture: true, passive: false });
+    canvas.addEventListener('pointerdown', this.onPointerDown);
+    canvas.addEventListener('pointerup', this.onPointerUp);
+    this.massScene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 2), this.massLayer.group);
     canvas.addEventListener('webglcontextlost', this.onLost, false);
     canvas.addEventListener('webglcontextrestored', this.onRestored, false);
     this.ro = new ResizeObserver(() => this.resize());
@@ -180,6 +187,9 @@ export class PreviewRenderer {
     disposeObject(this.toolhead);
     const canvas = this.renderer.domElement;
     canvas.removeEventListener('wheel', this.onWheelCapture, { capture: true });
+    canvas.removeEventListener('pointerdown', this.onPointerDown);
+    canvas.removeEventListener('pointerup', this.onPointerUp);
+    this.massLayer.dispose();
     canvas.removeEventListener('webglcontextlost', this.onLost);
     canvas.removeEventListener('webglcontextrestored', this.onRestored);
     this.renderer.dispose();
@@ -230,8 +240,80 @@ export class PreviewRenderer {
     this.uniforms.uFar.value = this.camera.far;
     this.syncCopies();
     this.drawScene(this.camera);
+    if (this.massLayer.count) {
+      // Over the toolpaths, seen through them (CenterOfMass::render after the translucent pass).
+      const u = this.uniforms.uSection.value as THREE.Vector4, n = new THREE.Vector3();
+      this.massLayer.update((p) => this.worldPerPixel(p), (p) => n.set(u.x, u.y, u.z).dot(p) > u.w);
+      const r = this.renderer, autoClear = r.autoClear;
+      r.autoClear = false;
+      r.render(this.massScene, this.camera);
+      r.autoClear = autoClear;
+      this.reportMarker();
+    }
     for (const fn of this.afterRender) fn();
   }
+
+  // ---- centre of mass (Orca 2.5 canvas menu "Center of mass") ----------------
+
+  private massScene = new THREE.Scene();
+  private massLayer = new MassMarkerLayer();
+  private pickedMarker: number | null = null;
+  private pickedAt = '';
+  private downAt: { x: number; y: number } | null = null;
+
+  /** The markers (preview/massMarkers.ts), in the scene's frame; [] hides them. */
+  setMassMarkers(markers: MassMarker[]): void {
+    const prev = this.pickedMarker !== null ? this.massLayer.marker(this.pickedMarker) : undefined;
+    this.massLayer.set(markers);
+    if (prev) {
+      // The details stay on the same marker (by kind and stage) while it still exists.
+      const i = markers.findIndex((m) => m.kind === prev.kind && m.stage === prev.stage && m.box?.min.join() === prev.box?.min.join());
+      if (i >= 0) { this.pickedMarker = i; this.pickedAt = ''; } else this.closeMarker();
+    }
+    this.requestRender();
+  }
+
+  /** Close the marker details (Esc, the close button). */
+  closeMarker(): void {
+    if (this.pickedMarker === null) return;
+    this.pickedMarker = null;
+    this.pickedAt = '';
+    this.cb.onMassMarker?.(null);
+  }
+
+  private worldPerPixel(p: THREE.Vector3): number {
+    const h = this.renderer.domElement.clientHeight || 600;
+    const d = p.clone().applyMatrix4(this.camera.matrixWorldInverse).z;
+    return (2 * Math.max(1e-6, -d) * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2)) / h;
+  }
+
+  private screenOf(p: THREE.Vector3): { x: number; y: number } {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const v = p.clone().project(this.camera);
+    return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+  }
+
+  private reportMarker(): void {
+    if (this.pickedMarker === null) return;
+    const m = this.massLayer.marker(this.pickedMarker), p = this.massLayer.position(this.pickedMarker);
+    if (!m || !p) { this.closeMarker(); return; }
+    const s = this.screenOf(p);
+    const key = `${this.pickedMarker}|${s.x.toFixed(1)}|${s.y.toFixed(1)}|${m.sum.mass}|${m.note}`;
+    if (key === this.pickedAt) return;
+    this.pickedAt = key;
+    this.cb.onMassMarker?.({ marker: m, x: s.x, y: s.y });
+  }
+
+  private onPointerDown = (e: PointerEvent) => { this.downAt = e.button === 0 ? { x: e.clientX, y: e.clientY } : null; };
+
+  /** A click (not a drag) on a marker shows its details (CenterOfMass::on_left_down); other clicks close them. */
+  private onPointerUp = (e: PointerEvent) => {
+    const d = this.downAt;
+    this.downAt = null;
+    if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4 || !this.massLayer.count) return;
+    const i = this.massLayer.pick((p) => this.screenOf(p), e.clientX, e.clientY);
+    if (i !== null) { this.pickedMarker = i; this.pickedAt = ''; this.requestRender(); } else this.closeMarker();
+  };
 
   /** Order independent transparency (oit.ts); null until a translucent filament shows, or when the context can't. */
   private oit: OitTargets | null = null;

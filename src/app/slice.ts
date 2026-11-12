@@ -389,6 +389,7 @@ async function slicedFileBytes(list: number[], exportPlate: number | null, name:
   return buildGcode3mf({
     plates: meta.map((p, i) => ({ name: p.name, locked: p.locked, config: p.config, images: images[i], sliced: sliced.get(i) })),
     exportPlate,
+    currentPlate: activePlate.value,
     config: resolvedConfig.value,
     printerModelId: (await currentPresets.value.printerModelId()) ?? '',
     bbl: isBblPrinter(),

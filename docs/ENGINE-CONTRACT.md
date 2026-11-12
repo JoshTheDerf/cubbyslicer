@@ -215,7 +215,9 @@ coordinates. Invalid input yields rc != 0 with a report, never a trap.
     "filamentG": [3.6],
     "filamentCost": [0.08],
     "layers": 120,
-    "maxZ": 24.0
+    "maxZ": 24.0,
+    "sliceInfo": { ... },          // orca only, see below
+    "mass": { ... }                // orca only, see below
   },
   "timings": { "processMs": 0, "exportMs": 0 },
   "substitutions": ["key: bad -> default", ...],  // config values the engine had to substitute
@@ -225,6 +227,48 @@ coordinates. Invalid input yields rc != 0 with a report, never a trap.
 
 Warning codes: `slicing`, `validate`, `conflict`, `unprintable_area`, `plugin`
 (a slicing-pipeline capability's non-empty result message).
+
+`stats.sliceInfo` (orca): what desktop's sliced 3MF takes from the slice
+besides the statistics (`PartPlateList::store_to_3mf_structure`,
+`PlateData::parse_filament_info`, `Plater::priv::generate_first_layer_bbox`).
+Filament numbers are 0-based unless noted.
+
+```jsonc
+{
+  "firstLayerTime": 23.7,          // GCodeProcessorResult::initial_layer_time (s, a float)
+  "toolpathOutside": false,
+  "labelObjectEnabled": true,      // GCode m_enable_exclude_object
+  "supportUsed": false,            // Print::is_support_used
+  "warnings": [{ "level": 1, "msg": "not_generate_timelapse", "errorCode": "10014001", "params": [] }],
+                                   // GCodeProcessor::update_slice_warnings
+  "limitFilamentMaps": [0, 2],     // per filament, a bit mask of extruders it can't use
+  "layerFilaments": [{ "filaments": [0, 1], "ranges": [[0, 29]] }],  // the result's hash-map order
+  "filamentChangeSequence": [0, 1, 0], "nozzleChangeSequence": [0, 1, 0], "optimalAssignment": [0, 1],
+  "mixedFilaments": [{ "id": 4, "type": "PLA", "color": "#808080", "components": "1,2" }],  // id 1-based
+  "nozzleGrouping": {              // the LayeredNozzleGroupResult, when the slice made one
+    "dynamic": false,
+    "filaments": [{ "id": 0, "groupIds": [0], "diameter": 0.4, "volumeType": "Standard" }],
+    "usedNozzles": [{ "id": 0, "extruderId": 0, "diameter": "0.4", "volumeType": "Standard" }]
+  },
+  "firstLayerBBox": {              // plate-local; floats as the engine has them
+    "firstExtruder": 0, "bedType": "Textured PEI Plate", "firstLayerTime": 23.7, "nozzleDiameter": 0.4,
+    "bboxAll": [x0, y0, x1, y1],
+    "objects": [{ "id": 426, "bbox": [x0, y0, x1, y1], "area": 400, "layerHeight": 0.2, "name": "cube" },
+                { "id": null, "wipeTower": true, "bbox": [...], "area": ..., "layerHeight": ..., "name": "wipe_tower" }]
+  }
+}
+```
+
+`stats.mass` (orca): the G-code processor's masses for the Preview's centre of
+mass markers (`GCodeProcessorResult` plate_mass / object_masses / body_masses /
+support_masses). Each is `{ "layers", "box", "beltBox", "assembly", "name"?,
+"instance"? }`: `layers` holds, per layer id, what is printed up to that layer,
+flat as `[mass mg, volume mm³, moment x y z, second x² y² z², cross xy xz yz]`
+× layers; boxes are `[min x y z, max x y z]` or null.
+
+```jsonc
+{ "plate": { ... }, "objects": [ ... ], "bodies": [ ... ], "supports": [ ... ] }
+```
 
 ### Schema JSON (`cs_describe_config`)
 

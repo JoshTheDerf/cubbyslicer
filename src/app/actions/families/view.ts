@@ -54,7 +54,7 @@ export function viewActions(): Action[] {
     { id: 'view.collision-volumes', title: 'Show all collision volumes', icon: 'i-lucide-box-select', category: 'View',
       aliases: ['toolhead', 'collision', 'exclusion volume', 'keep-out'], binding: { key: 'k', ctrlOrMeta: true, shift: true, scope: 'prepare' },
       when: inPrepare, state: () => (viewportState.showCollisionVolumes ? 'on' : 'off'), run: () => toggleCollisionVolumes() },
-    // Orca 2.5 canvas menu (GLCanvas3D::_render_canvas_toolbar): X-Ray, Focus mode, Center of mass; the section view button.
+    // Orca 2.5 canvas menu (GLCanvas3D::_render_canvas_toolbar): X-Ray, Focus mode, Center of mass (Prepare and Preview); the section view button.
     { id: 'view.xray', title: 'X-Ray', icon: 'i-lucide-scan-eye', category: 'View', aliases: ['see-through', 'transparent', 'xray', 'inside'],
       when: inPrepare, state: () => (viewportState.xray ? 'on' : 'off'), run: () => toggleXray() },
     { id: 'view.section', title: 'Section view', icon: 'i-lucide-square-split-horizontal', category: 'View', aliases: ['cut away', 'clipping plane', 'cross section', 'look inside'],
@@ -62,7 +62,7 @@ export function viewActions(): Action[] {
     { id: 'view.section.align', title: 'Section view: set viewing angle', icon: 'i-lucide-scan-line', category: 'View', aliases: ['section plane', 'face camera'],
       when: (c) => c.view === 'prepare' || c.view === 'preview', run: () => alignSectionToCamera() },
     { id: 'view.center-of-mass', title: 'Center of mass', icon: 'i-lucide-locate-fixed', category: 'View', aliases: ['centre of mass', 'balance', 'weight', 'inertia', 'mass'],
-      when: inPrepare, state: () => (viewportState.centerOfMass ? 'on' : 'off'), run: () => toggleCenterOfMass() },
+      when: (c) => c.view === 'prepare' || c.view === 'preview', state: () => (viewportState.centerOfMass ? 'on' : 'off'), run: () => toggleCenterOfMass() },
     { id: 'view.focus-mode', title: 'Focus mode', icon: 'i-lucide-focus', category: 'View', aliases: ['current plate only', 'hide other plates'],
       when: inPrepare, state: () => (viewportState.focusMode ? 'on' : 'off'), run: () => toggleFocusMode() },
     // Orca 2.5 Preview view menu: "Show raw G-code (belt only)" (B) and "Show IDEX/IQEX Toolhead".

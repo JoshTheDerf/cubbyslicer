@@ -202,13 +202,15 @@ export class MassMarkerLayer {
     this.geos ??= octantGeometries();
     for (const m of markers) {
       const g = new Group();
+      const alpha = m.alpha ?? 1;
       MARKER_COLOURS[m.kind].forEach((c, i) => {
-        const key = `${m.kind}${i}`;
+        const key = `${m.kind}${i}${alpha}`;
         let mat = this.mats.get(key);
-        if (!mat) { mat = new MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: 0.1, depthTest: false, depthWrite: false, transparent: true }); this.mats.set(key, mat); }
+        if (!mat) { mat = new MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: 0.1, depthTest: false, depthWrite: false, transparent: true, opacity: alpha }); this.mats.set(key, mat); }
         const mesh = new Mesh(this.geos![i], mat);
         mesh.raycast = () => {};
-        mesh.renderOrder = 20 + (['plate', 'object', 'support', 'body'].indexOf(m.kind));
+        // Preview: what is printed so far over the finished print, then the smaller kinds over the larger.
+        mesh.renderOrder = 20 + 4 * (m.stage ?? 0) + (['plate', 'object', 'support', 'body'].indexOf(m.kind));
         g.add(mesh);
       });
       g.position.fromArray(centerOf(m.sum));
@@ -230,11 +232,13 @@ export class MassMarkerLayer {
    * ones), from screen positions + radii in px.
    */
   pick(project: (p: Vector3) => { x: number; y: number }, x: number, y: number): number | null {
-    for (const kind of ['body', 'support', 'object', 'plate'] as const) {
-      for (let i = 0; i < this.markers.length; i++) {
-        if (this.markers[i].kind !== kind || !this.balls[i]?.visible) continue;
-        const s = project(this.balls[i].position);
-        if (Math.hypot(s.x - x, s.y - y) <= MARKER_RADII[kind]) return i;
+    for (const stage of [1, 0]) {
+      for (const kind of ['body', 'support', 'object', 'plate'] as const) {
+        for (let i = 0; i < this.markers.length; i++) {
+          if (this.markers[i].kind !== kind || (this.markers[i].stage ?? 0) !== stage || !this.balls[i]?.visible) continue;
+          const s = project(this.balls[i].position);
+          if (Math.hypot(s.x - x, s.y - y) <= MARKER_RADII[kind]) return i;
+        }
       }
     }
     return null;

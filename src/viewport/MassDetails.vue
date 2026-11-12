@@ -18,6 +18,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true));
       <strong>{{ d.title }}</strong>
       <UButton icon="i-lucide-x" size="xs" color="neutral" variant="ghost" aria-label="Close" @click="emit('close')" />
     </div>
+    <p v-if="d.note" class="com__note">{{ d.note }}</p>
     <table>
       <tbody>
         <tr v-for="[k, v] in d.rows" :key="k"><th>{{ k }}</th><td>{{ v }}</td></tr>
@@ -33,6 +34,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true));
   box-shadow: 0 2px 12px rgb(0 0 0 / 0.3); font-size: var(--fs-sm); max-width: calc(100vw - 16px);
 }
 .com__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; color: var(--fg-0); }
+.com__note { margin: 0 0 4px; color: var(--fg-1); }
 .com th { text-align: left; font-weight: 500; color: var(--ui-primary); padding: 2px 12px 2px 0; white-space: nowrap; }
 .com td { color: var(--fg-0); white-space: nowrap; font-variant-numeric: tabular-nums; }
 </style>

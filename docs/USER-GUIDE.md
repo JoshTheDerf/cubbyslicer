@@ -32,7 +32,7 @@ From left to right, the top bar has:
 
 After slicing, the bar shows the print time (and weight on wide screens). The slice button turns into "Sliced" and Export G-code becomes the main button. On a phone the bar keeps only the sidebar and menu buttons, the view switch and the slice controls.
 
-File ▸ Export plate sliced file and Export all sliced file save the sliced plates as a `.gcode.3mf`, the file Bambu Lab printers take (G-code with plate thumbnails, print time, weight and filaments); for Bambu Lab printers and printers with "Support 3MF as gcode" they are also in the slice button's menu.
+File ▸ Export plate sliced file and Export all sliced file save the sliced plates as a `.gcode.3mf`, the file Bambu Lab printers take (G-code with plate thumbnails, print time, weight, first-layer time, filaments and their nozzles, slice warnings and the first-layer boxes the printer checks); for Bambu Lab printers and printers with "Support 3MF as gcode" they are also in the slice button's menu.
 
 When a setting has an invalid value, the slice controls show "N settings to fix" and slicing is blocked. Click it for the list, and click a setting there to go to it. When slicing fails, click "Slicing failed" for the reason, with Copy and Try again.
 
@@ -69,6 +69,7 @@ After slicing, Preview shows the G-code: the legend (top left), the layer slider
 - L folds the whole legend down to its scheme menu and the same one-line total. Click that line to open the legend again.
 - The move slider steps through the moves in the top layer. The G-code line above it follows the slider and stays inside the bar on a phone.
 - With the Filament colour scheme, translucent filaments (an alpha value in the filament colour, `#RRGGBBAA`) are drawn see-through. As in OrcaSlicer, the nearest surface is drawn over a depth-weighted blend of what lies behind it, so the result doesn't depend on print order and looks the same from every side. The legend's Show list has a "Translucent filaments" switch for this when a filament is translucent.
+- View ▸ Center of mass (also in Prepare) shows the centre of mass of the plate, each object, each part of an assembly and each object's supports as two-tone balls, from the material the G-code lays down. With the top layer below the last, it also shows the centre of mass of what is printed up to that layer, and the finished print's markers fade. Click a marker for its weight, volume, bounding box and moment of inertia.
 - G opens the G-code viewer and F fits the print. The keyboard button lists the other shortcuts.
 
 ## Settings sidebar

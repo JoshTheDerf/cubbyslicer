@@ -127,6 +127,68 @@ export interface SliceStats {
   filamentCost: number[];
   layers: number;
   maxZ: number;
+  /** Orca: what desktop's sliced 3MF takes from the slice beyond the statistics (absent from older / other engines). */
+  sliceInfo?: SliceInfo;
+  /** Orca: the G-code processor's masses, for the Preview's centre-of-mass markers. */
+  mass?: SliceMass;
+}
+
+/**
+ * GCodeProcessorResult::ObjectMass: `layers` is, per layer id, what is printed up to it, flat
+ * [mass mg, volume mm³, moment x y z, second x y z, cross xy xz yz] × layers; boxes are
+ * [min x y z, max x y z] in the G-code's frame (`beltBox`: a belt print's, see ObjectMass::transform).
+ */
+export interface SliceObjectMass {
+  layers: number[];
+  box: number[] | null;
+  beltBox: number[] | null;
+  assembly: boolean;
+  name?: string;
+  instance?: number;
+}
+
+export interface SliceMass {
+  plate: SliceObjectMass;
+  /** One per object instance, and one per connected body of an assembly's instances. */
+  objects: SliceObjectMass[];
+  bodies: SliceObjectMass[];
+  /** One per object instance: its supports and raft. */
+  supports: SliceObjectMass[];
+}
+
+export interface SliceInfo {
+  /** GCodeProcessorResult::initial_layer_time (s, a float). */
+  firstLayerTime: number;
+  toolpathOutside: boolean;
+  labelObjectEnabled: boolean;
+  /** Print::is_support_used. */
+  supportUsed: boolean;
+  /** GCodeProcessor::update_slice_warnings. */
+  warnings: Array<{ level: number; msg: string; errorCode: string; params: string[] }>;
+  limitFilamentMaps: number[];
+  /** 0-based filament sets and their [first, last] layer ranges, in the engine's iteration order. */
+  layerFilaments: Array<{ filaments: number[]; ranges: Array<[number, number]> }>;
+  filamentChangeSequence: number[];
+  nozzleChangeSequence: number[];
+  optimalAssignment: number[];
+  /** Mixed filaments used: 1-based slot, type, colour, components (as the print config has them). */
+  mixedFilaments: Array<{ id: number; type: string; color: string; components: string }>;
+  /** The layer-aware nozzle grouping (LayeredNozzleGroupResult), when the slice made one. */
+  nozzleGrouping?: {
+    dynamic: boolean;
+    filaments: Array<{ id: number; groupIds: number[]; diameter?: number; volumeType?: string }>;
+    /** extruderId is 0-based; diameter as the grouping writes it. */
+    usedNozzles: Array<{ id: number; extruderId: number; diameter: string; volumeType: string }>;
+  };
+  /** Plater::priv::generate_first_layer_bbox, plate-local; floats as the engine has them. */
+  firstLayerBBox: {
+    firstExtruder: number;
+    bedType: string;
+    firstLayerTime: number;
+    nozzleDiameter: number;
+    bboxAll: number[];
+    objects: Array<{ id: number | null; wipeTower?: boolean; bbox: number[]; area: number; layerHeight: number; name: string }>;
+  };
 }
 
 export interface SliceReport {

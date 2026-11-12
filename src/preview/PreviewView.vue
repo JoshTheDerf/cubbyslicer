@@ -86,6 +86,7 @@
 
       <!-- Orca 2.5 section view (bottom-left, as desktop's canvas toolbar) -->
       <div class="pv-section"><SectionViewControl /></div>
+      <MassDetails v-if="massPick" :marker="massPick.marker" :x="massPick.x" :y="massPick.y" @close="rendererRef?.closeMarker()" />
 
       <!-- top-right: view cube + camera/tool buttons -->
       <div class="pv-topright">
@@ -167,6 +168,9 @@
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { activeView, bedFromConfig, lastSlice, resolvedConfig } from '../app/state';
 import { setSectionRatio, viewportState } from '../viewport/controller';
+import MassDetails from '../viewport/MassDetails.vue';
+import type { MassMarker } from '../viewport/massProps';
+import { previewMassMarkers } from './massMarkers';
 import SectionViewControl from '../viewport/SectionViewControl.vue';
 import type { SliceResult } from '../engine/types';
 import { parseGcodeAsync } from './parser/client';
@@ -455,6 +459,15 @@ function applyImex(): void {
   renderer?.setImex(v && { copies: v.copies, carriages: v.carriages, zones: buildImexZones(v.layout, v.theme) });
 }
 watch(() => previewImex.value?.key, applyImex);
+// Orca 2.5 canvas menu "Center of mass" (shared with Prepare): the G-code processor's masses, up to the top layer shown.
+const massPick = shallowRef<{ marker: MassMarker; x: number; y: number } | null>(null);
+function applyMass(): void {
+  const r = rendererRef.value, p = parsed.value;
+  if (!r) return;
+  const mass = viewportState.centerOfMass && p ? slice.value?.report.stats?.mass : undefined;
+  r.setMassMarkers(mass ? previewMassMarkers(mass, hi.value, p!.layerCount, beltMatrix()?.elements ?? null) : []);
+}
+watch([() => viewportState.centerOfMass, parsed, hi, beltBack, () => options.value.beltRaw, rendererRef], applyMass);
 watch(() => options.value.imexToolheads, (on) => renderer?.setCarriageBoxesVisible(on));
 watch(lastSlice, (s) => { void load(s); });
 
@@ -495,6 +508,7 @@ onMounted(() => {
       onBuildProgress: (f) => { if (phase.value === 'uploading') progress.value = f; },
       onContextLost: (lost) => { contextLost.value = lost; },
       onSectionWheel: (dir) => setSectionRatio(viewportState.section.ratio + dir * 0.01),
+      onMassMarker: (m) => { massPick.value = m; },
     });
   } catch (e) {
     phase.value = 'error';

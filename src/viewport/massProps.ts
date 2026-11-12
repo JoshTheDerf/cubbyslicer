@@ -86,10 +86,19 @@ export interface MassMarker {
   box: { min: [number, number, number]; max: [number, number, number] } | null;
   /** An object made of several parts (desktop's "Assembly center of mass"). */
   assembly?: boolean;
+  /**
+   * Preview (CenterOfMass::render): 0 the finished print, 1 what is printed up to the top layer
+   * shown, whose markers draw and pick over the others. `alpha`: 0.4 for the finished print's while
+   * a lower layer is shown.
+   */
+  stage?: 0 | 1;
+  alpha?: number;
+  /** The details' first line in Preview ("Finished print", "Printed up to layer N"). */
+  note?: string;
 }
 
 /** The details desktop shows for a picked marker (render_details), formatted as there. */
-export function markerDetails(m: MassMarker): { title: string; rows: Array<[string, string]> } {
+export function markerDetails(m: MassMarker): { title: string; note?: string; rows: Array<[string, string]> } {
   const title = m.kind === 'plate' ? 'Plate center of mass' : m.kind === 'body' ? 'Part center of mass' : m.kind === 'support' ? 'Support center of mass'
     : m.assembly ? 'Assembly center of mass' : 'Object center of mass';
   const c = centerOf(m.sum);
@@ -103,5 +112,5 @@ export function markerDetails(m: MassMarker): { title: string; rows: Array<[stri
     rows.push(['Bounding box size', xyz(m.box.max.map((v, i) => v - m.box!.min[i]), 2, 'mm')]);
   }
   rows.push(['Moment of inertia', xyz(inertiaOf(m.sum).map((v) => v / 1000), 0, 'g·mm²')]);
-  return { title, rows };
+  return { title, note: m.note, rows };
 }
