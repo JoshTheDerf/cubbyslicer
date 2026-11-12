@@ -114,6 +114,8 @@ function material(vert: string, frag: string, shared: SharedUniforms, base: numb
 /** The extrusion material for one pass: 0 opaque, 1 translucent filaments (blended, no depth writes, drawn last). */
 function extrusionMaterial(shared: SharedUniforms, base: number, pass: 0 | 1): THREE.ShaderMaterial {
   const m = material(EXTRUSION_VERT, pass === 1 ? EXTRUSION_FRAG_CLEAR : EXTRUSION_FRAG, shared, base, { uPass: { value: pass } });
+  // The translucent pass's own shader parts (joint cut, opacity by thickness): the opaque shader is untouched.
+  if (pass === 1) m.defines = { CLEAR: '' };
   // Mirrored copies (IDEX/IQEX Mirror carriages) flip the quads' winding: draw both faces.
   m.side = THREE.DoubleSide;
   if (pass === 1) oitState(m, 0);
@@ -244,7 +246,42 @@ export class GcodeChunks {
 
   private ensureClear(c: Chunk): void {
     if (c.clear) return;
-    const m = new THREE.Mesh(c.mesh.geometry, extrusionMaterial(this.shared, c.base, 1));
+    // The opaque pass's buffers, plus the path's neighbouring points and joints for the cut at the
+    // joints (Orca 2.5 libvgcode is_joint: two extrusion lines meet there).
+    const src = c.mesh.geometry, geo = new THREE.InstancedBufferGeometry();
+    for (const [k, a] of Object.entries(src.attributes)) geo.setAttribute(k, a);
+    geo.setIndex(src.index);
+    const p = this.data.points, f = this.data.feature, total = this.data.segmentCount, { base, count } = c;
+    // Points base-1 … base+count+1: aPrev (point s-1) at offset 0, aNext (point s+2) at offset 9.
+    const lo = (base - 1) * 3, hi = (base + count + 2) * 3;
+    let near: Float32Array;
+    if (lo >= 0 && hi <= p.length) near = p.subarray(lo, hi);
+    else {
+      near = new Float32Array(hi - lo);
+      const from = Math.max(lo, 0), to = Math.min(hi, p.length);
+      near.set(p.subarray(from, to), from - lo);
+    }
+    const nb = new THREE.InstancedInterleavedBuffer(near, 3, 1);
+    geo.setAttribute('aPrev', new THREE.InterleavedBufferAttribute(nb, 3, 0));
+    geo.setAttribute('aNext', new THREE.InterleavedBufferAttribute(nb, 3, 9));
+    const isLine = (s: number) => {
+      if (s < 0 || s >= total || f[s] >= FIRST_NON_EXTRUSION) return false;
+      const i = s * 3;
+      return Math.abs(p[i + 3] - p[i]) + Math.abs(p[i + 4] - p[i + 1]) + Math.abs(p[i + 5] - p[i + 2]) > 1e-4;
+    };
+    const joint = new Uint8Array(count * 2);
+    let prev = isLine(base - 1), cur = isLine(base);
+    for (let k = 0; k < count; k++) {
+      const next = isLine(base + k + 1);
+      if (cur) { joint[k * 2] = prev ? 1 : 0; joint[k * 2 + 1] = next ? 1 : 0; }
+      prev = cur; cur = next;
+    }
+    geo.setAttribute('aJoint', new THREE.InstancedBufferAttribute(joint, 2));
+    geo.instanceCount = src.instanceCount;
+    geo.boundingSphere = src.boundingSphere;
+    geo.boundingBox = src.boundingBox;
+    c.gpuBytes += near.byteLength + joint.byteLength;
+    const m = new THREE.Mesh(geo, extrusionMaterial(this.shared, c.base, 1));
     m.name = `${c.mesh.name}-translucent`;
     m.frustumCulled = c.mesh.frustumCulled;
     m.renderOrder = 1;
@@ -365,7 +402,7 @@ export class GcodeChunks {
     const n = chunkDrawCount(c, this.rangeMin, this.rangeMax);
     c.mesh.visible = this.opaqueOn && n > 0;
     c.mesh.geometry.instanceCount = Math.max(n, 1);
-    if (c.clear) c.clear.visible = this.translucentOn && n > 0;
+    if (c.clear) { c.clear.visible = this.translucentOn && n > 0; c.clear.geometry.instanceCount = Math.max(n, 1); }
     if (c.travel) c.travel.visible = this.travelOn && n > 0;
     if (c.markers) c.markers.visible = this.markersOn && n > 0;
   }
@@ -379,7 +416,7 @@ export class GcodeChunks {
       // Keep the shared quad attributes alive: detach before disposing.
       c.mesh.geometry.dispose();
       c.mesh.material.dispose();
-      c.clear?.material.dispose();
+      c.clear?.geometry.dispose(); c.clear?.material.dispose();
       c.travel?.geometry.dispose(); c.travel?.material.dispose();
       c.markers?.geometry.dispose(); c.markers?.material.dispose();
     }

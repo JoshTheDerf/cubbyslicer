@@ -48,6 +48,14 @@ flat out vec4 vCap;     // start radius px, end radius px, length px, -
 flat out vec2 vT;       // screen-space direction
 flat out vec3 vColor;
 flat out float vAlpha;
+#ifdef CLEAR
+// Translucent pass only (chunks.ts ensureClear): the path's points before and after the segment,
+// and whether it meets an extrusion there (x start, y end), for the joint cut below.
+in vec3 aPrev;
+in vec3 aNext;
+in vec2 aJoint;
+flat out vec4 vCut;     // the joint cut lines in the segment's (along, across) frame: start normal, end normal
+#endif
 
 // Constant-index form (unrolled) — avoids dynamic uniform-array indexing.
 vec3 ramp(float t) {
@@ -60,7 +68,27 @@ vec3 ramp(float t) {
 void hide() {
   gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
   vQ = vec4(0.0); vCap = vec4(0.0); vT = vec2(1.0, 0.0); vColor = vec3(0.0); vAlpha = 0.0;
+#ifdef CLEAR
+  vCut = vec4(0.0);
+#endif
 }
+#ifdef CLEAR
+// Orca 2.5 (libvgcode Segments_Fragment_Shader beyond_joint): two segments of a path overlap at
+// their joint, which blending would draw twice, so each is cut at the bisector of the joint. Here
+// in screen space, where the capsules are: the normal of the line through the joint at screen
+// point p between the path's directions into and out of it, or zero (no cut) where there is no
+// joint, the neighbour lies behind the camera or the path doubles back on itself.
+vec2 jointNormal(float joint, vec3 other, vec2 p, vec2 dir, bool atEnd, vec2 half_) {
+  if (joint < 0.5) return vec2(0.0);
+  vec4 c = projectionMatrix * viewMatrix * modelMatrix * vec4(other, 1.0);
+  if (c.w <= 1e-6) return vec2(0.0);
+  vec2 d = (c.xy / c.w * half_ - p) * (atEnd ? 1.0 : -1.0);
+  float l = length(d);
+  if (l < 1e-3) return vec2(0.0);
+  vec2 n = d / l + dir;
+  return dot(n, n) > 1e-4 ? normalize(n) : vec2(0.0);
+}
+#endif
 
 void main() {
   int idx = uBase + gl_InstanceID;
@@ -99,6 +127,9 @@ void main() {
   vec4 ve = viewMatrix * vec4(wE, 1.0);
   float zc = -uNear * 1.001;
   if (vs.z > zc && ve.z > zc) { hide(); return; }
+#ifdef CLEAR
+  bool clipped = vs.z > zc || ve.z > zc;
+#endif
   if (vs.z > zc) vs = mix(vs, ve, (vs.z - zc) / (vs.z - ve.z));
   else if (ve.z > zc) ve = mix(ve, vs, (ve.z - zc) / (ve.z - vs.z));
 
@@ -125,6 +156,12 @@ void main() {
   vQ = vec4(along, position.y * r, 0.0, 1.0) * c.w;
   vCap = vec4(rS, rE, L, 0.0);
   vT = t;
+#ifdef CLEAR
+  // The cut lines, in the (along, across) frame the fragment shader reads (start at 0, end at L).
+  vec2 cs2 = clipped ? vec2(0.0) : jointNormal(aJoint.x, aPrev, ss, t, false, half_);
+  vec2 ce2 = clipped ? vec2(0.0) : jointNormal(aJoint.y, aNext, se, t, true, half_);
+  vCut = vec4(dot(cs2, t), dot(cs2, n2), dot(ce2, t), dot(ce2, n2));
+#endif
 
   vec3 col;
   if (uScheme == 0) col = uFeatColor[feat];
@@ -132,8 +169,18 @@ void main() {
   else col = ramp((aValue - uVMin) / max(uVMax - uVMin, 1e-9));
   if (uDimBelow > 0.0 && idx < uTopStart) col *= 1.0 - uDimBelow;
   vColor = col;
+#ifdef CLEAR
+  // Orca 2.5: a clear filament keeps the least opacity that still shows it (3DScene.cpp
+  // adjust_color_for_rendering, 0.1), and a filament's opacity is that of 0.4 mm of it
+  // (Shaders.hpp REFERENCE_THICKNESS), scaled to the path of the view ray through the
+  // extrusion's height × width diamond; kept below 1, which would read as opaque.
+  float a0 = max(alpha, 0.1);
+  float path = 1.0 / max(abs(dot(viewDir, upp)) / (hh * 2.0) + abs(dot(viewDir, hp)) / (hw * 2.0), 1e-3);
+  vAlpha = min(1.0 - pow(1.0 - a0, min(path / 0.4, 16.0)), 0.999);
+#else
   // Never fully invisible: Orca keeps a clear filament faintly visible.
   vAlpha = max(alpha, 0.12);
+#endif
 }
 `;
 
@@ -178,7 +225,9 @@ void main() {
  * front target), 2 sets that surface apart (outFront) and adds up the others weighted by depth
  * (outColor, McGuire and Bavoil 2013) with their coverage (outReveal, −log(1 − α)); oit.ts
  * composites them over the scene. Both discard what the opaque scene hides. uOitPass 0 is the
- * plain blended pass (no float colour targets: Orca's OpenGL ES path).
+ * plain blended pass (no float colour targets: Orca's OpenGL ES path). Every pass cuts the
+ * segments at their joints (vCut) and uses the opacity of the path through the extrusion (vAlpha),
+ * both from the vertex shader's CLEAR parts.
  */
 export const EXTRUSION_FRAG_CLEAR = /* glsl */ `
 layout(location = 0) out highp vec4 outColor;
@@ -195,6 +244,7 @@ flat in vec4 vCap;
 flat in vec2 vT;
 flat in vec3 vColor;
 flat in float vAlpha;
+flat in vec4 vCut;
 
 void main() {
   vec2 q = vQ.xy / vQ.w;
@@ -206,6 +256,9 @@ void main() {
   else { r = mix(vCap.x, vCap.y, L > 0.0 ? q.x / L : 0.0); rel = vec2(0.0, q.y); }
   float d2 = dot(rel, rel) / (r * r);
   if (d2 > 1.0) discard;
+  // Cut at the joints (vertex shader): what lies past the line through a joint is the neighbour's.
+  // Both neighbours compute the same line; the 0.05 px overlap only absorbs rounding.
+  if (dot(vCut.xy, q) < -0.05 || dot(vCut.zw, q - vec2(L, 0.0)) > 0.05) discard;
   outReveal = vec4(0.0);
   outFront = vec4(0.0);
   ivec2 px = ivec2(gl_FragCoord.xy);

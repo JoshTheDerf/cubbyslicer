@@ -49,7 +49,7 @@ export const VIEW_MENU: MenuLayout = {
     ['view.camera.perspective', 'view.camera.orthographic',
       { label: 'Grid snap', icon: 'i-lucide-magnet', children: SNAP_OPTIONS.map((o) => `view.snap.${o.value}`) }],
     ['view.xray', 'view.section', 'view.section.align', 'view.focus-mode', 'view.center-of-mass'],
-    ['view.panel.sidebar'],
+    ['view.panel.sidebar', 'view.reset-window-layout'],
   ],
 };
 

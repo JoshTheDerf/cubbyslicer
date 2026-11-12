@@ -1,8 +1,8 @@
 """Host UI: message boxes and interactive HTML windows, rendered by CubbySlicer.
 
 Windows and dock panels are sandboxed iframes with the same window.orca bridge
-as OrcaSlicer (postMessage / submit / close / onMessage). A dock panel opens as
-a floating panel (CubbySlicer has no dock area for plugins yet). Callbacks
+as OrcaSlicer (postMessage / submit / close / onMessage). A dock panel docks
+beside the 3D view as in OrcaSlicer (on phones it is a bottom sheet). Callbacks
 (on_message, on_submit, on_close, on_click) run on the plugin runtime's event
 loop between other plugin code, not concurrently with it, and also while plugin code
 waits in queue.Queue.get(), Event.wait(), time.sleep() and the like (_cubby_wait.py).
@@ -139,8 +139,10 @@ class UiDockPanel:
 
 
 def create_dock_panel(html, title="OrcaSlicer", width=320, height=480, on_message=None, on_close=None, dock="right"):
-    """Open an HTML panel and return a UiDockPanel. dock is "left", "right", "bottom" or "float"
-    (CubbySlicer shows it as a floating panel placed on that side)."""
+    """Open an HTML panel docked beside the 3D view and return a UiDockPanel. dock is "left",
+    "right", "bottom" or "float", and width / height are in CSS pixels (the dock's width, the bottom
+    dock's height, the floating size). The user can move, float and resize the panel, and a panel
+    opened again comes back where it was left. It shows on the Prepare and Preview tabs."""
     _guard()
     if dock not in ("left", "right", "bottom", "float"):
         raise ValueError('dock must be "left", "right", "bottom" or "float"')

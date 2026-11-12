@@ -11,7 +11,7 @@
 //    reads orca.host.plater()/model()/preset_bundle() and a mesh through numpy;
 //    ui.message() shows CubbySlicer's message box and returns the click; the
 //    threading demo fails with the documented error.
-//  - Dock Panel Demo (Script): run from the dialog's Run button; the panel lists
+//  - Dock Panel Demo (Script): run from the dialog's Run button; the panel docks right and lists
 //    the plate's objects; hide / run again / close work.
 //  - enable / disable, reload, persistence across a page reload (auto-load),
 //    delete; and the page without cross-origin isolation (post-process still
@@ -329,9 +329,15 @@ const dockFrame = page.frameLocator('iframe[title="Dock Panel Demo"]');
 await dockFrame.locator('#rows tr').first().waitFor({ timeout: 30000 });
 const rowsText = await dockFrame.locator('#rows').innerText();
 check('Dock Panel lists the plate objects (name, parts, copies)', /cube/i.test(rowsText) && /\b1\b/.test(rowsText), rowsText.replace(/\s+/g, ' '));
+check('Dock Panel docks on the right of the viewport (dock="right")', await page.evaluate(() => {
+  const w = [...document.querySelectorAll('[data-testid="plugin-window"]')].find((e) => e.textContent.includes('Dock Panel Demo'));
+  const d = document.querySelector('[data-testid="plugin-dock-right"]')?.getBoundingClientRect(), c = document.querySelector('.center')?.getBoundingClientRect();
+  return w?.dataset.dock === 'right' && !!d && !!c && d.width === 320 && c.right <= d.left + 1;
+}));
 await shot({ path: `${out}/7-dock-panel.png` });
 await dockFrame.locator('#hide').click();
-await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="plugin-window"]')].every((w) => w.offsetParent === null || !w.textContent.includes('Dock Panel Demo')));
+// (checkVisibility: a panel is position: fixed, so its offsetParent is always null)
+await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="plugin-window"]')].every((w) => !w.checkVisibility() || !w.textContent.includes('Dock Panel Demo')));
 check('panel.hide() hides it', true);
 // Interacting with the panel may have closed the (modal) Plugins dialog: reopen it.
 async function ensureDialog() {

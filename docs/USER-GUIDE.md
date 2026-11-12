@@ -231,6 +231,7 @@ File ▸ Plugins… installs and runs OrcaSlicer 2.5 Python plugins, unmodified,
 - Each plugin has a switch, and so has each of its capabilities. Script capabilities have a Run button and appear in the command palette. G-code post-processing capabilities run when you export or upload G-code; the preview keeps the original.
 - Plugins ask before using permissions such as network access; the dialog lists what each plugin was allowed, with a revoke button.
 - Slicing-pipeline capabilities run inside the slice, at the steps Orca hooks them. Page capabilities add their own tab next to Prepare and Preview (it opens on click or Enter), with the page's own icon when the plugin gives one (an SVG or PNG file).
+- Dock panels a plugin opens sit beside the 3D view on the side the plugin asks for (left, right or below it), on the Prepare and Preview tabs. Drag the edge between a panel and the view to resize it. Drag a panel's title bar to float it; drop a floating panel near the left, right or bottom edge of the view to dock it there. The panel's menu (next to its close button) also docks or floats it. A panel opens again where you left it, and View ▸ Reset window layout docks floating panels again. On phones a dock panel opens as a sheet at the bottom of the screen.
 - A plugin's Python dependencies are installed when it loads, from Pyodide's packages or pure-Python wheels. Packages with native code that Pyodide doesn't ship can't be installed.
 - Enabled plugins load again on the next visit. Installed plugins are stored in this browser.
 

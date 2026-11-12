@@ -4,6 +4,8 @@ import {
   alignSectionToCamera, toggleCenterOfMass, toggleCollisionVolumes, toggleFocusMode, toggleSection, toggleXray, viewportState, type ViewPreset,
 } from '../../../viewport/controller';
 import { previewData, previewOptions, toggleOption } from '../../../preview/store';
+import { layout, SIDEBAR_DEFAULT } from '../../shell/uiState';
+import { redockFloatingPanes } from '../../../plugins/dockLayout';
 
 // Orca: Tab Prepare/Preview, Shift+Tab collapse sidebar, 0-6 camera views (Orca uses Ctrl+0-6,
 // which browsers reserve for tab switching; bare digits match the Preview's view keys),
@@ -79,5 +81,10 @@ export function viewActions(): Action[] {
     { id: 'view.panel.sidebar', title: 'Sidebar', icon: 'i-lucide-panel-left', category: 'View', aliases: ['settings panel', 'object list', 'collapse sidebar'],
       binding: { key: 'tab', shift: true, whenFocusIdle: true, passThroughWhenUnavailable: true },
       state: (c) => (c.sidebar ? 'on' : 'off'), run: (c) => c.dispatch.toggleSidebar() },
+    // Orca View ▸ Reset Window Layout (Plater::priv::reset_window_layout): the sidebar back at its
+    // default width and shown, floating plugin dock panels docked again.
+    { id: 'view.reset-window-layout', title: 'Reset window layout', icon: 'i-lucide-layout-template', category: 'View',
+      aliases: ['default layout', 'dock panels', 'plugin panels', 'redock'],
+      run: () => { layout.sidebarWidth = SIDEBAR_DEFAULT; layout.sidebarCollapsed = false; redockFloatingPanes(); } },
   ];
 }

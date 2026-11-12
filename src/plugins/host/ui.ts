@@ -1,6 +1,6 @@
 /**
  * `orca.host.ui` on the app side: the reactive registry of plugin windows,
- * dock panels (shown floating), message boxes, progress dialogs and the
+ * dock panels (placed by ../dockLayout.ts), message boxes, progress dialogs and the
  * permission prompts, rendered by ui/PluginUiHost.vue. Events from them go
  * back to the runtime as `uiEvent` messages.
  */
@@ -9,6 +9,7 @@ import { dialogRequest } from '../../ui/dialogRequest';
 import { send } from '../runtime/client';
 import { pushToast, dismissToast, type ToastKind } from '../../ui/toast';
 import type { PluginPermissions } from '../types';
+import { closePane, openPane, setPaneShown } from '../dockLayout';
 
 export interface PluginWindow {
   handle: number;
@@ -62,6 +63,13 @@ export function createWindow(pluginKey: string, pluginName: string, a: { handle:
     handle: a.handle, pluginKey, pluginName, kind, title: a.title, html: a.html,
     width: a.width, height: a.height, modal: !!a.modal, dock: a.dock, visible: true, queue: [], seq: 0, z: ++pluginUi.topZ,
   });
+  if (kind === 'dock') openPane(a.handle, pluginKey, a.title, a.dock, a.width, a.height);
+}
+
+/** UiWindow / UiDockPanel show() and hide(): a hidden panel stays open (and keeps its page). */
+export function setWindowVisible(w: PluginWindow, visible: boolean): void {
+  w.visible = visible;
+  if (w.kind === 'dock') setPaneShown(w.handle, visible);
 }
 
 export function findWindow(handle: number): PluginWindow | undefined { return pluginUi.windows.find((w) => w.handle === handle); }
@@ -71,6 +79,7 @@ export function closeWindow(handle: number, opts: { silent?: boolean; submit?: u
   const i = pluginUi.windows.findIndex((w) => w.handle === handle);
   if (i >= 0) {
     pluginUi.windows.splice(i, 1);
+    closePane(handle);
     if (!opts.silent) uiEvent(handle, opts.submit !== undefined ? 'submit' : 'close', opts.submit);
     return;
   }

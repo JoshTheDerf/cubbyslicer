@@ -52,6 +52,8 @@ import PrepareViewport from './viewport/PrepareViewport.vue';
 import SectionViewControl from './viewport/SectionViewControl.vue';
 import { pluginPages } from './plugins/state';
 const PluginPageHost = defineAsyncComponent(() => import('./plugins/ui/PluginPageHost.vue'));
+import PluginDockArea from './plugins/ui/PluginDockArea.vue';
+import { dockRoot, dockSheets, dockTabActive, dockedOn, observeDockLayout } from './plugins/dockLayout';
 import TransformPanel from './viewport/TransformPanel.vue';
 import CadPanel from './cad/CadPanel.vue';
 import LinkedObjectCard from './design/ui/LinkedObjectCard.vue';
@@ -88,6 +90,17 @@ mqNarrow?.addEventListener('change', onMq);
 onBeforeUnmount(() => { mq?.removeEventListener('change', onMq); mqPhone?.removeEventListener('change', onMq); mqNarrow?.removeEventListener('change', onMq); });
 
 const showSidebar = computed(() => !compact.value && sidebarOpen() && activeView.value !== 'design');
+
+// ---- plugin dock panels: docked beside the viewport on Prepare / Preview; sheets on phones ----
+const docksShown = computed(() => dockTabActive.value && !dockSheets.value);
+const dockWrap = ref<HTMLElement | null>(null);
+const centerCol = ref<HTMLElement | null>(null);
+const unobserveDocks: Array<() => void> = [];
+onMounted(() => {
+  dockRoot.value = dockWrap.value;
+  for (const el of [dockWrap.value, centerCol.value]) if (el) unobserveDocks.push(observeDockLayout(el));
+});
+onBeforeUnmount(() => { unobserveDocks.forEach((f) => f()); dockRoot.value = null; });
 
 // ---- preview and design mount lazily, then stay alive ----
 const previewMounted = ref(activeView.value === 'preview');
@@ -182,6 +195,10 @@ onBeforeUnmount(() => stopHandoff?.());
         </aside>
         <SidebarResizer v-if="showSidebar" />
 
+        <!-- Plugin dock panels (src/plugins/dockLayout.ts) dock left / right of the viewport and below it. -->
+        <div ref="dockWrap" class="dockwrap">
+        <PluginDockArea v-if="docksShown && dockedOn('left').length" side="left" />
+        <div ref="centerCol" class="center-col">
         <!-- Canvas -->
         <main class="center">
           <PrepareViewport v-show="activeView === 'prepare'" class="center__vp" @contextmenu="onViewportMenu">
@@ -213,6 +230,10 @@ onBeforeUnmount(() => stopHandoff?.());
             </div>
           </Transition>
         </main>
+        <PluginDockArea v-if="docksShown && dockedOn('bottom').length" side="bottom" />
+        </div>
+        <PluginDockArea v-if="docksShown && dockedOn('right').length" side="right" />
+        </div>
       </div>
 
       <!-- Compact: the sidebar is a slide-over drawer -->
@@ -245,6 +266,8 @@ onBeforeUnmount(() => stopHandoff?.());
 
 .side { flex: none; display: flex; flex-direction: column; min-height: 0; background: var(--bg-1); border-right: 1px solid var(--line); overflow: hidden; }
 
+.dockwrap { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.center-col { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .center { position: relative; flex: 1; min-width: 0; min-height: 0; }
 .center__vp, .center__preview, .center__design { position: absolute; inset: 0; }
 .ov { position: absolute; z-index: var(--z-toolbar); pointer-events: none; }

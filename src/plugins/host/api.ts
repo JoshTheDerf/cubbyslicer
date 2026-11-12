@@ -10,7 +10,7 @@ import { meshReply, modelSnapshot } from './model';
 import { beginUpdate, bundleSnapshot, commitUpdate, fullConfig, presetConfig, presetsDirty } from './presets';
 import { appInfo, glInfo, projectDirty } from './app';
 import {
-  askMessage, closeWindow, createWindow, findWindow, notify, postToWindow, progressCreate, progressUpdate,
+  askMessage, closeWindow, createWindow, findWindow, notify, postToWindow, progressCreate, progressUpdate, setWindowVisible,
 } from './ui';
 import { log, pluginName, saveGlobalConfig } from '../manager/store';
 import { postToPage } from './pages';
@@ -76,7 +76,7 @@ const posts: Partial<Record<HostMethod, (key: string, cap: string, a: Args) => v
     handle: int(a, 'handle'), html: str(a, 'html'), title: str(a, 'title', 'OrcaSlicer'), width: int(a, 'width', 320), height: int(a, 'height', 480), dock: str(a, 'dock', 'right'),
   }, 'dock'),
   'ui.post': (key, _c, a) => { const w = findWindow(int(a, 'handle')); if (w?.pluginKey === key) postToWindow(w.handle, a.data); },
-  'ui.show': (key, _c, a) => { const w = findWindow(int(a, 'handle')); if (w?.pluginKey === key) w.visible = !!a.visible; },
+  'ui.show': (key, _c, a) => { const w = findWindow(int(a, 'handle')); if (w?.pluginKey === key) setWindowVisible(w, !!a.visible); },
   'ui.close': (key, _c, a) => {
     const w = findWindow(int(a, 'handle'));
     if (!w || w.pluginKey === key) closeWindow(int(a, 'handle'), { silent: !!a.silent });
